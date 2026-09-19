@@ -55,6 +55,27 @@ export const WaitlistView: React.FC<WaitlistViewProps> = ({ type: initialType, o
       alert('Please fill out all required fields.');
       return;
     }
+    const newEntry = {
+      id: `wl-${Date.now()}`,
+      fullName,
+      email,
+      phone,
+      orgName,
+      institutionType,
+      city,
+      stateName,
+      additionalComments,
+      product: selectedProduct,
+      status: 'pending',
+      createdAt: new Date().toISOString().split('T')[0],
+    };
+    try {
+      const currentList = JSON.parse(localStorage.getItem('igho_waitlists') || '[]');
+      currentList.push(newEntry);
+      localStorage.setItem('igho_waitlists', JSON.stringify(currentList));
+    } catch (err) {
+      console.error(err);
+    }
     setStep(3);
   };
 

@@ -18,11 +18,12 @@ import {
   RotateCcw,
   ShieldAlert,
 } from 'lucide-react';
-import { Reservation, Room, ActiveScreen, CustomerProfile } from '../types';
+import { Reservation, Room, ActiveScreen, CustomerProfile, Hotel } from '../types';
 import { BackButton } from './BackButton';
 import { getSavedCustomerProfile } from '../utils/auth';
 
 interface GuestDashboardProps {
+  hotel?: Hotel | null;
   reservations: Reservation[];
   rooms: Room[];
   onNavigate: (screen: ActiveScreen) => void;
@@ -35,6 +36,7 @@ interface GuestDashboardProps {
 }
 
 export const GuestDashboard: React.FC<GuestDashboardProps> = ({
+  hotel,
   reservations,
   rooms,
   onNavigate,
@@ -171,10 +173,10 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
     const updated: CustomerProfile = {
       id: guestProfile?.id || `cust-${Date.now()}`,
       email: cleanEmail,
-      firstName: profile.firstName.trim(),
-      lastName: profile.lastName.trim(),
-      phone: profile.phone.trim(),
-      address: profile.address.trim(),
+      firstName: (profile.firstName || '').trim(),
+      lastName: (profile.lastName || '').trim(),
+      phone: (profile.phone || '').trim(),
+      address: (profile.address || '').trim(),
       city: profile.city?.trim() || '',
       state: profile.state?.trim() || '',
       country: 'Nigeria',
@@ -339,38 +341,107 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
           )}
 
           {/* Welcome Banner */}
-          <div className="relative rounded-2xl overflow-hidden p-6 text-white shadow-md bg-neutral-950">
-            <img
-              src="https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1000&q=80"
-              alt="Hotel Banner"
-              className="absolute inset-0 w-full h-full object-cover opacity-25"
-            />
-            <div className="relative z-10 space-y-3">
-              <span className="bg-white/20 backdrop-blur-xs text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                IGHO Stay Guest Portal
-              </span>
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-white">
-                Welcome back{profile.firstName ? `, ${profile.firstName}` : ''}
-              </h1>
-              <p className="text-xs sm:text-sm text-neutral-300 max-w-md leading-relaxed">
-                Manage your stays, view booking receipts, update your profile details, and explore top hotels across Nigeria.
-              </p>
-              <div className="flex items-center gap-3 pt-2">
-                <button
-                  onClick={() => onNavigate('hotel_guest_portal')}
-                  className="bg-white text-black text-xs font-bold px-4 py-2 rounded-xl hover:bg-neutral-200 transition-colors"
-                >
-                  Book a stay
-                </button>
-                <button
-                  onClick={() => setActiveTab('bookings')}
-                  className="bg-neutral-900/80 border border-neutral-700 text-white text-xs font-semibold px-4 py-2 rounded-xl hover:bg-neutral-800 transition-colors"
-                >
-                  View my bookings
-                </button>
+          {hotel ? (
+            <div className="relative rounded-2xl overflow-hidden p-6 sm:p-8 text-white shadow-lg bg-neutral-950 flex flex-col items-start justify-between gap-6">
+              {hotel.coverImage ? (
+                <img
+                  src={hotel.coverImage}
+                  alt={hotel.name}
+                  className="absolute inset-0 w-full h-full object-cover opacity-20 select-none pointer-events-none transition-opacity duration-300"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div className="absolute inset-0 bg-gradient-to-tr from-neutral-950 via-neutral-900 to-neutral-800 opacity-40" />
+              )}
+              {/* Deeper Soft Gradient Overlay to ensure absolute perfect text contrast */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/75 to-black/40 bg-black/35" />
+
+              <div className="relative z-10 flex-1 space-y-4 w-full">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3 max-w-full">
+                    {/* Hotel Logo */}
+                    <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-xl border border-white/25 bg-white/10 backdrop-blur-md overflow-hidden flex items-center justify-center shrink-0 shadow-md">
+                      {hotel.logoImage ? (
+                        <img src={hotel.logoImage} alt={`${hotel.name} Logo`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="text-white font-black text-xl uppercase">
+                          {hotel.name.charAt(0)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="leading-tight min-w-0">
+                      <span className="text-[10px] uppercase font-black tracking-widest text-neutral-300 block">
+                        CURRENT PORTAL
+                      </span>
+                      <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight mt-0.5 break-words drop-shadow-md">
+                        {hotel.name}
+                      </h2>
+                    </div>
+                  </div>
+                  <span className="bg-white/10 border border-white/10 backdrop-blur-xs text-white text-[10px] font-bold px-2.5 py-1 rounded-full self-start sm:self-auto uppercase tracking-wider">
+                    IGHO Stay Portal
+                  </span>
+                </div>
+
+                <div className="space-y-1.5 pt-2">
+                  <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+                    Welcome back{profile.firstName ? `, ${profile.firstName}` : ''}
+                  </h1>
+                  <p className="text-xs sm:text-sm text-neutral-200 max-w-2xl leading-relaxed font-medium whitespace-pre-line">
+                    {hotel.description || `Welcome back to the guest portal of ${hotel.name}. Manage your bookings, view verified receipts, and request guest services directly.`}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    onClick={() => onNavigate('hotel_guest_portal')}
+                    className="bg-white text-black text-xs font-bold px-4 py-2 rounded-xl hover:bg-neutral-200 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    Book another stay
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('bookings')}
+                    className="bg-neutral-900/80 border border-neutral-700 text-white text-xs font-semibold px-4 py-2 rounded-xl hover:bg-neutral-800 transition-colors cursor-pointer"
+                  >
+                    View my bookings
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="relative rounded-2xl overflow-hidden p-6 text-white shadow-md bg-neutral-950">
+              <img
+                src="https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1000&q=80"
+                alt="Hotel Banner"
+                className="absolute inset-0 w-full h-full object-cover opacity-25"
+              />
+              <div className="relative z-10 space-y-3">
+                <span className="bg-white/20 backdrop-blur-xs text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                  IGHO Stay Guest Portal
+                </span>
+                <h1 className="text-2xl sm:text-3xl font-extrabold text-white">
+                  Welcome back{profile.firstName ? `, ${profile.firstName}` : ''}
+                </h1>
+                <p className="text-xs sm:text-sm text-neutral-300 max-w-md leading-relaxed">
+                  Manage your stays, view booking receipts, update your profile details, and explore top hotels across Nigeria.
+                </p>
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    onClick={() => onNavigate('hotel_guest_portal')}
+                    className="bg-white text-black text-xs font-bold px-4 py-2 rounded-xl hover:bg-neutral-200 transition-colors"
+                  >
+                    Book a stay
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('bookings')}
+                    className="bg-neutral-900/80 border border-neutral-700 text-white text-xs font-semibold px-4 py-2 rounded-xl hover:bg-neutral-800 transition-colors"
+                  >
+                    View my bookings
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Metric Cards Row */}
           <div className="grid grid-cols-3 gap-3">

@@ -101,15 +101,21 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
     return '';
   });
 
-  // Keep synced if current logged in guest profile changes
+  const lastSyncedProfileRef = useRef<string | null>(null);
+
+  // Keep synced if current logged in guest profile changes, but do not fight user edits
   useEffect(() => {
-    if (currentGuestProfile) {
-      const full = `${currentGuestProfile.firstName || ''} ${currentGuestProfile.lastName || ''}`.trim();
-      if (full && !guestName) setGuestName(full);
-      if (currentGuestProfile.phone && !guestPhone) setGuestPhone(currentGuestProfile.phone);
-      if (currentGuestProfile.email && !guestEmail) setGuestEmail(currentGuestProfile.email);
-    } else if (currentUserEmail && !guestEmail) {
-      setGuestEmail(currentUserEmail);
+    const profileId = currentGuestProfile?.id || currentUserEmail || null;
+    if (profileId && lastSyncedProfileRef.current !== profileId) {
+      lastSyncedProfileRef.current = profileId;
+      if (currentGuestProfile) {
+        const full = `${currentGuestProfile.firstName || ''} ${currentGuestProfile.lastName || ''}`.trim();
+        setGuestName(full);
+        setGuestPhone(currentGuestProfile.phone || '');
+        setGuestEmail(currentGuestProfile.email || '');
+      } else if (currentUserEmail) {
+        setGuestEmail(currentUserEmail);
+      }
     }
   }, [currentGuestProfile, currentUserEmail]);
 
@@ -335,7 +341,6 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
                   <label className="block text-xs font-semibold text-neutral-700">Full name</label>
                   <input
                     type="text"
-                    required
                     value={guestName}
                     onChange={(e) => setGuestName(e.target.value)}
                     placeholder="e.g. John Doe"
@@ -348,7 +353,6 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
                     <label className="block text-xs font-semibold text-neutral-700">Phone number</label>
                     <input
                       type="text"
-                      required
                       value={guestPhone}
                       onChange={(e) => setGuestPhone(e.target.value)}
                       placeholder="e.g. 08012345678"
@@ -360,7 +364,6 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
                     <label className="block text-xs font-semibold text-neutral-700">Email</label>
                     <input
                       type="email"
-                      required
                       value={guestEmail}
                       onChange={(e) => setGuestEmail(e.target.value)}
                       placeholder="e.g. you@example.com"
@@ -465,8 +468,12 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
 
               {/* Summary Card */}
               <div className="lg:col-span-5 bg-neutral-50 border border-neutral-200 rounded-2xl overflow-hidden p-4 space-y-3">
-                <div className="h-36 w-full rounded-xl overflow-hidden bg-neutral-200">
-                  <img src={room.images[0]} alt={room.type} className="w-full h-full object-cover" />
+                <div className="h-36 w-full rounded-xl overflow-hidden bg-neutral-200 flex items-center justify-center text-center">
+                  {room.images && room.images.length > 0 && room.images[0] ? (
+                    <img src={room.images[0]} alt={room.type} className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-[10px] font-semibold text-neutral-400">No Image Available</span>
+                  )}
                 </div>
 
                 <div className="space-y-1">

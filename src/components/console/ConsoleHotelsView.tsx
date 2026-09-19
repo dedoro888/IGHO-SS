@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Search,
   Building2,
@@ -18,6 +18,7 @@ import {
   Trash2,
   ShieldAlert,
   SlidersHorizontal,
+  AlertCircle,
 } from 'lucide-react';
 import {
   Hotel,
@@ -28,6 +29,52 @@ import {
   PlatformAuditLog,
 } from '../../types';
 import { ConsoleHotelDetailModal } from './ConsoleHotelDetailModal';
+
+interface DemoRequestEntry {
+  id: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  orgName: string;
+  orgType: string;
+  productInterested: string;
+  demoDate: string;
+  demoTime: string;
+  message: string;
+  status: 'pending' | 'scheduled' | 'completed' | 'cancelled';
+  createdAt: string;
+}
+
+const INITIAL_DEMO_REQUESTS: DemoRequestEntry[] = [
+  {
+    id: "demo-stay-1",
+    fullName: "Alhaji Bello",
+    email: "bello@grandpalace.ng",
+    phone: "+234 802 222 3333",
+    orgName: "The Grand Palace Hotel",
+    orgType: "Hotel & Hospitality",
+    productInterested: "stay",
+    demoDate: "2026-09-24",
+    demoTime: "14:00",
+    message: "We have 85 luxury rooms in Victoria Island and want to inspect Paystack split settlements and guest portal walkthrough.",
+    status: "pending",
+    createdAt: "2026-09-16"
+  },
+  {
+    id: "demo-stay-2",
+    fullName: "Engr. Victoria Adebayo",
+    email: "v.adebayo@hilton-annex.com.ng",
+    phone: "+234 815 444 5555",
+    orgName: "Transcorp Hilton Annex",
+    orgType: "Hotel & Hospitality",
+    productInterested: "stay",
+    demoDate: "2026-09-22",
+    demoTime: "11:00",
+    message: "Requires deep PMS APIs and automated housekeeping scheduling demonstration.",
+    status: "scheduled",
+    createdAt: "2026-09-18"
+  }
+];
 
 interface ConsoleHotelsViewProps {
   hotels: Hotel[];
@@ -64,6 +111,58 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
   // Destructive Delete State
   const [deletingHotel, setDeletingHotel] = useState<Hotel | null>(null);
   const [typedConfirmation, setTypedConfirmation] = useState('');
+
+  // Sub-tab state
+  const [activeSubTab, setActiveSubTab] = useState<'directory' | 'demo_requests'>('directory');
+  const [demoRequests, setDemoRequests] = useState<DemoRequestEntry[]>([]);
+  const [demoSearchQuery, setDemoSearchQuery] = useState('');
+  const [demoStatusFilter, setDemoStatusFilter] = useState('all');
+  const [demoCurrentPage, setDemoCurrentPage] = useState(1);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('igho_demo_requests');
+      let parsed = stored ? JSON.parse(stored) : [];
+      const stayDemos = parsed.filter((item: any) => item.productInterested === 'stay' || item.productInterested === 'hotel' || !item.productInterested);
+      if (stayDemos.length === 0) {
+        const otherDemos = parsed.filter((item: any) => item.productInterested !== 'stay');
+        const merged = [...otherDemos, ...INITIAL_DEMO_REQUESTS];
+        localStorage.setItem('igho_demo_requests', JSON.stringify(merged));
+        setDemoRequests(INITIAL_DEMO_REQUESTS);
+      } else {
+        setDemoRequests(parsed);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const handleUpdateDemoStatus = (id: string, newStatus: 'pending' | 'scheduled' | 'completed' | 'cancelled') => {
+    try {
+      const stored = localStorage.getItem('igho_demo_requests');
+      const parsed = stored ? JSON.parse(stored) : [];
+      const updated = parsed.map((item: any) => item.id === id ? { ...item, status: newStatus } : item);
+      localStorage.setItem('igho_demo_requests', JSON.stringify(updated));
+      setDemoRequests(updated);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDeleteDemo = (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this demo request? This action is irreversible.')) {
+      return;
+    }
+    try {
+      const stored = localStorage.getItem('igho_demo_requests');
+      const parsed = stored ? JSON.parse(stored) : [];
+      const updated = parsed.filter((item: any) => item.id !== id);
+      localStorage.setItem('igho_demo_requests', JSON.stringify(updated));
+      setDemoRequests(updated);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   // Dynamic real metrics
   const totalHotels = hotels.length;
@@ -134,7 +233,7 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
       </div>
 
       {/* Page Header (Matching Hotel Admin Portal style) */}
-      <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
           <div className="w-11 h-11 rounded-xl bg-neutral-100 border border-neutral-200 text-neutral-900 flex items-center justify-center font-bold">
             <Building2 className="w-5 h-5" />
@@ -147,17 +246,54 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={() => alert('Hotels register via the onboarding portal or can be added via the registrations review queue.')}
-          className="px-4 py-2.5 rounded-xl bg-black hover:bg-neutral-800 text-white font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm self-start sm:self-auto active:scale-95"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>Register Hotel</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Sub-tab switcher */}
+          <div className="flex bg-neutral-100 p-1 rounded-xl border border-neutral-200 text-xs font-semibold">
+            <button
+              onClick={() => {
+                setActiveSubTab('directory');
+                setCurrentPage(1);
+              }}
+              className={`px-3.5 py-1.5 rounded-lg transition-all ${
+                activeSubTab === 'directory'
+                  ? 'bg-white text-black shadow-xs'
+                  : 'text-neutral-500 hover:text-neutral-800'
+              }`}
+            >
+              Hotel Directory
+            </button>
+            <button
+              onClick={() => {
+                setActiveSubTab('demo_requests');
+                setDemoCurrentPage(1);
+              }}
+              className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                activeSubTab === 'demo_requests'
+                  ? 'bg-black text-white shadow-xs'
+                  : 'text-neutral-500 hover:text-neutral-800'
+              }`}
+            >
+              <span>Stay Demo Requests</span>
+              {demoRequests.filter((d: any) => d.status === 'pending').length > 0 && (
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              )}
+            </button>
+          </div>
+
+          <button
+            onClick={() => alert('Hotels register via the onboarding portal or can be added via the registrations review queue.')}
+            className="px-4 py-2.5 rounded-xl bg-black hover:bg-neutral-800 text-white font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm active:scale-95"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Register Hotel</span>
+          </button>
+        </div>
       </div>
 
-      {/* 5 KPI Metric Cards in a row */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+      {activeSubTab === 'directory' ? (
+        <>
+          {/* 5 KPI Metric Cards in a row */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
         {/* 1. Total Hotels */}
         <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs flex items-center justify-between">
           <div>
@@ -419,6 +555,268 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+        </>
+      ) : (
+        /* Stay Demo Requests Sub-dashboard */
+        <div className="space-y-4">
+          {/* KPI Mini-row for demo requests */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+            <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs">
+              <span className="text-[10px] text-neutral-500 font-bold uppercase tracking-wider block">Total Demos</span>
+              <div className="text-2xl font-black text-black mt-1">{demoRequests.length}</div>
+              <span className="text-[10px] text-neutral-400">Total requests logged</span>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs">
+              <span className="text-[10px] text-neutral-500 font-bold uppercase tracking-wider block">Pending Review</span>
+              <div className="text-2xl font-black text-amber-600 mt-1">
+                {demoRequests.filter((d: any) => d.status === 'pending').length}
+              </div>
+              <span className="text-[10px] text-neutral-400">Needs contact scheduling</span>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs">
+              <span className="text-[10px] text-neutral-500 font-bold uppercase tracking-wider block">Scheduled Demos</span>
+              <div className="text-2xl font-black text-blue-600 mt-1">
+                {demoRequests.filter((d: any) => d.status === 'scheduled').length}
+              </div>
+              <span className="text-[10px] text-neutral-400">Booked walkthroughs</span>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs">
+              <span className="text-[10px] text-neutral-500 font-bold uppercase tracking-wider block">Completed</span>
+              <div className="text-2xl font-black text-emerald-700 mt-1">
+                {demoRequests.filter((d: any) => d.status === 'completed').length}
+              </div>
+              <span className="text-[10px] text-neutral-400">Demos successfully run</span>
+            </div>
+          </div>
+
+          {/* Controls Bar */}
+          <div className="flex flex-col md:flex-row gap-3 justify-between items-center bg-white p-4 rounded-xl border border-neutral-200">
+            {/* Search */}
+            <div className="relative w-full md:max-w-md">
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400">
+                <Search className="w-4 h-4" />
+              </span>
+              <input
+                type="text"
+                placeholder="Search demo requests..."
+                value={demoSearchQuery}
+                onChange={(e) => setDemoSearchQuery(e.target.value)}
+                className="w-full h-10 pl-10 pr-4 rounded-xl bg-neutral-50 border border-neutral-200 text-xs focus:outline-none focus:border-black transition-colors"
+              />
+            </div>
+
+            {/* Filters */}
+            <div className="flex gap-2 w-full md:w-auto text-xs">
+              <select
+                value={demoStatusFilter}
+                onChange={(e) => setDemoStatusFilter(e.target.value)}
+                className="h-10 px-3.5 rounded-xl border border-neutral-200 bg-neutral-50 text-neutral-700 focus:outline-none font-semibold cursor-pointer"
+              >
+                <option value="all">All Demo Statuses</option>
+                <option value="pending">Pending</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Demo Requests List */}
+          {demoRequests.filter((d: any) => {
+            const q = demoSearchQuery.toLowerCase();
+            const matchesSearch = 
+              !q ||
+              d.fullName.toLowerCase().includes(q) ||
+              d.email.toLowerCase().includes(q) ||
+              d.orgName.toLowerCase().includes(q) ||
+              (d.message && d.message.toLowerCase().includes(q));
+
+            const matchesStatus = demoStatusFilter === 'all' || d.status === demoStatusFilter;
+            return matchesSearch && matchesStatus;
+          }).length === 0 ? (
+            <div className="bg-white border border-neutral-200 rounded-2xl p-10 text-center space-y-3 shadow-xs">
+              <AlertCircle className="w-8 h-8 text-neutral-400 mx-auto" />
+              <div>
+                <h4 className="text-sm font-bold text-black">No matching demo requests found</h4>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  Try adjusting your search criteria or status filter tags.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white border border-neutral-200 rounded-2xl overflow-hidden shadow-xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-neutral-50 border-b border-neutral-200 text-neutral-500 font-bold">
+                      <th className="py-3 px-4">Organization & Requester</th>
+                      <th className="py-3 px-4">Contact Detail</th>
+                      <th className="py-3 px-4">Scheduled Slot (WAT)</th>
+                      <th className="py-3 px-4">Message / PMS Info</th>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100">
+                    {demoRequests
+                      .filter((d: any) => {
+                        const q = demoSearchQuery.toLowerCase();
+                        const matchesSearch = 
+                          !q ||
+                          d.fullName.toLowerCase().includes(q) ||
+                          d.email.toLowerCase().includes(q) ||
+                          d.orgName.toLowerCase().includes(q) ||
+                          (d.message && d.message.toLowerCase().includes(q));
+
+                        const matchesStatus = demoStatusFilter === 'all' || d.status === demoStatusFilter;
+                        return matchesSearch && matchesStatus;
+                      })
+                      .slice((demoCurrentPage - 1) * 5, demoCurrentPage * 5)
+                      .map((item: any) => (
+                        <tr key={item.id} className="hover:bg-neutral-50/50 transition-colors">
+                          <td className="py-4 px-4 font-sans">
+                            <div className="font-extrabold text-neutral-900 flex items-center gap-1.5">
+                              <Building2 className="w-3.5 h-3.5 text-neutral-500" />
+                              <span>{item.orgName}</span>
+                            </div>
+                            <p className="text-[10px] text-neutral-500 mt-0.5">Contact: {item.fullName}</p>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="flex flex-col gap-1 text-[11px]">
+                              <span className="text-neutral-600">{item.email}</span>
+                              <span className="text-neutral-500 font-mono text-[10px]">{item.phone}</span>
+                            </div>
+                          </td>
+                          <td className="py-4 px-4 font-mono font-semibold">
+                            <div>{item.demoDate || 'TBD'}</div>
+                            <div className="text-[10px] text-neutral-400">{item.demoTime ? `${item.demoTime} WAT` : ''}</div>
+                          </td>
+                          <td className="py-4 px-4 max-w-xs">
+                            <p className="text-neutral-500 truncate" title={item.message || item.additionalComments}>
+                              {item.message || item.additionalComments || '—'}
+                            </p>
+                            <span className="text-[9px] text-neutral-400 block mt-0.5 font-mono">
+                              Requested: {item.createdAt}
+                            </span>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span
+                              className={`inline-block px-2.5 py-0.5 rounded-full font-bold text-[9px] uppercase tracking-wider ${
+                                item.status === 'completed'
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : item.status === 'scheduled'
+                                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                  : item.status === 'cancelled'
+                                  ? 'bg-neutral-100 text-neutral-500 border border-neutral-200'
+                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
+                              }`}
+                            >
+                              {item.status}
+                            </span>
+                          </td>
+                          <td className="py-4 px-4 text-right">
+                            <div className="flex justify-end gap-1.5">
+                              {item.status === 'pending' && (
+                                <button
+                                  onClick={() => handleUpdateDemoStatus(item.id, 'scheduled')}
+                                  className="p-1 text-blue-600 hover:bg-blue-50 rounded-md transition-colors font-bold text-[10px] px-2 border border-blue-200"
+                                  title="Schedule Date"
+                                >
+                                  Schedule
+                                </button>
+                              )}
+                              {item.status === 'scheduled' && (
+                                <button
+                                  onClick={() => handleUpdateDemoStatus(item.id, 'completed')}
+                                  className="p-1 text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors font-bold text-[10px] px-2 border border-emerald-200"
+                                  title="Mark Completed"
+                                >
+                                  Complete
+                                </button>
+                              )}
+                              {item.status !== 'cancelled' && item.status !== 'completed' && (
+                                <button
+                                  onClick={() => handleUpdateDemoStatus(item.id, 'cancelled')}
+                                  className="p-1 text-neutral-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors font-bold text-[10px] px-2 border border-neutral-200"
+                                  title="Cancel Demo"
+                                >
+                                  Cancel
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleDeleteDemo(item.id)}
+                                className="p-1 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                                title="Delete Record"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              <div className="bg-neutral-50 border-t border-neutral-200 px-4 py-3.5 flex items-center justify-between text-xs">
+                <span className="text-neutral-500 font-mono">
+                  Page {demoCurrentPage} of {Math.ceil(demoRequests.filter((d: any) => {
+                    const q = demoSearchQuery.toLowerCase();
+                    const matchesSearch = 
+                      !q ||
+                      d.fullName.toLowerCase().includes(q) ||
+                      d.email.toLowerCase().includes(q) ||
+                      d.orgName.toLowerCase().includes(q) ||
+                      (d.message && d.message.toLowerCase().includes(q));
+
+                    const matchesStatus = demoStatusFilter === 'all' || d.status === demoStatusFilter;
+                    return matchesSearch && matchesStatus;
+                  }).length / 5) || 1}
+                </span>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => setDemoCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={demoCurrentPage === 1}
+                    className="p-1 px-2.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 disabled:opacity-50 text-neutral-600"
+                  >
+                    Prev
+                  </button>
+                  <button
+                    onClick={() => setDemoCurrentPage(prev => Math.min(Math.ceil(demoRequests.filter((d: any) => {
+                      const q = demoSearchQuery.toLowerCase();
+                      const matchesSearch = 
+                        !q ||
+                        d.fullName.toLowerCase().includes(q) ||
+                        d.email.toLowerCase().includes(q) ||
+                        d.orgName.toLowerCase().includes(q) ||
+                        (d.message && d.message.toLowerCase().includes(q));
+
+                      const matchesStatus = demoStatusFilter === 'all' || d.status === demoStatusFilter;
+                      return matchesSearch && matchesStatus;
+                    }).length / 5), prev + 1))}
+                    disabled={demoCurrentPage === Math.ceil(demoRequests.filter((d: any) => {
+                      const q = demoSearchQuery.toLowerCase();
+                      const matchesSearch = 
+                        !q ||
+                        d.fullName.toLowerCase().includes(q) ||
+                        d.email.toLowerCase().includes(q) ||
+                        d.orgName.toLowerCase().includes(q) ||
+                        (d.message && d.message.toLowerCase().includes(q));
+
+                      const matchesStatus = demoStatusFilter === 'all' || d.status === demoStatusFilter;
+                      return matchesSearch && matchesStatus;
+                    }).length / 5)}
+                    className="p-1 px-2.5 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 disabled:opacity-40 text-neutral-600"
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
             </div>
           )}

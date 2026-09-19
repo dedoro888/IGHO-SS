@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   ShieldAlert,
   Shield,
@@ -11,6 +12,9 @@ import {
   ChevronRight,
   Bell,
   Search,
+  Settings,
+  User,
+  LogOut,
 } from 'lucide-react';
 import {
   ActiveScreen,
@@ -89,6 +93,8 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   // Navigation tab state
   const [currentTab, setCurrentTab] = useState<ConsoleTab>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
+  const [profileDropdownOpen, setProfileDropdownOpen] = useState<boolean>(false);
 
   // Platform local states
   const [hotels, setHotels] = useState<Hotel[]>(initialHotels);
@@ -559,8 +565,49 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
 
   // AUTHORIZED CONSOLE INTERFACE (Section 4, 5, 6 - 31)
   return (
-    <div className="min-h-screen bg-neutral-50 text-neutral-900 flex font-sans">
-      {/* Persistent Sidebar */}
+    <div className="min-h-screen bg-neutral-50 text-neutral-900 flex font-sans overflow-x-hidden relative">
+      {/* Mobile Drawer Sidebar */}
+      <AnimatePresence>
+        {mobileMenuOpen && (
+          <>
+            {/* Backdrop overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMobileMenuOpen(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 md:hidden"
+            />
+            
+            {/* Sidebar Drawer Container */}
+            <motion.div
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 250 }}
+              className="fixed top-0 bottom-0 left-0 z-50 md:hidden"
+            >
+              <ConsoleSidebar
+                currentTab={currentTab}
+                onSelectTab={(tab) => {
+                  setCurrentTab(tab);
+                  setMobileMenuOpen(false); // Auto-close drawer on click
+                }}
+                pendingRegistrationsCount={pendingRegistrationsCount}
+                openComplaintsCount={openComplaintsCount}
+                currentUserEmail={activeUserEmail}
+                onNavigate={onNavigate}
+                onSwitchPersona={(email) => setActiveUserEmail(email)}
+                isCollapsed={false} // Keep expanded for maximum readability inside drawer
+                onToggleCollapse={() => setMobileMenuOpen(false)} // Clicking collapse closes drawer on mobile
+                isMobile={true}
+              />
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Persistent Sidebar (Always visible on left on Desktop, completely side-by-side) */}
       <ConsoleSidebar
         currentTab={currentTab}
         onSelectTab={(tab) => setCurrentTab(tab)}
@@ -569,64 +616,126 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
         currentUserEmail={activeUserEmail}
         onNavigate={onNavigate}
         onSwitchPersona={(email) => setActiveUserEmail(email)}
-        mobileOpen={mobileMenuOpen}
-        onCloseMobile={() => setMobileMenuOpen(false)}
+        isCollapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
       />
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 lg:pl-64 bg-neutral-50">
-        {/* Top Navbar */}
-        <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-neutral-200 px-4 sm:px-8 py-2.5 flex items-center justify-between gap-4 text-neutral-900">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setMobileMenuOpen(true)}
-              className="p-2 rounded-xl text-neutral-600 hover:text-black hover:bg-neutral-100 lg:hidden"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
+      {/* Main Content Area (Naturally side-by-side with no fixed overlap) */}
+      <div className="flex-1 flex flex-col min-w-0 bg-neutral-50 transition-all duration-300 ease-in-out">
+        {/* Top Floating Navbar Capsule */}
+        <div className="pt-4 px-4 sm:px-8">
+          <header className="bg-white border border-neutral-200/80 shadow-xs rounded-full px-5 py-2 flex items-center justify-between gap-4 text-neutral-900">
+            <div className="flex items-center gap-3">
+              {/* Mobile Menu Button */}
+              <button
+                onClick={() => setMobileMenuOpen(true)}
+                className="md:hidden p-2 text-neutral-600 hover:text-black hover:bg-neutral-50 rounded-full transition-all cursor-pointer flex items-center justify-center shrink-0"
+                title="Open Menu"
+              >
+                <Menu className="w-5 h-5" />
+              </button>
 
-            {/* Mobile Logo Title */}
-            <div className="flex items-center gap-2 lg:hidden">
-              <span className="font-black text-sm text-black">IGHO</span>
-              <span className="text-neutral-400">|</span>
-              <span className="text-xs text-neutral-500 font-medium">Console</span>
+              {/* Minimalist Indicator when Sidebar is Collapsed / on mobile */}
+              {(sidebarCollapsed || mobileMenuOpen || true) && (
+                <div className="flex items-center gap-2">
+                  <span className="font-black text-sm text-black">IGHO</span>
+                  <span className="text-neutral-300">|</span>
+                  <span className="text-xs text-[#10b981] font-bold">Console</span>
+                </div>
+              )}
             </div>
-          </div>
 
-          {/* Center Search Input */}
-          <div className="flex-1 max-w-xl relative hidden md:block">
-            <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search organizations, users, or anything..."
-              className="w-full bg-neutral-100 border border-neutral-200 rounded-xl pl-10 pr-4 py-2 text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black focus:bg-white transition-colors"
-            />
-          </div>
+            {/* Center Search Input */}
+            <div className="flex-1 max-w-xl relative hidden md:block">
+              <Search className="w-4 h-4 text-neutral-400 absolute left-4 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search organizations, users, or metrics..."
+                className="w-full bg-neutral-50 border border-neutral-200 rounded-full pl-10 pr-4 py-2 text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black focus:bg-white transition-all"
+              />
+            </div>
 
-          {/* Right User & Notifications Cluster */}
-          <div className="flex items-center gap-4">
-            {/* Notification Bell with Badge */}
-            <button className="relative p-2 text-neutral-500 hover:text-black transition-colors">
-              <Bell className="w-4 h-4" />
-              <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-rose-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center font-mono">
-                {pendingRegistrationsCount}
-              </span>
-            </button>
+            {/* Right User & Notifications Cluster */}
+            <div className="flex items-center gap-3">
+              {/* Notification Bell with Pill Badge */}
+              <button className="relative p-2 text-neutral-400 hover:text-black hover:bg-neutral-50 rounded-full transition-all">
+                <Bell className="w-4 h-4" />
+                <span className="absolute top-1 right-1 w-4 h-4 bg-rose-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center font-mono">
+                  {pendingRegistrationsCount}
+                </span>
+              </button>
 
-            {/* User Profile Info */}
-            <div className="flex items-center gap-2.5 pl-2 border-l border-neutral-200">
-              <div className="w-8 h-8 rounded-full bg-black text-white font-bold flex items-center justify-center text-xs shadow-sm">
-                RO
-              </div>
-              <div className="hidden sm:block text-left">
-                <div className="text-xs font-bold text-neutral-900 leading-tight">Rume Obire</div>
-                <div className="text-[10px] text-neutral-500 font-medium">Platform Owner</div>
+              {/* User Profile Info with interactive Dropdown Menu */}
+              <div className="relative">
+                <button
+                  onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
+                  className="flex items-center gap-2.5 pl-3 border-l border-neutral-150 hover:opacity-85 transition-opacity focus:outline-none cursor-pointer"
+                  title="Profile Menu"
+                >
+                  <div className="w-8 h-8 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-xs shadow-sm">
+                    RO
+                  </div>
+                  <div className="hidden sm:block text-left leading-tight">
+                    <div className="text-xs font-bold text-neutral-900">Rume Obire</div>
+                    <div className="text-[9px] text-[#10b981] font-extrabold uppercase tracking-wider">Super Admin</div>
+                  </div>
+                </button>
+
+                {profileDropdownOpen && (
+                  <>
+                    {/* Backdrop to close dropdown */}
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setProfileDropdownOpen(false)}
+                    />
+                    <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-white border border-neutral-200/80 shadow-xl py-2 z-50 text-xs text-neutral-800">
+                      <div className="px-4 py-2.5 border-b border-neutral-100">
+                        <p className="font-bold text-neutral-900">Rume Obire</p>
+                        <p className="text-[10px] text-neutral-500 font-mono truncate">{activeUserEmail}</p>
+                      </div>
+                      <div className="py-1">
+                        <button
+                          onClick={() => {
+                            setCurrentTab('settings');
+                            setProfileDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-4 py-2 hover:bg-neutral-50 transition-colors flex items-center gap-2.5 text-neutral-700 hover:text-black font-semibold"
+                        >
+                          <Settings className="w-3.5 h-3.5 text-neutral-400" />
+                          <span>Console Settings</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            alert('Edit Profile modal is a premium feature on the roadmap.');
+                            setProfileDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-4 py-2 hover:bg-neutral-50 transition-colors flex items-center gap-2.5 text-neutral-700 hover:text-black font-semibold"
+                        >
+                          <User className="w-3.5 h-3.5 text-neutral-400" />
+                          <span>Edit Profile</span>
+                        </button>
+                      </div>
+                      <div className="border-t border-neutral-100 pt-1 mt-1">
+                        <button
+                          onClick={() => {
+                            setProfileDropdownOpen(false);
+                            onNavigate('guest_login');
+                          }}
+                          className="w-full text-left px-4 py-2 text-rose-600 hover:bg-rose-50/50 transition-colors flex items-center gap-2.5 font-bold"
+                        >
+                          <LogOut className="w-3.5 h-3.5 text-rose-500" />
+                          <span>Log Out</span>
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
-          </div>
-        </header>
+          </header>
+        </div>
 
-        {/* Dynamic Section View */}
+        {/* Dynamic Section View with Floating Card Foundations */}
         <main className="flex-1 p-4 sm:p-8 max-w-[1600px] w-full mx-auto space-y-6 bg-neutral-50 text-neutral-900">
           {currentTab === 'dashboard' && (
             <ConsoleDashboardView

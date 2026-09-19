@@ -66,41 +66,41 @@ const saveToStorage = <T,>(key: string, value: T) => {
 
 // Safe fallbacks when data arrays are empty
 const DEFAULT_FALLBACK_HOTEL: Hotel = {
-  id: 'hotel-primary',
-  name: 'Lava Hotel & Suites',
-  location: 'Victoria Island, Lagos',
-  city: 'Lagos',
-  state: 'Lagos',
-  isLive: true,
+  id: '',
+  name: '',
+  location: '',
+  city: '',
+  state: '',
+  isLive: false,
   roomCount: 0,
   coverImage: '',
   logoImage: '',
-  address: 'Plot 12 Ahmadu Bello Way, Victoria Island, Lagos',
-  email: 'admin@lavahotels.ng',
-  phone: '+234 801 234 5678',
-  registeredBusiness: true,
-  bankName: 'Zenith Bank',
-  accountName: 'Lava Hotels Limited',
-  accountNumber: '1014529384',
+  address: '',
+  email: '',
+  phone: '',
+  registeredBusiness: false,
+  bankName: '',
+  accountName: '',
+  accountNumber: '',
   coordinates: {
-    lat: 6.5244,
-    lng: 3.3792,
+    lat: 0,
+    lng: 0,
   },
 };
 
 const DEFAULT_FALLBACK_ROOM: Room = {
-  id: 'room-default',
-  number: '101',
-  type: 'Standard',
-  typeName: 'Standard Room',
-  pricePerNight: 35000,
+  id: '',
+  number: '',
+  type: '',
+  typeName: '',
+  pricePerNight: 0,
   status: 'available',
   floor: 1,
-  maxGuests: 2,
-  roomSize: 25,
-  bed: 'Queen Bed',
-  description: 'Comfortable standard guest room.',
-  amenities: ['Air Conditioning', 'Free Wi-Fi', 'Private Bathroom'],
+  maxGuests: 0,
+  roomSize: 0,
+  bed: '',
+  description: '',
+  amenities: [],
   images: [],
 };
 
@@ -175,13 +175,27 @@ export default function App() {
     return () => window.removeEventListener('hashchange', handleHashRouting);
   }, [currentUserEmail]);
 
-  const navigateTo = (screen: ActiveScreen) => {
+  const navigateTo = (screen: ActiveScreen, authEmail?: string) => {
+    const emailToCheck = (authEmail || currentUserEmail || '').trim().toLowerCase();
+
     if (screen === 'super_admin_console') {
-      if (currentUserEmail.toLowerCase() !== 'rumeobire@gmail.com') {
+      if (emailToCheck !== 'rumeobire@gmail.com') {
         alert('Access Denied: IGHO Console is strictly restricted to the IGHO Platform Super Admin (rumeobire@gmail.com).');
         return;
       }
       window.location.hash = 'console';
+    } else if (screen === 'staff_portal') {
+      const userHotel = hotels.find((h) => h.email?.toLowerCase() === emailToCheck);
+      if (userHotel) {
+        if (userHotel.approvalStatus !== 'approved') {
+          alert(`Your hotel "${userHotel.name}" registration is currently ${userHotel.approvalStatus}. Access to the dashboard is locked.`);
+          return;
+        }
+        if (userHotel.paymentStatus !== 'paid') {
+          alert(`Your subscription for "${userHotel.name}" is unpaid. Please choose a subscription plan first via the Notification Bell in the header.`);
+          return;
+        }
+      }
     } else if (window.location.hash === '#console' || window.location.hash === '#/console') {
       history.replaceState(null, '', window.location.pathname);
     }
@@ -232,13 +246,13 @@ export default function App() {
 
     const account = resolveUserAccount(cleanEmail, profile);
     if (account.role === 'super_admin') {
-      navigateTo('super_admin_console');
+      navigateTo('super_admin_console', cleanEmail);
     } else if (account.role === 'customer') {
       setGuestDashboardTab('overview');
-      navigateTo('guest_dashboard');
+      navigateTo('guest_dashboard', cleanEmail);
     } else {
       setCurrentStaffEmail(cleanEmail);
-      navigateTo('staff_portal');
+      navigateTo('staff_portal', cleanEmail);
     }
   };
 
@@ -558,6 +572,7 @@ export default function App() {
       {/* SCREEN 8: GUEST DASHBOARD (BOOKINGS, PROFILE, STATUS BANNERS) */}
       {activeScreen === 'guest_dashboard' && (
         <GuestDashboard
+          hotel={selectedHotel}
           reservations={reservations}
           rooms={rooms}
           currentUserEmail={currentUserEmail}

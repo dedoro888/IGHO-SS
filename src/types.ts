@@ -132,6 +132,7 @@ export interface Hotel {
   packageType?: 'management' | 'complete';
   paymentStatus?: 'pending' | 'paid';
   status?: 'active' | 'pending' | 'suspended';
+  description?: string;
 }
 
 export interface Reservation {

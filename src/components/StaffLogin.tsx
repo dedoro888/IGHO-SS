@@ -19,16 +19,12 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({ onLoginSuccess, onNaviga
     setLoading(true);
     setTimeout(() => {
       setLoading(false);
-      if (email.toLowerCase() === 'rumeobire@gmail.com') {
-        alert('Access Notice: Super Admin credentials belong exclusively to the IGHO Console (/console). Hotel staff login is restricted to hotel personnel.');
-        return;
-      }
       onLoginSuccess(email);
-      onNavigate('staff_portal');
     }, 500);
   };
 
   const sampleStaffAccounts = [
+    { label: 'Super Admin', email: 'rumeobire@gmail.com' },
     { label: 'Hotel Owner', email: 'owner@palmviewgrand.com' },
     { label: 'Manager', email: 'manager@palmviewgrand.com' },
     { label: 'Receptionist', email: 'reception@palmviewgrand.com' },

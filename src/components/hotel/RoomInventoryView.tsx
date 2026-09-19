@@ -422,7 +422,7 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
       bed: 'Queensize',
       description: newRoomDesc || `Well-appointed ${finalType} with luxury conveniences.`,
       amenities: PREDEFINED_AMENITIES.slice(0, 6),
-      images: newRoomPhotos.length > 0 ? newRoomPhotos : defaultPhotos,
+      images: newRoomPhotos,
     };
 
     onAddRoom(newRoom);

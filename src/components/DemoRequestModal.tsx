@@ -70,6 +70,27 @@ export const DemoRequestModal: React.FC<DemoRequestModalProps> = ({ onClose, onN
   };
 
   const handleSubmitDemo = () => {
+    const newDemo = {
+      id: `demo-${Date.now()}`,
+      fullName,
+      email,
+      phone,
+      orgName,
+      orgType,
+      productInterested,
+      demoDate,
+      demoTime,
+      message,
+      status: 'pending',
+      createdAt: new Date().toISOString().split('T')[0],
+    };
+    try {
+      const currentList = JSON.parse(localStorage.getItem('igho_demo_requests') || '[]');
+      currentList.push(newDemo);
+      localStorage.setItem('igho_demo_requests', JSON.stringify(currentList));
+    } catch (e) {
+      console.error(e);
+    }
     setStep(3);
   };
 

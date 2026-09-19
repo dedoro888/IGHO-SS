@@ -88,34 +88,111 @@ export const HotelGuestPortal: React.FC<HotelGuestPortalProps> = ({
 
       {/* Main Content */}
       <main className="flex-1 max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-10 space-y-8 w-full">
-        {/* Title Header */}
-        <div className="space-y-1.5 border-b border-neutral-100 pb-6">
-          <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">
-            STAY WITH US
+        {/* Luxury Hotel Branding Header */}
+        <div className="space-y-6">
+          {/* Cover Banner */}
+          <div className="relative h-64 sm:h-80 w-full rounded-2xl sm:rounded-3xl overflow-hidden bg-neutral-900 shadow-xs">
+            {hotel.coverImage ? (
+              <img src={hotel.coverImage} alt={hotel.name} className="w-full h-full object-cover opacity-90" referrerPolicy="no-referrer" />
+            ) : (
+              <div className="w-full h-full bg-gradient-to-tr from-neutral-950 via-neutral-800 to-neutral-900 flex items-center justify-center p-6">
+                <div className="text-center space-y-2">
+                  <Building2 className="w-12 h-12 text-neutral-600 mx-auto stroke-[1.2]" />
+                  <p className="text-[10px] uppercase tracking-widest text-neutral-500 font-bold">Welcome to {hotel.name}</p>
+                </div>
+              </div>
+            )}
+            {/* Soft Overlay */}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-black">
-            Our rooms & suites
-          </h1>
-          <p className="text-xs sm:text-sm text-neutral-500 max-w-xl">
-            From cozy standard rooms to a spacious Presidential suite — all designed for a restful stay at{' '}
-            <span className="font-semibold text-neutral-800">{hotel.name}</span>.
-          </p>
 
-          {/* Type filters */}
-          <div className="flex items-center gap-1.5 pt-4 overflow-x-auto scrollbar-none">
-            {roomTypes.map((t) => (
-              <button
-                key={t}
-                onClick={() => setSelectedType(t)}
-                className={`px-3 py-1 rounded-full text-xs font-medium capitalize transition-colors whitespace-nowrap ${
-                  selectedType === t
-                    ? 'bg-black text-white'
-                    : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
-                }`}
-              >
-                {t === 'all' ? 'All Rooms' : t}
-              </button>
-            ))}
+          {/* Logo, Name and Stats Overlay Row */}
+          <div className="px-2 sm:px-4 -mt-16 sm:-mt-20 relative z-10 flex flex-col sm:flex-row sm:items-end gap-4 sm:gap-6">
+            {/* Brand Logo Circle */}
+            <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl border-4 border-white bg-white shadow-md overflow-hidden flex items-center justify-center shrink-0">
+              {hotel.logoImage ? (
+                <img src={hotel.logoImage} alt={`${hotel.name} Logo`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              ) : (
+                <div className="w-full h-full bg-black text-white font-black text-3xl sm:text-4xl flex items-center justify-center uppercase">
+                  {hotel.name.charAt(0)}
+                </div>
+              )}
+            </div>
+
+            {/* Title Block */}
+            <div className="flex-1 pb-1 space-y-2">
+              <h1 className="text-3xl sm:text-5xl font-black tracking-tight text-black leading-tight">
+                {hotel.name}
+              </h1>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs font-semibold text-neutral-500">
+                <span className="text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-100 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" /> Official Portal
+                </span>
+                <span className="hidden sm:inline text-neutral-300">•</span>
+                <span>{hotel.city}, {hotel.state}</span>
+                <span className="hidden sm:inline text-neutral-300">•</span>
+                <span>{hotel.phone}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Description & Contact Sidebar */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start border-b border-neutral-100 pb-8 pt-2">
+            <div className="md:col-span-8 space-y-4">
+              {hotel.description ? (
+                <p className="text-sm sm:text-base text-neutral-600 leading-relaxed whitespace-pre-line">
+                  {hotel.description}
+                </p>
+              ) : (
+                <p className="text-sm sm:text-base text-neutral-600 leading-relaxed">
+                  Welcome to {hotel.name}, a distinguished luxury destination in {hotel.city}, {hotel.state}. We offer premium accommodations, modern guest amenities, and first-class hospitality services designed to make your stay exceptional. Review our selection of finely appointed rooms and suites below and secure your booking today.
+                </p>
+              )}
+            </div>
+            <div className="md:col-span-4 bg-neutral-50 border border-neutral-200/60 rounded-2xl p-4 space-y-3.5">
+              <span className="text-[10px] font-black text-neutral-400 uppercase tracking-widest block">CONTACT & LOCATION</span>
+              <div className="space-y-2.5 text-xs">
+                <div className="flex items-start gap-2.5 text-neutral-700">
+                  <Mail className="w-4 h-4 text-neutral-400 shrink-0 mt-0.5" />
+                  <span className="font-medium break-all">{hotel.email}</span>
+                </div>
+                <div className="flex items-start gap-2.5 text-neutral-700">
+                  <Phone className="w-4 h-4 text-neutral-400 shrink-0 mt-0.5" />
+                  <span className="font-medium">{hotel.phone}</span>
+                </div>
+                <div className="flex items-start gap-2.5 text-neutral-700">
+                  <Building2 className="w-4 h-4 text-neutral-400 shrink-0 mt-0.5" />
+                  <span className="font-medium">{hotel.address}, {hotel.city}, {hotel.state}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Section: Rooms & Booking Filters */}
+        <div className="space-y-4 pt-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-xl sm:text-2xl font-extrabold text-black tracking-tight">Rooms & Suites</h2>
+              <p className="text-xs text-neutral-500">Filter availability by category or explore all layouts</p>
+            </div>
+
+            {/* Type filters */}
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-2 sm:pb-0">
+              {roomTypes.map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setSelectedType(t)}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold capitalize transition-all whitespace-nowrap cursor-pointer ${
+                    selectedType === t
+                      ? 'bg-black text-white'
+                      : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200/80'
+                  }`}
+                >
+                  {t === 'all' ? 'All' : t}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -128,12 +205,18 @@ export const HotelGuestPortal: React.FC<HotelGuestPortalProps> = ({
             >
               <div>
                 {/* Room Image */}
-                <div className="relative h-48 sm:h-52 w-full bg-neutral-100 overflow-hidden">
-                  <img
-                    src={room.images[0]}
-                    alt={`Room ${room.number}`}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  />
+                <div className="relative h-48 sm:h-52 w-full bg-neutral-100 overflow-hidden flex items-center justify-center">
+                  {room.images && room.images.length > 0 && room.images[0] ? (
+                    <img
+                      src={room.images[0]}
+                      alt={`Room ${room.number}`}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                  ) : (
+                    <div className="text-center p-4">
+                      <p className="text-[10px] font-semibold text-neutral-400">No Image Available</p>
+                    </div>
+                  )}
                   <div className="absolute top-3 right-3 bg-white/95 text-neutral-900 text-xs font-bold px-2 py-0.5 rounded-md shadow-2xs">
                     Room {room.number}
                   </div>

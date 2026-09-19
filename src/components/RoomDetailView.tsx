@@ -63,13 +63,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [hasSavedDraft, setHasSavedDraft] = useState(false);
 
-  const fallbackImages = [
-    'https://images.unsplash.com/photo-1590490360182-c33d57733427?auto=format&fit=crop&w=1200&q=80',
-    'https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?auto=format&fit=crop&w=800&q=80',
-    'https://images.unsplash.com/photo-1566665797739-1674de7a421a?auto=format&fit=crop&w=800&q=80',
-    'https://images.unsplash.com/photo-1591088398332-8a7791972843?auto=format&fit=crop&w=800&q=80',
-  ];
-  const roomImages = room?.images && room.images.length > 0 ? room.images : fallbackImages;
+  const roomImages = room?.images && room.images.length > 0 ? room.images : [];
 
   useEffect(() => {
     try {
@@ -176,32 +170,38 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
       {/* Main Content Container */}
       <main className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 space-y-8">
         {/* Photo Gallery Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 rounded-2xl overflow-hidden relative">
-          {/* Main Hero Photo */}
-          <div className="md:col-span-8 relative h-64 sm:h-80 bg-neutral-100 overflow-hidden">
-            <img src={room.images[0]} alt="Main Room" className="w-full h-full object-cover" />
-            <button
-              onClick={() => setGalleryOpen(true)}
-              className="absolute bottom-3 left-3 bg-black/75 hover:bg-black text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg backdrop-blur-xs flex items-center gap-1.5 shadow-sm transition-colors"
-            >
-              <Maximize2 className="w-3.5 h-3.5" />
-              <span>View gallery</span>
-            </button>
-          </div>
+        {roomImages.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 rounded-2xl overflow-hidden relative">
+            {/* Main Hero Photo */}
+            <div className="md:col-span-8 relative h-64 sm:h-80 bg-neutral-100 overflow-hidden">
+              <img src={roomImages[0]} alt="Main Room" className="w-full h-full object-cover" />
+              <button
+                onClick={() => setGalleryOpen(true)}
+                className="absolute bottom-3 left-3 bg-black/75 hover:bg-black text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg backdrop-blur-xs flex items-center gap-1.5 shadow-sm transition-colors"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+                <span>View gallery</span>
+              </button>
+            </div>
 
-          {/* Side Thumbnail Photos */}
-          <div className="hidden md:grid md:col-span-4 grid-cols-2 gap-2.5 h-80">
-            {room.images.slice(1, 5).map((img, i) => (
-              <div key={i} className="h-full bg-neutral-100 overflow-hidden rounded-lg">
-                <img
-                  src={img}
-                  alt={`Room thumb ${i + 1}`}
-                  className="w-full h-full object-cover hover:scale-105 transition-transform"
-                />
-              </div>
-            ))}
+            {/* Side Thumbnail Photos */}
+            <div className="hidden md:grid md:col-span-4 grid-cols-2 gap-2.5 h-80">
+              {roomImages.slice(1, 5).map((img, i) => (
+                <div key={i} className="h-full bg-neutral-100 overflow-hidden rounded-lg">
+                  <img
+                    src={img}
+                    alt={`Room thumb ${i + 1}`}
+                    className="w-full h-full object-cover hover:scale-105 transition-transform"
+                  />
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="border border-dashed border-neutral-200 rounded-2xl p-8 text-center text-neutral-400 text-xs bg-neutral-50/50">
+            No pictures uploaded for this room by the administrator.
+          </div>
+        )}
 
         {/* Room Header Info */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
