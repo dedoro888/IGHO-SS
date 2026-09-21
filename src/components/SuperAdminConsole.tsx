@@ -715,18 +715,6 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
                           <span>Edit Profile</span>
                         </button>
                       </div>
-                      <div className="border-t border-neutral-100 pt-1 mt-1">
-                        <button
-                          onClick={() => {
-                            setProfileDropdownOpen(false);
-                            onNavigate('guest_login');
-                          }}
-                          className="w-full text-left px-4 py-2 text-rose-600 hover:bg-rose-50/50 transition-colors flex items-center gap-2.5 font-bold"
-                        >
-                          <LogOut className="w-3.5 h-3.5 text-rose-500" />
-                          <span>Log Out</span>
-                        </button>
-                      </div>
                     </div>
                   </>
                 )}

@@ -736,25 +736,27 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                {sidebarCollapsed ? (
                  <ChevronRight className="w-4 h-4 text-neutral-400" />
                ) : (
-                 <div className="flex flex-col items-center justify-center gap-0.5">
-                   <ChevronLeft className="w-3.5 h-3.5 text-white" />
-                   <span className="text-[6px] font-black uppercase tracking-wider text-neutral-500 scale-90">MIN</span>
-                 </div>
+                 <ChevronLeft className="w-4 h-4 text-white" />
                )}
              </button>
            </div>
 
            {/* Navigation Links */}
            <div className="space-y-1.5 w-full">
-             {!sidebarCollapsed && (
-               <motion.div
-                 initial={{ opacity: 0 }}
-                 animate={{ opacity: 1 }}
-                 className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest px-4 mb-2 font-mono"
-               >
-                 Operations
-               </motion.div>
-             )}
+             <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest px-4 font-mono h-6 flex items-center shrink-0">
+               <AnimatePresence initial={false}>
+                 {!sidebarCollapsed && (
+                   <motion.span
+                     initial={{ opacity: 0 }}
+                     animate={{ opacity: 1 }}
+                     exit={{ opacity: 0 }}
+                     transition={{ duration: 0.15 }}
+                   >
+                     Operations
+                   </motion.span>
+                 )}
+               </AnimatePresence>
+             </div>
              {sidebarItems.map((item) => {
                const Icon = item.icon;
                const isActive = activeTab === item.id;
@@ -804,8 +806,27 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
            </div>
          </div>
 
-         {/* Bottom spacer instead of profile controls */}
-         <div className="pb-4" />
+         {/* Footer Log Out button in sidebar */}
+         <div className="pt-4 border-t border-neutral-850 mt-auto flex justify-start w-full shrink-0">
+           <button
+             onClick={() => {
+               onNavigate('landing');
+             }}
+             title="Log Out"
+             className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border-rose-500/20 hover:border-rose-500/40 ${
+               sidebarCollapsed ? 'w-10' : 'w-full'
+             }`}
+           >
+             <div className="w-10 h-10 flex items-center justify-center shrink-0">
+               <LogOut className="w-4 h-4 shrink-0 text-rose-400" />
+             </div>
+             {!sidebarCollapsed && (
+               <span className="text-xs font-bold whitespace-nowrap ml-1">
+                 Log Out
+               </span>
+             )}
+           </button>
+         </div>
        </motion.aside>
 
       {/* MAIN VIEWPORT */}
@@ -814,7 +835,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
       }`}>
         {/* Top Header with Branch & Role Switcher styled as a floating pill */}
         <div className="pt-4 px-4 sm:px-6 pb-2">
-          <header className="bg-white border border-neutral-200/80 shadow-xs rounded-full px-5 py-2.5 flex flex-wrap items-center justify-between gap-3 text-neutral-900">
+          <header className="bg-white border border-neutral-200/80 shadow-xs rounded-full px-5 py-2 flex items-center justify-between gap-3 text-neutral-900">
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setMobileSidebarOpen(true)}
@@ -822,23 +843,24 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               >
                 <Menu className="w-4 h-4" />
               </button>
-              <div className="flex items-center gap-2.5">
-                <div className="w-6 h-6 bg-black text-white rounded-full flex items-center justify-center text-[10px] font-bold">
-                  H
-                </div>
-                <span className="font-extrabold text-xs sm:text-sm text-neutral-900">
-                  {hotel.name || 'Lava Hotel'} <span className="text-neutral-300 font-normal mx-1">|</span> <span className="text-neutral-500 font-bold text-xs">PMS Portal</span>
+              
+              {/* Breadcrumb Navigation Instead of Clustered Brand Repeating */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">PMS Portal</span>
+                <span className="text-neutral-300 text-[10px] font-bold">/</span>
+                <span className="text-[11px] font-extrabold text-neutral-900 capitalize bg-neutral-100 px-2.5 py-0.5 rounded-full border border-neutral-200/60">
+                  {activeTab === 'dashboard' ? 'Overview' : activeTab}
                 </span>
               </div>
 
               {/* Branch Selector (Requirement 31) styled as a pill */}
               {hotelBranches.length > 0 && (
-                <div className="hidden sm:flex items-center gap-1.5 ml-2 pl-3 border-l border-neutral-150">
+                <div className="hidden lg:flex items-center gap-1.5 ml-2 pl-3 border-l border-neutral-150">
                   <Building className="w-3.5 h-3.5 text-neutral-400" />
                   <select
                     value={selectedBranchId}
                     onChange={(e) => setSelectedBranchId(e.target.value)}
-                    className="bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 rounded-full text-xs font-bold py-1 px-3 focus:outline-none cursor-pointer transition-all"
+                    className="bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 rounded-full text-xs font-bold py-1 px-3 focus:outline-none cursor-pointer transition-all text-neutral-800"
                   >
                     <option value="all">All Branches ({hotelBranches.length})</option>
                     {hotelBranches.map((b) => (
@@ -852,18 +874,36 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Branch Selector on small screens (hidden on desktop if already visible in sidebar/left) */}
+              {hotelBranches.length > 0 && (
+                <div className="flex lg:hidden items-center gap-1">
+                  <select
+                    value={selectedBranchId}
+                    onChange={(e) => setSelectedBranchId(e.target.value)}
+                    className="bg-neutral-50 border border-neutral-200 rounded-full text-[10px] font-bold py-1 px-2.5 focus:outline-none cursor-pointer text-neutral-800"
+                  >
+                    <option value="all">Branches</option>
+                    {hotelBranches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.code}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               {/* Quick Role Persona Badge / Indicator styled as a premium pill */}
-              <div className="flex items-center gap-1.5 text-xs font-bold px-3.5 py-1.5 rounded-full bg-emerald-50/80 border border-emerald-100 text-emerald-700">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span className="hidden sm:inline">Role:</span>
+              <div className="flex items-center gap-1 text-[10px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-1.5 rounded-full bg-emerald-50/80 border border-emerald-100 text-emerald-700">
+                <ShieldCheck className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-emerald-600" />
+                <span className="hidden md:inline">Role:</span>
                 <span className="font-extrabold">{getRoleDisplayName(selectedRolePersona)}</span>
               </div>
 
               <button
                 onClick={() => onNavigate('hotel_guest_portal')}
-                className="flex items-center gap-1.5 text-xs font-bold px-4 py-1.5 rounded-full border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 transition-all shadow-3xs"
+                className="flex items-center gap-1 text-[10px] sm:text-xs font-bold px-3 sm:px-4 py-1.5 rounded-full border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 transition-all shadow-3xs"
               >
-                <ExternalLink className="w-3.5 h-3.5 text-neutral-500" />
+                <ExternalLink className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-neutral-500" />
                 <span className="hidden sm:inline">Guest Site</span>
               </button>
 
@@ -936,19 +976,6 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                         >
                           <User className="w-3.5 h-3.5 text-neutral-400" />
                           <span>Edit Staff Profile</span>
-                        </button>
-                      </div>
-
-                      <div className="border-t border-neutral-100 pt-1 mt-1">
-                        <button
-                          onClick={() => {
-                            setProfileDropdownOpen(false);
-                            onNavigate('landing');
-                          }}
-                          className="w-full text-left px-4 py-2 text-rose-600 hover:bg-rose-50/50 transition-colors flex items-center gap-2.5 font-bold"
-                        >
-                          <LogOut className="w-3.5 h-3.5 text-rose-500" />
-                          <span>Exit to IGHO</span>
                         </button>
                       </div>
                     </div>

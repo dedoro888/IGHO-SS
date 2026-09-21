@@ -18,6 +18,15 @@ import {
   X,
   BookmarkCheck,
   ArrowRight,
+  Coffee,
+  Utensils,
+  Car,
+  Dumbbell,
+  Waves,
+  Laptop,
+  Eye,
+  Droplets,
+  Bell,
 } from 'lucide-react';
 import { Room, Hotel, ActiveScreen, CustomerProfile } from '../types';
 import { CalendarPickerModal } from './CalendarPickerModal';
@@ -271,26 +280,49 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
             <div className="space-y-3 pt-2">
               <h3 className="font-bold text-sm text-black">Amenities & services</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-neutral-700">
-                {room.amenities.map((amenity) => (
-                  <div key={amenity} className="flex items-center gap-2.5">
-                    {amenity.includes('Wi-Fi') ? (
-                      <Wifi className="w-4 h-4 text-neutral-500 shrink-0" />
-                    ) : amenity.includes('Air') ? (
-                      <Wind className="w-4 h-4 text-neutral-500 shrink-0" />
-                    ) : amenity.includes('TV') ? (
-                      <Tv className="w-4 h-4 text-neutral-500 shrink-0" />
-                    ) : amenity.includes('Bathroom') ? (
-                      <Bath className="w-4 h-4 text-neutral-500 shrink-0" />
-                    ) : amenity.includes('Water') ? (
-                      <Flame className="w-4 h-4 text-neutral-500 shrink-0" />
-                    ) : amenity.includes('Wardrobe') ? (
-                      <Shirt className="w-4 h-4 text-neutral-500 shrink-0" />
-                    ) : (
-                      <Sparkles className="w-4 h-4 text-neutral-500 shrink-0" />
-                    )}
-                    <span>{amenity}</span>
-                  </div>
-                ))}
+                {room.amenities.map((amenity) => {
+                  const norm = amenity.toLowerCase();
+                  let iconElement = <Layers className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  if (norm.includes('wi-fi') || norm.includes('wifi')) {
+                    iconElement = <Wifi className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('air conditioning') || norm.includes('ac')) {
+                    iconElement = <Wind className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('tv')) {
+                    iconElement = <Tv className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('bathroom') || norm.includes('bath') || norm.includes('bathtub')) {
+                    iconElement = <Bath className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('breakfast') || norm.includes('coffee') || norm.includes('tea')) {
+                    iconElement = <Coffee className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('hot water')) {
+                    iconElement = <Flame className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('fridge') || norm.includes('refrigerator')) {
+                    iconElement = <Droplets className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('wardrobe') || norm.includes('hanger')) {
+                    iconElement = <Shirt className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('room service') || norm.includes('dining') || norm.includes('food')) {
+                    iconElement = <Utensils className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('housekeeping') || norm.includes('clean')) {
+                    iconElement = <Bell className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('pool') || norm.includes('swimming')) {
+                    iconElement = <Waves className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('gym') || norm.includes('fitness') || norm.includes('workout')) {
+                    iconElement = <Dumbbell className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('parking') || norm.includes('car')) {
+                    iconElement = <Car className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('balcony') || norm.includes('view') || norm.includes('terrace')) {
+                    iconElement = <Eye className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('desk') || norm.includes('work') || norm.includes('workspace')) {
+                    iconElement = <Laptop className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  } else if (norm.includes('bed') || norm.includes('linen') || norm.includes('bedding')) {
+                    iconElement = <Bed className="w-4 h-4 text-neutral-500 shrink-0" />;
+                  }
+                  return (
+                    <div key={amenity} className="flex items-center gap-2.5">
+                      {iconElement}
+                      <span>{amenity}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>

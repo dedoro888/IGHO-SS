@@ -73,16 +73,27 @@ export const ReceiptViewerModal: React.FC<ReceiptViewerModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Download Button to download the exact receipt sends by the guest */}
+            <a
+              href={receiptUrl}
+              download={`receipt-${reservation.reference}`}
+              target="_blank"
+              rel="noreferrer"
+              title="Download Original Receipt"
+              className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-neutral-300 hover:text-white transition-colors flex items-center justify-center cursor-pointer"
+            >
+              <Download className="w-4 h-4" />
+            </a>
             <button
               onClick={handlePrint}
               title="Print Receipt"
-              className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-neutral-300 hover:text-white transition-colors"
+              className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-neutral-300 hover:text-white transition-colors cursor-pointer"
             >
               <Printer className="w-4 h-4" />
             </button>
             <button
               onClick={onClose}
-              className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-neutral-300 hover:text-white transition-colors"
+              className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-neutral-300 hover:text-white transition-colors cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>

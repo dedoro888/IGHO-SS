@@ -18,6 +18,7 @@ import {
   GraduationCap,
   Cross,
   Network,
+  LogOut,
 } from 'lucide-react';
 
 export type ConsoleTab =
@@ -43,6 +44,9 @@ interface ConsoleSidebarProps {
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   isMobile?: boolean;
+  currentUserEmail?: string;
+  onNavigate?: (screen: string) => void;
+  onSwitchPersona?: (email: string) => void;
 }
 
 export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
@@ -53,6 +57,9 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
   isCollapsed,
   onToggleCollapse,
   isMobile = false,
+  currentUserEmail,
+  onNavigate,
+  onSwitchPersona,
 }) => {
   const [orgsExpanded, setOrgsExpanded] = useState<boolean>(false);
 
@@ -125,10 +132,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
             {isCollapsed ? (
               <ChevronRight className="w-4 h-4 text-neutral-400" />
             ) : (
-              <div className="flex flex-col items-center justify-center gap-0.5">
-                <ChevronLeft className="w-3.5 h-3.5 text-[#10b981]" />
-                <span className="text-[6px] font-black uppercase tracking-wider text-neutral-500 scale-90">MIN</span>
-              </div>
+              <ChevronLeft className="w-4 h-4 text-[#10b981]" />
             )}
           </button>
         </div>
@@ -329,15 +333,20 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
 
           {/* Secondary Controls Links */}
           <div className="pt-2 space-y-1.5 w-full">
-            {!isCollapsed && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="px-4 py-1 text-[10px] font-bold text-neutral-500 uppercase tracking-widest font-mono"
-              >
-                Controls
-              </motion.div>
-            )}
+            <div className="px-4 text-[10px] font-bold text-neutral-500 uppercase tracking-widest font-mono h-6 flex items-center shrink-0">
+              <AnimatePresence initial={false}>
+                {!isCollapsed && (
+                  <motion.span
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    Controls
+                  </motion.span>
+                )}
+              </AnimatePresence>
+            </div>
             {secondaryNavItems.map((item) => {
               const Icon = item.icon;
               const isActive = currentTab === item.id;
@@ -388,6 +397,28 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
               );
             })}
           </div>
+        </div>
+
+        {/* Footer Log Out button in sidebar */}
+        <div className="pt-4 border-t border-neutral-200/50 mt-auto flex justify-start w-full shrink-0">
+          <button
+            onClick={() => {
+              if (onNavigate) onNavigate('guest_login');
+            }}
+            title="Log Out"
+            className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 text-rose-600 hover:text-rose-700 bg-rose-50/50 hover:bg-rose-50 border-rose-100 hover:border-rose-200 ${
+              isCollapsed ? 'w-10' : 'w-full'
+            }`}
+          >
+            <div className="w-10 h-10 flex items-center justify-center shrink-0">
+              <LogOut className="w-4 h-4 shrink-0" />
+            </div>
+            {!isCollapsed && (
+              <span className="text-[11px] font-bold whitespace-nowrap ml-1">
+                Log Out
+              </span>
+            )}
+          </button>
         </div>
       </motion.aside>
     </>
