@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { ActiveScreen, CustomerProfile } from '../types';
 import { resolveUserAccount, SUPER_ADMIN_EMAIL, getSavedCustomerProfile, saveCustomerProfile } from '../utils/auth';
-import { IghoLogo } from './IghoLogo';
+import { IghoLogo, IghoOfficialEmblem } from './IghoLogo';
 import { IghoLoadingScreen } from './IghoLoadingScreen';
 import { BackButton } from './BackButton';
 
@@ -206,7 +206,7 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-neutral-50 flex flex-col justify-between p-4 sm:p-6 text-neutral-900 selection:bg-black selection:text-white">
+    <div className="min-h-screen bg-neutral-50 flex items-center justify-center p-4 sm:p-6 text-neutral-900 selection:bg-black selection:text-white">
       {/* Custom Fullscreen Loading Screen */}
       {loading && (
         <IghoLoadingScreen
@@ -215,21 +215,14 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
         />
       )}
 
-      {/* Top Header */}
-      <div className="flex items-center justify-between max-w-md mx-auto w-full pt-2">
-        <BackButton onClick={() => onNavigate('landing')} />
-
-        <div className="flex items-center gap-2">
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-neutral-100 border border-neutral-200 text-xs font-semibold text-neutral-800">
-            <Bed className="w-3.5 h-3.5 text-neutral-700" />
-            <span>IGHO Stay</span>
-          </div>
-          <IghoLogo size="sm" variant="dark" showSubtitle={false} />
+      <div className="w-full max-w-md flex flex-col gap-4">
+        {/* Back Button closely hugging the Card */}
+        <div className="flex items-center justify-start">
+          <BackButton onClick={() => onNavigate('landing')} />
         </div>
-      </div>
 
-      {/* Main Authentication Card */}
-      <div className="w-full max-w-md mx-auto bg-white rounded-2xl p-6 sm:p-8 shadow-sm border border-neutral-200 space-y-6 my-auto">
+        {/* Main Authentication Card */}
+        <div className="w-full bg-white rounded-2xl p-6 sm:p-8 shadow-sm border border-neutral-200 space-y-6">
         {currentUserEmail && !allowSwitchAccount ? (
           <div className="text-center space-y-5">
             <div className="flex justify-center">
@@ -322,13 +315,11 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
             {/* Brand Icon & Heading */}
             <div className="text-center space-y-3">
               <div className="flex justify-center">
-                <div className="w-14 h-14 rounded-2xl bg-black text-white flex items-center justify-center shadow-sm">
-                  <Bed className="w-7 h-7" />
-                </div>
+                <IghoOfficialEmblem className="w-14 h-14" />
               </div>
               <div className="space-y-1">
                 <h1 className="text-2xl font-black text-black tracking-tight">
-                  {isRegister ? 'Create your Account' : 'Sign in to IGHO Stay'}
+                  {isRegister ? 'Create your Account' : 'Sign in to IGHO'}
                 </h1>
                 <p className="text-xs text-neutral-500 font-medium">
                   IGHO Software Systems unified identity directory.
@@ -574,9 +565,10 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
       </div>
 
       {/* Footer System Notice */}
-      <div className="text-center text-[11px] text-neutral-400 py-3 font-medium">
+      <div className="text-center text-[11px] text-neutral-400 py-2 font-medium">
         IGHO Software Systems • Global Identity Infrastructure
       </div>
+    </div>
 
       {/* Social Provider Email Confirmation Modal */}
       {showSocialModal && (

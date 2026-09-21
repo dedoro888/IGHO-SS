@@ -768,7 +768,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                        setMobileSidebarOpen(false);
                      }}
                      className={`group flex items-center justify-start h-10 rounded-full border overflow-hidden relative cursor-pointer transition-all duration-300 ${
-                       sidebarCollapsed ? 'w-10 pr-0' : 'w-fit pr-5'
+                       sidebarCollapsed ? 'w-10' : 'w-full'
                      } ${
                        isActive
                          ? 'bg-white border-white text-black font-extrabold shadow-lg'

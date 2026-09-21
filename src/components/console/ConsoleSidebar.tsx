@@ -141,7 +141,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
               onClick={() => onSelectTab('dashboard')}
               title="Overview"
               className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
-                isCollapsed ? 'w-10 pr-0' : 'w-fit pr-5'
+                isCollapsed ? 'w-10' : 'w-full'
               } ${
                 currentTab === 'dashboard'
                   ? 'bg-black border-white text-white font-bold shadow-md'
@@ -180,7 +180,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
               }}
               title="Organizations"
               className={`flex items-center justify-between h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
-                isCollapsed ? 'w-10 pr-0' : 'w-fit pr-5'
+                isCollapsed ? 'w-10' : 'w-full pr-4'
               } ${
                 isOrgTab
                   ? 'bg-black border-white text-white font-bold shadow-md'
@@ -284,7 +284,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
               >
                 <button
                   onClick={() => onSelectTab('hotels')}
-                  className={`flex items-center h-8 rounded-full border transition-all duration-300 pl-2 pr-4 cursor-pointer w-fit ${
+                  className={`flex items-center h-8 rounded-full border transition-all duration-300 pl-2 pr-4 cursor-pointer w-full ${
                     currentTab === 'hotels'
                       ? 'bg-black border-white text-white font-bold shadow-md'
                       : 'bg-black border-neutral-850 text-neutral-400 hover:text-white'
@@ -298,7 +298,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
 
                 <button
                   onClick={() => onSelectTab('schools')}
-                  className={`flex items-center h-8 rounded-full border transition-all duration-300 pl-2 pr-4 cursor-pointer w-fit ${
+                  className={`flex items-center h-8 rounded-full border transition-all duration-300 pl-2 pr-4 cursor-pointer w-full ${
                     currentTab === 'schools'
                       ? 'bg-neutral-900 border-white text-white font-bold shadow-md'
                       : 'bg-black border-neutral-850 text-neutral-400 hover:text-white'
@@ -312,7 +312,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
 
                 <button
                   onClick={() => onSelectTab('hospitals')}
-                  className={`flex items-center h-8 rounded-full border transition-all duration-300 pl-2 pr-4 cursor-pointer w-fit ${
+                  className={`flex items-center h-8 rounded-full border transition-all duration-300 pl-2 pr-4 cursor-pointer w-full ${
                     currentTab === 'hospitals'
                       ? 'bg-neutral-900 border-white text-white font-bold shadow-md'
                       : 'bg-black border-neutral-850 text-neutral-400 hover:text-white'
@@ -347,7 +347,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                     onClick={() => onSelectTab(item.id)}
                     title={item.label}
                     className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
-                      isCollapsed ? 'w-10 pr-0' : 'w-fit pr-5'
+                      isCollapsed ? 'w-10' : 'w-full'
                     } ${
                       isActive
                         ? 'bg-black border-white text-white font-bold shadow-md'

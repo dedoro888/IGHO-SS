@@ -405,10 +405,10 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
             <button
               onClick={() => onNavigate('guest_login')}
               className="text-xs sm:text-[13px] font-semibold px-3.5 sm:px-4 py-1.5 text-neutral-900 bg-neutral-100 hover:bg-neutral-200/80 border border-neutral-300/80 rounded-full transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95"
-              title="Sign in or Join IGHO"
+              title="Sign in"
             >
               <User className="w-3.5 h-3.5 text-neutral-700" />
-              <span>Sign in / Join IGHO</span>
+              <span>Sign in</span>
             </button>
           )}
 
@@ -549,7 +549,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                   className="w-full text-left p-2 text-sm font-semibold text-neutral-800 hover:bg-neutral-50 rounded-xl flex items-center gap-2"
                 >
                   <User className="w-4 h-4 text-neutral-500" />
-                  <span>Sign in / Join IGHO</span>
+                  <span>Sign in</span>
                 </button>
               )}
 
