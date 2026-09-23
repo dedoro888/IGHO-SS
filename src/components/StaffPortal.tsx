@@ -73,6 +73,7 @@ import {
   getRoleDisplayName,
 } from '../utils/permissions';
 import { PermissionManagerModal } from './PermissionManagerModal';
+import { EditProfileModal } from './common/EditProfileModal';
 import { AddStaffModal } from './AddStaffModal';
 import { HotelGuidanceCard } from './HotelGuidanceCard';
 import { ComparativePerformanceChart, MetricConfig } from './common/ComparativePerformanceChart';
@@ -183,6 +184,13 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
 
+  // User Profile States
+  const [profileName, setProfileName] = useState<string>('Obi Chidi');
+  const [profileEmail, setProfileEmail] = useState<string>('owner@lavahotel.com');
+  const [profilePassword, setProfilePassword] = useState<string>('••••••••');
+  const [profilePicture, setProfilePicture] = useState<string>('');
+  const [editProfileOpen, setEditProfileOpen] = useState<boolean>(false);
+
   // Active Role Persona Switcher (Allows testing different permission levels)
   const [selectedRolePersona, setSelectedRolePersona] = useState<StaffRole>(
     currentStaff?.role || 'hotel_owner'
@@ -258,7 +266,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   };
 
   // Compute active staff member based on selected persona
-  const activeStaffMember: StaffAccount =
+  const baseStaffMember =
     localStaffList.find((s) => s.hotelId === hotel.id && s.role === selectedRolePersona) ||
     localStaffList.find((s) => s.role === selectedRolePersona) || {
       id: `staff-${selectedRolePersona}`,
@@ -272,6 +280,12 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
       addedDate: 'Sep 2026',
       active: true,
     };
+
+  const activeStaffMember: StaffAccount = {
+    ...baseStaffMember,
+    name: profileName,
+    email: profileEmail,
+  };
 
   // Permission verification helper
   const can = (perm: PermissionId) => hasPermission(activeStaffMember, perm);
@@ -707,38 +721,26 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
 
          <div className="space-y-4 w-full">
            {/* Hotel Identity Header */}
-           <div className="flex flex-row items-center justify-between h-10 w-full shrink-0 relative">
-             {/* Hotel Identity area */}
-             {!sidebarCollapsed ? (
-               <div className="p-2 bg-black border border-neutral-850 rounded-full flex items-center justify-start shadow-md overflow-hidden shrink-0 h-10 w-[172px]">
+           <div className="flex flex-row items-center justify-center h-10 w-full shrink-0 relative">
+             {sidebarCollapsed ? (
+               <div className="w-10 h-10 bg-black text-white rounded-full flex items-center justify-center font-bold text-xs border border-neutral-800 shrink-0 select-none mx-auto shadow-md">
+                 <Bed className="w-4 h-4 text-white" />
+               </div>
+             ) : (
+               <div className="p-2 bg-black border border-neutral-850 rounded-full flex items-center justify-start shadow-md overflow-hidden shrink-0 h-10 w-full">
                  <div className="flex items-center gap-2.5 min-w-0">
                    <div className="w-6 h-6 bg-neutral-900 text-white rounded-full flex items-center justify-center font-bold text-xs border border-neutral-800 shrink-0 select-none">
                      <Bed className="w-3.5 h-3.5 text-white" />
                    </div>
                    <div className="leading-tight min-w-0">
-                     <div className="font-bold text-xs text-white truncate max-w-[110px]">
+                     <div className="font-bold text-xs text-white truncate max-w-[170px]">
                        {hotel.name || 'Lava Hotel'}
                      </div>
                      <div className="text-[9px] text-neutral-400 font-mono">HTL-LAVA-005</div>
                    </div>
                  </div>
                </div>
-             ) : null}
-
-             {/* Symmetrical Minimize Button with vertical Dynamic Island feel when expanded */}
-             <button
-               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-               className={`rounded-full border border-neutral-850 bg-black hover:bg-neutral-900 text-neutral-400 hover:text-white shrink-0 flex items-center justify-center cursor-pointer transition-all duration-300 ${
-                 sidebarCollapsed ? 'w-10 h-10 mx-auto' : 'w-8 h-8'
-               }`}
-               title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-             >
-               {sidebarCollapsed ? (
-                 <ChevronRight className="w-4 h-4 text-neutral-400" />
-               ) : (
-                 <ChevronLeft className="w-4 h-4 text-white" />
-               )}
-             </button>
+             )}
            </div>
 
            {/* Navigation Links */}
@@ -806,8 +808,9 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
            </div>
          </div>
 
-         {/* Footer Log Out button in sidebar */}
-         <div className="pt-4 border-t border-neutral-850 mt-auto flex justify-start w-full shrink-0">
+         {/* Footer Log Out and Collapse buttons in sidebar */}
+         <div className="pt-4 border-t border-neutral-850 mt-auto flex flex-col gap-2 w-full shrink-0">
+           {/* Log Out */}
            <button
              onClick={() => {
                onNavigate('landing');
@@ -823,6 +826,28 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
              {!sidebarCollapsed && (
                <span className="text-xs font-bold whitespace-nowrap ml-1">
                  Log Out
+               </span>
+             )}
+           </button>
+
+           {/* Collapse */}
+           <button
+             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+             title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+             className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700 ${
+               sidebarCollapsed ? 'w-10' : 'w-full'
+             }`}
+           >
+             <div className="w-10 h-10 flex items-center justify-center shrink-0">
+               {sidebarCollapsed ? (
+                 <ChevronRight className="w-4 h-4 text-neutral-400 font-bold" />
+               ) : (
+                 <ChevronLeft className="w-4 h-4 text-white font-bold" />
+               )}
+             </div>
+             {!sidebarCollapsed && (
+               <span className="text-xs font-bold whitespace-nowrap ml-1">
+                 Collapse
                </span>
              )}
            </button>
@@ -914,9 +939,13 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                   className="flex items-center gap-2.5 pl-3 border-l border-neutral-150 hover:opacity-85 transition-opacity focus:outline-none cursor-pointer"
                   title="Profile Menu"
                 >
-                  <div className="w-8 h-8 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-xs shadow-sm">
-                    {activeStaffMember.name ? activeStaffMember.name.slice(0, 2).toUpperCase() : 'ST'}
-                  </div>
+                  {profilePicture ? (
+                    <img src={profilePicture} alt="Profile" className="w-8 h-8 rounded-full object-cover shadow-sm" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-xs shadow-sm">
+                      {activeStaffMember.name ? activeStaffMember.name.slice(0, 2).toUpperCase() : 'ST'}
+                    </div>
+                  )}
                   <div className="hidden md:block text-left leading-tight">
                     <p className="text-xs font-bold text-neutral-900">{activeStaffMember.name}</p>
                     <p className="text-[9px] text-[#10b981] font-extrabold uppercase tracking-wider">{getRoleDisplayName(activeStaffMember.role)}</p>
@@ -931,9 +960,18 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                       onClick={() => setProfileDropdownOpen(false)}
                     />
                     <div className="absolute right-0 mt-2 w-60 rounded-2xl bg-white border border-neutral-200/80 shadow-xl py-2.5 z-50 text-xs text-neutral-800">
-                      <div className="px-4 py-2 border-b border-neutral-100">
-                        <p className="font-bold text-neutral-900">{activeStaffMember.name}</p>
-                        <p className="text-[10px] text-neutral-500 font-mono truncate">{activeStaffMember.email}</p>
+                      <div className="px-4 py-2 border-b border-neutral-100 flex items-center gap-2.5">
+                        {profilePicture ? (
+                          <img src={profilePicture} alt="Profile" className="w-8 h-8 rounded-full object-cover shadow-sm shrink-0" />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-xs shadow-sm shrink-0">
+                            {activeStaffMember.name ? activeStaffMember.name.slice(0, 2).toUpperCase() : 'ST'}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="font-bold text-neutral-900 truncate">{activeStaffMember.name}</p>
+                          <p className="text-[10px] text-neutral-500 font-mono truncate">{activeStaffMember.email}</p>
+                        </div>
                       </div>
 
                       <div className="px-4 py-2 border-b border-neutral-100 bg-neutral-50">
@@ -969,7 +1007,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                         </button>
                         <button
                           onClick={() => {
-                            alert('Edit Staff Profile modal is coming soon on the roadmap.');
+                            setEditProfileOpen(true);
                             setProfileDropdownOpen(false);
                           }}
                           className="w-full text-left px-4 py-2 hover:bg-neutral-50 transition-colors flex items-center gap-2.5 text-neutral-700 hover:text-black font-semibold"
@@ -3406,6 +3444,23 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
           }}
         />
       )}
+
+      <EditProfileModal
+        isOpen={editProfileOpen}
+        onClose={() => setEditProfileOpen(false)}
+        currentName={profileName}
+        currentEmail={profileEmail}
+        currentPicture={profilePicture}
+        onSave={(data) => {
+          setProfileName(data.name);
+          setProfileEmail(data.email);
+          if (data.password) {
+            setProfilePassword(data.password);
+          }
+          setProfilePicture(data.picture);
+        }}
+        title="Edit Staff / Owner Profile"
+      />
     </div>
   );
 };

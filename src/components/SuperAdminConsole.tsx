@@ -56,6 +56,7 @@ import { ConsoleReviewsView } from './console/ConsoleReviewsView';
 import { ConsoleProductsView } from './console/ConsoleProductsView';
 import { ConsoleSettingsView } from './console/ConsoleSettingsView';
 import { ConsoleAuditLogsView } from './console/ConsoleAuditLogsView';
+import { EditProfileModal } from './common/EditProfileModal';
 
 interface SuperAdminConsoleProps {
   currentUserEmail?: string;
@@ -95,6 +96,13 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState<boolean>(false);
+
+  // User Profile States
+  const [profileName, setProfileName] = useState<string>('Rume Obire');
+  const [profileEmail, setProfileEmail] = useState<string>(currentUserEmail || 'rumeobire@gmail.com');
+  const [profilePassword, setProfilePassword] = useState<string>('••••••••');
+  const [profilePicture, setProfilePicture] = useState<string>('');
+  const [editProfileOpen, setEditProfileOpen] = useState<boolean>(false);
 
   // Platform local states
   const [hotels, setHotels] = useState<Hotel[]>(initialHotels);
@@ -672,11 +680,15 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
                   className="flex items-center gap-2.5 pl-3 border-l border-neutral-150 hover:opacity-85 transition-opacity focus:outline-none cursor-pointer"
                   title="Profile Menu"
                 >
-                  <div className="w-8 h-8 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-xs shadow-sm">
-                    RO
-                  </div>
+                  {profilePicture ? (
+                    <img src={profilePicture} alt="Profile" className="w-8 h-8 rounded-full object-cover shadow-sm" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-xs shadow-sm">
+                      {profileName.split(' ').map(n => n[0]).join('').toUpperCase()}
+                    </div>
+                  )}
                   <div className="hidden sm:block text-left leading-tight">
-                    <div className="text-xs font-bold text-neutral-900">Rume Obire</div>
+                    <div className="text-xs font-bold text-neutral-900">{profileName}</div>
                     <div className="text-[9px] text-[#10b981] font-extrabold uppercase tracking-wider">Super Admin</div>
                   </div>
                 </button>
@@ -689,9 +701,18 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
                       onClick={() => setProfileDropdownOpen(false)}
                     />
                     <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-white border border-neutral-200/80 shadow-xl py-2 z-50 text-xs text-neutral-800">
-                      <div className="px-4 py-2.5 border-b border-neutral-100">
-                        <p className="font-bold text-neutral-900">Rume Obire</p>
-                        <p className="text-[10px] text-neutral-500 font-mono truncate">{activeUserEmail}</p>
+                      <div className="px-4 py-2.5 border-b border-neutral-100 flex items-center gap-2.5">
+                        {profilePicture ? (
+                          <img src={profilePicture} alt="Profile" className="w-8 h-8 rounded-full object-cover shadow-sm shrink-0" />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-xs shadow-sm shrink-0">
+                            {profileName.split(' ').map(n => n[0]).join('').toUpperCase()}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="font-bold text-neutral-900 truncate">{profileName}</p>
+                          <p className="text-[10px] text-neutral-500 font-mono truncate">{profileEmail}</p>
+                        </div>
                       </div>
                       <div className="py-1">
                         <button
@@ -706,7 +727,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
                         </button>
                         <button
                           onClick={() => {
-                            alert('Edit Profile modal is a premium feature on the roadmap.');
+                            setEditProfileOpen(true);
                             setProfileDropdownOpen(false);
                           }}
                           className="w-full text-left px-4 py-2 hover:bg-neutral-50 transition-colors flex items-center gap-2.5 text-neutral-700 hover:text-black font-semibold"
@@ -862,6 +883,23 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
           )}
         </main>
       </div>
+
+      <EditProfileModal
+        isOpen={editProfileOpen}
+        onClose={() => setEditProfileOpen(false)}
+        currentName={profileName}
+        currentEmail={profileEmail}
+        currentPicture={profilePicture}
+        onSave={(data) => {
+          setProfileName(data.name);
+          setProfileEmail(data.email);
+          if (data.password) {
+            setProfilePassword(data.password);
+          }
+          setProfilePicture(data.picture);
+        }}
+        title="Edit Console Admin Profile"
+      />
     </div>
   );
 };

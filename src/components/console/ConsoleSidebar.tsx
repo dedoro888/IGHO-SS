@@ -101,10 +101,13 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
         } flex-col justify-between shrink-0 pb-6 backdrop-blur-xl px-5`}
       >
         {/* Header Branding & Symmetrical Stack/Row Capsule */}
-        <div className="flex flex-row items-center justify-between h-10 w-full mt-4 shrink-0 relative">
-          {/* Profile / Avatar / Identity area */}
-          {!isCollapsed ? (
-            <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex flex-row items-center justify-center h-10 w-full mt-4 shrink-0 relative">
+          {isCollapsed ? (
+            <div className="rounded-full bg-[#10b981] text-white font-black flex items-center justify-center shadow-sm text-xs shrink-0 select-none cursor-pointer w-7 h-7 mx-auto">
+              I
+            </div>
+          ) : (
+            <div className="flex items-center gap-2.5 min-w-0 w-full justify-start">
               <div className="rounded-full bg-[#10b981] text-white font-black flex items-center justify-center shadow-sm text-xs shrink-0 select-none cursor-pointer w-7 h-7">
                 I
               </div>
@@ -119,22 +122,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                 </p>
               </div>
             </div>
-          ) : null}
-
-          {/* Symmetrical Minimize Button with vertical Dynamic Island feel when expanded */}
-          <button
-            onClick={onToggleCollapse}
-            className={`rounded-full border border-neutral-850 bg-black hover:bg-neutral-900 text-neutral-400 hover:text-white shrink-0 flex items-center justify-center cursor-pointer transition-all duration-300 ${
-              isCollapsed ? 'w-10 h-10 mx-auto' : 'w-8 h-8'
-            }`}
-            title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-          >
-            {isCollapsed ? (
-              <ChevronRight className="w-4 h-4 text-neutral-400" />
-            ) : (
-              <ChevronLeft className="w-4 h-4 text-[#10b981]" />
-            )}
-          </button>
+          )}
         </div>
 
         {/* Scrollable Navigation List */}
@@ -399,8 +387,9 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
           </div>
         </div>
 
-        {/* Footer Log Out button in sidebar */}
-        <div className="pt-4 border-t border-neutral-200/50 mt-auto flex justify-start w-full shrink-0">
+        {/* Footer Log Out and Collapse buttons in sidebar */}
+        <div className="pt-4 border-t border-neutral-200/50 mt-auto flex flex-col gap-2 w-full shrink-0">
+          {/* Log Out */}
           <button
             onClick={() => {
               if (onNavigate) onNavigate('guest_login');
@@ -416,6 +405,28 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
             {!isCollapsed && (
               <span className="text-[11px] font-bold whitespace-nowrap ml-1">
                 Log Out
+              </span>
+            )}
+          </button>
+
+          {/* Collapse */}
+          <button
+            onClick={onToggleCollapse}
+            title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+            className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700 ${
+              isCollapsed ? 'w-10' : 'w-full'
+            }`}
+          >
+            <div className="w-10 h-10 flex items-center justify-center shrink-0">
+              {isCollapsed ? (
+                <ChevronRight className="w-4 h-4 text-neutral-400 font-bold" />
+              ) : (
+                <ChevronLeft className="w-4 h-4 text-white font-bold" />
+              )}
+            </div>
+            {!isCollapsed && (
+              <span className="text-[11px] font-bold whitespace-nowrap ml-1">
+                Collapse
               </span>
             )}
           </button>
