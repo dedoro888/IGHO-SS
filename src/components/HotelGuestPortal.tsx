@@ -11,6 +11,7 @@ import {
 import { Hotel, Room, ActiveScreen, CustomerProfile } from '../types';
 import { BackButton } from './BackButton';
 import { GuestAccountNavMenu } from './GuestAccountNavMenu';
+import { resolveUserAccount } from '../utils/auth';
 
 interface HotelGuestPortalProps {
   hotel: Hotel;
@@ -42,6 +43,11 @@ export const HotelGuestPortal: React.FC<HotelGuestPortalProps> = ({
     return r.type.toLowerCase().includes(selectedType.toLowerCase());
   });
 
+  // Resolve user role to allow quick return to Console / Staff Portal
+  const effectiveEmail = currentUserEmail || (typeof window !== 'undefined' ? localStorage.getItem('igho_currentStaffEmail') : '') || '';
+  const account = effectiveEmail ? resolveUserAccount(effectiveEmail) : null;
+  const showReturnButton = account && account.role !== 'customer';
+
   return (
     <div className="min-h-screen bg-white text-neutral-900 flex flex-col justify-between">
       {/* Hotel Public Header */}
@@ -59,6 +65,21 @@ export const HotelGuestPortal: React.FC<HotelGuestPortalProps> = ({
               <span className="font-extrabold text-sm text-black tracking-tight">IGHO Stay</span>
             </div>
           </button>
+
+          {showReturnButton && (
+            <button
+              onClick={() => {
+                if (account.role === 'super_admin') {
+                  onNavigate('super_admin_console');
+                } else {
+                  onNavigate('staff_portal');
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#10b981]/10 hover:bg-[#10b981]/20 border border-[#10b981]/25 text-[#10b981] rounded-lg text-xs font-bold transition-all shadow-3xs cursor-pointer"
+            >
+              <span>← Return to {account.role === 'super_admin' ? 'Console' : 'Dashboard'}</span>
+            </button>
+          )}
 
           <nav className="hidden sm:flex items-center gap-4 text-xs font-medium text-neutral-600">
             <button onClick={() => onNavigate('landing')} className="hover:text-black">

@@ -47,6 +47,10 @@ interface ConsoleSidebarProps {
   currentUserEmail?: string;
   onNavigate?: (screen: string) => void;
   onSwitchPersona?: (email: string) => void;
+  profileName?: string;
+  profileEmail?: string;
+  profilePicture?: string;
+  onEditProfileClick?: () => void;
 }
 
 export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
@@ -60,6 +64,10 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
   currentUserEmail,
   onNavigate,
   onSwitchPersona,
+  profileName = 'Rume Obire',
+  profileEmail = 'rumeobire@gmail.com',
+  profilePicture = '',
+  onEditProfileClick,
 }) => {
   const [orgsExpanded, setOrgsExpanded] = useState<boolean>(false);
 
@@ -93,7 +101,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
       <motion.aside
         layout="size"
         animate={{ width: isCollapsed ? 80 : 272 }}
-        transition={{ type: 'spring', damping: 28, stiffness: 280 }}
+        transition={{ duration: 0.3, ease: 'easeInOut' }}
         className={`${
           isMobile
             ? 'fixed top-0 bottom-0 left-0 h-full w-[272px] z-50 rounded-r-[2rem] border-r shadow-2xl bg-white/95 flex'
@@ -322,18 +330,9 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
           {/* Secondary Controls Links */}
           <div className="pt-2 space-y-1.5 w-full">
             <div className="px-4 text-[10px] font-bold text-neutral-500 uppercase tracking-widest font-mono h-6 flex items-center shrink-0">
-              <AnimatePresence initial={false}>
-                {!isCollapsed && (
-                  <motion.span
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.15 }}
-                  >
-                    Controls
-                  </motion.span>
-                )}
-              </AnimatePresence>
+              <span className={`transition-all duration-300 ${isCollapsed ? 'opacity-0 scale-75' : 'opacity-100'}`}>
+                Controls
+              </span>
             </div>
             {secondaryNavItems.map((item) => {
               const Icon = item.icon;
@@ -387,49 +386,75 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
           </div>
         </div>
 
-        {/* Footer Log Out and Collapse buttons in sidebar */}
-        <div className="pt-4 border-t border-neutral-200/50 mt-auto flex flex-col gap-2 w-full shrink-0">
-          {/* Log Out */}
+        {/* Footer Sections */}
+        <div className="mt-auto space-y-3 w-full shrink-0 pt-4 border-t border-neutral-200/50">
+          {/* Section 3: Profile Pill */}
           <button
-            onClick={() => {
-              if (onNavigate) onNavigate('guest_login');
-            }}
-            title="Log Out"
-            className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 text-rose-600 hover:text-rose-700 bg-rose-50/50 hover:bg-rose-50 border-rose-100 hover:border-rose-200 ${
-              isCollapsed ? 'w-10' : 'w-full'
+            onClick={onEditProfileClick}
+            title="Edit Admin Profile"
+            className={`flex items-center gap-2.5 hover:bg-neutral-50/80 border border-neutral-200/60 rounded-full cursor-pointer transition-all duration-300 ${
+              isCollapsed ? 'w-10 h-10 justify-center p-0' : 'w-full px-3.5 py-1.5'
             }`}
           >
-            <div className="w-10 h-10 flex items-center justify-center shrink-0">
-              <LogOut className="w-4 h-4 shrink-0" />
-            </div>
+            {profilePicture ? (
+              <img src={profilePicture} alt="Profile" className="w-7 h-7 rounded-full object-cover shadow-xs shrink-0" />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-[10px] shadow-xs shrink-0">
+                {profileName.split(' ').map(n => n[0]).join('').toUpperCase()}
+              </div>
+            )}
             {!isCollapsed && (
-              <span className="text-[11px] font-bold whitespace-nowrap ml-1">
-                Log Out
-              </span>
+              <div className="min-w-0 text-left leading-tight flex-1">
+                <p className="text-[11px] font-extrabold text-neutral-900 truncate">{profileName}</p>
+                <p className="text-[9px] text-[#10b981] font-mono truncate">{profileEmail}</p>
+              </div>
             )}
           </button>
 
-          {/* Collapse */}
-          <button
-            onClick={onToggleCollapse}
-            title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-            className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700 ${
-              isCollapsed ? 'w-10' : 'w-full'
-            }`}
-          >
-            <div className="w-10 h-10 flex items-center justify-center shrink-0">
-              {isCollapsed ? (
-                <ChevronRight className="w-4 h-4 text-neutral-400 font-bold" />
-              ) : (
-                <ChevronLeft className="w-4 h-4 text-white font-bold" />
+          {/* Section 1: Collapse and Logout */}
+          <div className="flex flex-col gap-2 w-full">
+            {/* Collapse */}
+            <button
+              onClick={onToggleCollapse}
+              title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+              className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700 ${
+                isCollapsed ? 'w-10' : 'w-full'
+              }`}
+            >
+              <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                {isCollapsed ? (
+                  <ChevronRight className="w-4 h-4 text-neutral-400 font-bold" />
+                ) : (
+                  <ChevronLeft className="w-4 h-4 text-white font-bold" />
+                )}
+              </div>
+              {!isCollapsed && (
+                <span className="text-[11px] font-bold whitespace-nowrap ml-1">
+                  Collapse
+                </span>
               )}
-            </div>
-            {!isCollapsed && (
-              <span className="text-[11px] font-bold whitespace-nowrap ml-1">
-                Collapse
-              </span>
-            )}
-          </button>
+            </button>
+
+            {/* Log Out */}
+            <button
+              onClick={() => {
+                if (onNavigate) onNavigate('guest_login');
+              }}
+              title="Log Out"
+              className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 text-rose-600 hover:text-rose-700 bg-rose-50/50 hover:bg-rose-50 border-rose-100 hover:border-rose-200 ${
+                isCollapsed ? 'w-10' : 'w-full'
+              }`}
+            >
+              <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                <LogOut className="w-4 h-4 shrink-0" />
+              </div>
+              {!isCollapsed && (
+                <span className="text-[11px] font-bold whitespace-nowrap ml-1">
+                  Log Out
+                </span>
+              )}
+            </button>
+          </div>
         </div>
       </motion.aside>
     </>

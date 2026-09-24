@@ -350,7 +350,7 @@ export const ConsoleDashboardView: React.FC<ConsoleDashboardViewProps> = ({
       </div>
 
       {/* ─── SECTION 3: THE HIGH-FIDELITY BENTO KPI WIDGETS ─── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         
         {/* KPI 1: Active Tenants Pop */}
         <div className="bg-white border border-neutral-200/80 rounded-3xl p-5 shadow-[0_8px_30px_rgb(0,0,0,0.01)] flex flex-col justify-between h-[155px] hover:border-neutral-300 transition-colors">
@@ -444,6 +444,26 @@ export const ConsoleDashboardView: React.FC<ConsoleDashboardViewProps> = ({
           </div>
           <span className="text-[10px] text-neutral-400 font-bold block uppercase tracking-wider">
             All system layers nominal
+          </span>
+        </div>
+
+        {/* KPI 5: Platform Visitors Count */}
+        <div className="bg-white border border-neutral-200/80 rounded-3xl p-5 shadow-[0_8px_30px_rgb(0,0,0,0.01)] flex flex-col justify-between h-[155px] hover:border-neutral-300 transition-colors">
+          <div className="flex justify-between items-start">
+            <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest block">Platform Visitors</span>
+            <Activity className="w-4 h-4 text-emerald-500 animate-pulse" />
+          </div>
+          <div className="space-y-1">
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-black text-black leading-none">2,845</span>
+              <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded-full">+18%</span>
+            </div>
+            <span className="text-[10px] text-neutral-600 font-semibold block">
+              Unique device visitors active across hotel directory & guest portals today.
+            </span>
+          </div>
+          <span className="text-[10px] text-neutral-400 font-bold block uppercase tracking-wider">
+            Live visitor traffic
           </span>
         </div>
 

@@ -20,6 +20,7 @@ export interface UserAuthProfile {
   description: string;
 }
 
+export const SUPER_ADMIN_EMAILS = ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'];
 export const SUPER_ADMIN_EMAIL = 'rumeobire@gmail.com';
 
 /**
@@ -69,10 +70,11 @@ export function resolveUserAccount(email: string, customProfile?: CustomerProfil
   const normalizedEmail = email.trim().toLowerCase();
 
   // 1. Super Admin (Platform Owner)
-  if (normalizedEmail === SUPER_ADMIN_EMAIL.toLowerCase()) {
+  if (SUPER_ADMIN_EMAILS.map(e => e.toLowerCase()).includes(normalizedEmail)) {
+    const isDedoro = normalizedEmail === 'dedoro888@gmail.com';
     return {
-      email: SUPER_ADMIN_EMAIL,
-      name: 'Rume Obire',
+      email: normalizedEmail,
+      name: isDedoro ? 'dedoro888' : 'Rume Obire',
       role: 'super_admin',
       roleLabel: 'Super Admin (Platform Owner)',
       targetScreen: 'super_admin_console',

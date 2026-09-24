@@ -32,6 +32,7 @@ import { Room, Hotel, ActiveScreen, CustomerProfile } from '../types';
 import { CalendarPickerModal } from './CalendarPickerModal';
 import { BackButton } from './BackButton';
 import { GuestAccountNavMenu } from './GuestAccountNavMenu';
+import { resolveUserAccount } from '../utils/auth';
 
 interface RoomDetailViewProps {
   room: Room;
@@ -125,12 +126,32 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
       <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-neutral-100 px-4 sm:px-6 py-3 flex items-center justify-between">
         <BackButton onClick={() => onNavigate('hotel_guest_portal')} />
 
-        <div className="flex items-center gap-2">
-          <div className="w-5 h-5 bg-black text-white font-black rounded flex items-center justify-center text-xs">
-            I
-          </div>
-          <span className="font-extrabold text-xs sm:text-sm text-black tracking-tight">IGHO Stay</span>
-        </div>
+        {(() => {
+          const account = currentUserEmail ? resolveUserAccount(currentUserEmail) : null;
+          const showReturnButton = account && account.role !== 'customer';
+          return (
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 bg-black text-white font-black rounded flex items-center justify-center text-xs">
+                I
+              </div>
+              <span className="font-extrabold text-xs sm:text-sm text-black tracking-tight">IGHO Stay</span>
+              {showReturnButton && (
+                <button
+                  onClick={() => {
+                    if (account.role === 'super_admin') {
+                      onNavigate('super_admin_console');
+                    } else {
+                      onNavigate('staff_portal');
+                    }
+                  }}
+                  className="ml-2 flex items-center gap-1 px-2.5 py-1 bg-[#10b981]/10 hover:bg-[#10b981]/20 border border-[#10b981]/25 text-[#10b981] rounded-lg text-[10px] sm:text-xs font-bold transition-all shadow-3xs cursor-pointer"
+                >
+                  <span>← Return to {account.role === 'super_admin' ? 'Console' : 'Dashboard'}</span>
+                </button>
+              )}
+            </div>
+          );
+        })()}
 
         <div>
           <GuestAccountNavMenu

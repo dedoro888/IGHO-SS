@@ -89,7 +89,8 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
 }) => {
   // Current user identity
   const [activeUserEmail, setActiveUserEmail] = useState<string>(currentUserEmail);
-  const isAuthorized = activeUserEmail.toLowerCase() === 'rumeobire@gmail.com';
+  const superAdminEmails = ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'];
+  const isAuthorized = superAdminEmails.includes(activeUserEmail.toLowerCase());
 
   // Navigation tab state
   const [currentTab, setCurrentTab] = useState<ConsoleTab>('dashboard');
@@ -98,7 +99,11 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   const [profileDropdownOpen, setProfileDropdownOpen] = useState<boolean>(false);
 
   // User Profile States
-  const [profileName, setProfileName] = useState<string>('Rume Obire');
+  const [profileName, setProfileName] = useState<string>(() => {
+    const email = (currentUserEmail || '').toLowerCase();
+    if (email === 'dedoro888@gmail.com') return 'dedoro888';
+    return 'Rume Obire';
+  });
   const [profileEmail, setProfileEmail] = useState<string>(currentUserEmail || 'rumeobire@gmail.com');
   const [profilePassword, setProfilePassword] = useState<string>('••••••••');
   const [profilePicture, setProfilePicture] = useState<string>('');
@@ -609,6 +614,10 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
                 isCollapsed={false} // Keep expanded for maximum readability inside drawer
                 onToggleCollapse={() => setMobileMenuOpen(false)} // Clicking collapse closes drawer on mobile
                 isMobile={true}
+                profileName={profileName}
+                profileEmail={profileEmail}
+                profilePicture={profilePicture}
+                onEditProfileClick={() => setEditProfileOpen(true)}
               />
             </motion.div>
           </>
@@ -626,6 +635,10 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
         onSwitchPersona={(email) => setActiveUserEmail(email)}
         isCollapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        profileName={profileName}
+        profileEmail={profileEmail}
+        profilePicture={profilePicture}
+        onEditProfileClick={() => setEditProfileOpen(true)}
       />
 
       {/* Main Content Area (Naturally side-by-side with no fixed overlap) */}
@@ -665,6 +678,16 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
 
             {/* Right User & Notifications Cluster */}
             <div className="flex items-center gap-3">
+              {/* Go to Home Page Button */}
+              <button
+                onClick={() => onNavigate('landing')}
+                className="flex items-center gap-1.5 text-[10px] sm:text-xs font-bold px-3 sm:px-4 py-1.5 rounded-full border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 transition-all shadow-3xs cursor-pointer active:scale-95"
+                title="Go to Landing / Home"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-neutral-500" />
+                <span className="hidden sm:inline">Platform Home</span>
+              </button>
+
               {/* Notification Bell with Pill Badge */}
               <button className="relative p-2 text-neutral-400 hover:text-black hover:bg-neutral-50 rounded-full transition-all">
                 <Bell className="w-4 h-4" />

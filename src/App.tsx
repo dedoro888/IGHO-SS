@@ -160,8 +160,9 @@ export default function App() {
   useEffect(() => {
     const handleHashRouting = () => {
       const hash = window.location.hash.toLowerCase();
+      const superAdminEmails = ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'];
       if (hash === '#console' || hash === '#/console' || window.location.pathname === '/console') {
-        if (currentUserEmail.toLowerCase() === 'rumeobire@gmail.com') {
+        if (superAdminEmails.includes(currentUserEmail.toLowerCase())) {
           setActiveScreen('super_admin_console');
         } else {
           // Strictly block non-super-admins from /console
@@ -177,10 +178,11 @@ export default function App() {
 
   const navigateTo = (screen: ActiveScreen, authEmail?: string) => {
     const emailToCheck = (authEmail || currentUserEmail || '').trim().toLowerCase();
+    const superAdminEmails = ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'];
 
     if (screen === 'super_admin_console') {
-      if (emailToCheck !== 'rumeobire@gmail.com') {
-        alert('Access Denied: IGHO Console is strictly restricted to the IGHO Platform Super Admin (rumeobire@gmail.com).');
+      if (!superAdminEmails.includes(emailToCheck)) {
+        alert('Access Denied: IGHO Console is strictly restricted to authorized IGHO Platform Super Admins.');
         return;
       }
       window.location.hash = 'console';

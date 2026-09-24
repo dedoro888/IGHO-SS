@@ -78,7 +78,19 @@ export interface Room {
   type: string; // e.g. 'Luxury Suite', 'Presidential Suite', 'Standard Double', etc.
   typeName: string; // e.g. 'Cozy luxury suite with modern amenities'
   pricePerNight: number; // in Naira (₦)
-  status: 'available' | 'occupied' | 'reserved' | 'cleaning' | 'maintenance';
+  status:
+    | 'Vacant / Clean'
+    | 'Vacant / Dirty'
+    | 'Occupied / Clean'
+    | 'Occupied / Needs Service'
+    | 'Cleaning in Progress'
+    | 'Inspected'
+    | 'Maintenance'
+    | 'available'
+    | 'occupied'
+    | 'reserved'
+    | 'cleaning'
+    | 'maintenance';
   floor: number;
   maxGuests: number;
   roomSize: number; // sqm

@@ -45,7 +45,8 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
   const isLoggedIn = Boolean(currentUserEmail && currentUserEmail.trim() !== '');
-  const isSuperAdmin = currentUserEmail.trim().toLowerCase() === 'rumeobire@gmail.com';
+  const superAdminEmails = ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'];
+  const isSuperAdmin = isLoggedIn && superAdminEmails.includes(currentUserEmail.trim().toLowerCase());
 
   const displayName = currentGuestProfile
     ? `${currentGuestProfile.firstName || ''} ${currentGuestProfile.lastName || ''}`.trim() ||
@@ -170,7 +171,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-xl border-b border-neutral-200/40 px-4 sm:px-6 py-3 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.02),0_4px_6px_-2px_rgba(0,0,0,0.01)] transition-all">
+    <header className="sticky top-0 z-40 bg-white/85 backdrop-blur-xl border-b border-neutral-200/40 px-4 sm:px-6 py-3 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.02),0_4px_6px_-2px_rgba(0,0,0,0.01)] transition-colors duration-200">
       <div className="flex items-center justify-between max-w-6xl xl:max-w-7xl 2xl:max-w-[1400px] mx-auto">
         {/* Brand Logo */}
         <button

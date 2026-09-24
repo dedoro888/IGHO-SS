@@ -705,7 +705,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
        <motion.aside
          layout="size"
          animate={{ width: sidebarCollapsed ? 80 : 272 }}
-         transition={{ type: 'spring', damping: 28, stiffness: 280 }}
+         transition={{ duration: 0.3, ease: 'easeInOut' }}
          className={`fixed z-50 bg-transparent text-white flex flex-col justify-between top-4 bottom-4 left-4 px-5 ${
            mobileSidebarOpen ? 'translate-x-0' : '-translate-x-[calc(100%+2rem)] md:translate-x-0'
          }`}
@@ -746,18 +746,9 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
            {/* Navigation Links */}
            <div className="space-y-1.5 w-full">
              <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest px-4 font-mono h-6 flex items-center shrink-0">
-               <AnimatePresence initial={false}>
-                 {!sidebarCollapsed && (
-                   <motion.span
-                     initial={{ opacity: 0 }}
-                     animate={{ opacity: 1 }}
-                     exit={{ opacity: 0 }}
-                     transition={{ duration: 0.15 }}
-                   >
-                     Operations
-                   </motion.span>
-                 )}
-               </AnimatePresence>
+                <span className={`transition-all duration-300 ${sidebarCollapsed ? 'opacity-0 scale-75' : 'opacity-100'}`}>
+                  Operations
+                </span>
              </div>
              {sidebarItems.map((item) => {
                const Icon = item.icon;
@@ -808,54 +799,80 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
            </div>
          </div>
 
-         {/* Footer Log Out and Collapse buttons in sidebar */}
-         <div className="pt-4 border-t border-neutral-850 mt-auto flex flex-col gap-2 w-full shrink-0">
-           {/* Log Out */}
-           <button
-             onClick={() => {
-               onNavigate('landing');
-             }}
-             title="Log Out"
-             className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border-rose-500/20 hover:border-rose-500/40 ${
-               sidebarCollapsed ? 'w-10' : 'w-full'
-             }`}
-           >
-             <div className="w-10 h-10 flex items-center justify-center shrink-0">
-               <LogOut className="w-4 h-4 shrink-0 text-rose-400" />
-             </div>
-             {!sidebarCollapsed && (
-               <span className="text-xs font-bold whitespace-nowrap ml-1">
-                 Log Out
-               </span>
-             )}
-           </button>
+          {/* Footer Sections */}
+          <div className="mt-auto space-y-3 w-full shrink-0 pt-4 border-t border-neutral-850">
+            {/* Section 3: Profile Pill */}
+            <button
+              onClick={() => setEditProfileOpen(true)}
+              title="Edit Profile"
+              className={`flex items-center gap-2.5 bg-black border border-neutral-850 hover:border-neutral-700 rounded-full cursor-pointer transition-all duration-300 ${
+                sidebarCollapsed ? 'w-10 h-10 justify-center p-0' : 'w-full px-3.5 py-1.5'
+              }`}
+            >
+              {profilePicture ? (
+                <img src={profilePicture} alt="Profile" className="w-7 h-7 rounded-full object-cover shadow-xs shrink-0" />
+              ) : (
+                <div className="w-7 h-7 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-[10px] shadow-xs shrink-0">
+                  {profileName.split(' ').map(n => n[0]).join('').toUpperCase()}
+                </div>
+              )}
+              {!sidebarCollapsed && (
+                <div className="min-w-0 text-left leading-tight flex-1">
+                  <p className="text-[11px] font-extrabold text-white truncate">{profileName}</p>
+                  <p className="text-[9px] text-[#10b981] font-mono truncate">{profileEmail}</p>
+                </div>
+              )}
+            </button>
 
-           {/* Collapse */}
-           <button
-             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-             title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-             className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700 ${
-               sidebarCollapsed ? 'w-10' : 'w-full'
-             }`}
-           >
-             <div className="w-10 h-10 flex items-center justify-center shrink-0">
-               {sidebarCollapsed ? (
-                 <ChevronRight className="w-4 h-4 text-neutral-400 font-bold" />
-               ) : (
-                 <ChevronLeft className="w-4 h-4 text-white font-bold" />
-               )}
-             </div>
-             {!sidebarCollapsed && (
-               <span className="text-xs font-bold whitespace-nowrap ml-1">
-                 Collapse
-               </span>
-             )}
-           </button>
-         </div>
+            {/* Section 1: Collapse and Logout */}
+            <div className="flex flex-col gap-2 w-full">
+              {/* Collapse */}
+              <button
+                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+                className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700 ${
+                  sidebarCollapsed ? 'w-10' : 'w-full'
+                }`}
+              >
+                <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                  {sidebarCollapsed ? (
+                    <ChevronRight className="w-4 h-4 text-neutral-400 font-bold" />
+                  ) : (
+                    <ChevronLeft className="w-4 h-4 text-white font-bold" />
+                  )}
+                </div>
+                {!sidebarCollapsed && (
+                  <span className="text-[11px] font-bold text-neutral-400 ml-1">
+                    Collapse
+                  </span>
+                )}
+              </button>
+
+              {/* Log Out */}
+              <button
+                onClick={() => {
+                  onNavigate('landing');
+                }}
+                title="Log Out"
+                className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border-rose-500/20 hover:border-rose-500/40 ${
+                  sidebarCollapsed ? 'w-10' : 'w-full'
+                }`}
+              >
+                <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                  <LogOut className="w-4 h-4 shrink-0 text-rose-400" />
+                </div>
+                {!sidebarCollapsed && (
+                  <span className="text-[11px] font-bold whitespace-nowrap ml-1">
+                    Log Out
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
        </motion.aside>
 
       {/* MAIN VIEWPORT */}
-      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ease-in-out ${
+      <div className={`flex-1 flex flex-col min-w-0 transition-[padding] duration-300 ease-in-out ${
         sidebarCollapsed ? 'md:pl-28' : 'md:pl-[18.5rem]'
       }`}>
         {/* Top Header with Branch & Role Switcher styled as a floating pill */}
@@ -1733,11 +1750,14 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
           <main className="p-4 sm:p-6 max-w-6xl w-full">
             <HotelHousekeepingView
               hotel={hotel}
+              rooms={rooms}
+              reservations={localReservations}
               tasks={localHousekeeping}
               staff={localStaffList}
               onUpdateStatus={handleUpdateHousekeepingStatus}
               onAssignTask={handleAssignHousekeepingTask}
               onAddTask={handleAddHousekeepingTask}
+              onUpdateRoom={onUpdateRoom}
             />
           </main>
         )}

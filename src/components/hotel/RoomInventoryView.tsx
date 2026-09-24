@@ -29,7 +29,109 @@ import {
   ArrowLeft,
   DollarSign,
   Maximize2,
+  Wifi,
+  Wind,
+  Tv,
+  Bath,
+  Coffee,
+  Flame,
+  Droplets,
+  Shirt,
+  Utensils,
+  Bell,
+  Waves,
+  Dumbbell,
+  Car,
+  Eye,
+  Laptop,
+  Bed,
 } from 'lucide-react';
+
+const getAmenityIcon = (amenityName: string, className = "w-3.5 h-3.5 shrink-0") => {
+  const norm = amenityName.toLowerCase();
+  if (norm.includes('wi-fi') || norm.includes('wifi')) return <Wifi className={className} />;
+  if (norm.includes('air conditioning') || norm.includes('ac')) return <Wind className={className} />;
+  if (norm.includes('tv')) return <Tv className={className} />;
+  if (norm.includes('bathroom') || norm.includes('bath') || norm.includes('bathtub')) return <Bath className={className} />;
+  if (norm.includes('breakfast') || norm.includes('coffee') || norm.includes('tea')) return <Coffee className={className} />;
+  if (norm.includes('hot water')) return <Flame className={className} />;
+  if (norm.includes('fridge') || norm.includes('refrigerator')) return <Droplets className={className} />;
+  if (norm.includes('wardrobe') || norm.includes('hanger')) return <Shirt className={className} />;
+  if (norm.includes('room service') || norm.includes('dining') || norm.includes('food')) return <Utensils className={className} />;
+  if (norm.includes('housekeeping') || norm.includes('clean')) return <Bell className={className} />;
+  if (norm.includes('pool') || norm.includes('swimming')) return <Waves className={className} />;
+  if (norm.includes('gym') || norm.includes('fitness') || norm.includes('workout')) return <Dumbbell className={className} />;
+  if (norm.includes('parking') || norm.includes('car')) return <Car className={className} />;
+  if (norm.includes('balcony') || norm.includes('view') || norm.includes('terrace')) return <Eye className={className} />;
+  if (norm.includes('desk') || norm.includes('work') || norm.includes('workspace')) return <Laptop className={className} />;
+  if (norm.includes('bed') || norm.includes('linen') || norm.includes('bedding')) return <Bed className={className} />;
+  return <Layers className={className} />;
+};
+
+const renderRoomStatusBadge = (status: string) => {
+  const s = status.toLowerCase();
+  if (s === 'vacant / clean' || s === 'available') {
+    return (
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+        Vacant / Clean
+      </span>
+    );
+  }
+  if (s === 'vacant / dirty' || s === 'dirty') {
+    return (
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200">
+        Vacant / Dirty
+      </span>
+    );
+  }
+  if (s === 'occupied / clean' || s === 'occupied') {
+    return (
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+        Occupied / Clean
+      </span>
+    );
+  }
+  if (s === 'occupied / needs service') {
+    return (
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">
+        Occupied / Needs Service
+      </span>
+    );
+  }
+  if (s === 'cleaning in progress' || s === 'cleaning') {
+    return (
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+        Cleaning in Progress
+      </span>
+    );
+  }
+  if (s === 'inspected') {
+    return (
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">
+        Inspected
+      </span>
+    );
+  }
+  if (s === 'maintenance') {
+    return (
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-neutral-100 text-neutral-700 border border-neutral-300">
+        Maintenance
+      </span>
+    );
+  }
+  if (s === 'reserved') {
+    return (
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+        Reserved
+      </span>
+    );
+  }
+  return (
+    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-neutral-100 text-neutral-800 border border-neutral-300 capitalize">
+      {status}
+    </span>
+  );
+};
 
 interface RoomInventoryViewProps {
   hotel: Hotel;
@@ -108,6 +210,7 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
   const [newRoomPrice, setNewRoomPrice] = useState('250000');
   const [newRoomDesc, setNewRoomDesc] = useState('');
   const [newRoomPhotos, setNewRoomPhotos] = useState<string[]>([]);
+  const [newRoomAmenities, setNewRoomAmenities] = useState<string[]>([...PREDEFINED_AMENITIES.slice(0, 6)]);
   const [addRoomError, setAddRoomError] = useState<string | null>(null);
 
   // Edit Room form state
@@ -421,7 +524,7 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
       roomSize: 35,
       bed: 'Queensize',
       description: newRoomDesc || `Well-appointed ${finalType} with luxury conveniences.`,
-      amenities: PREDEFINED_AMENITIES.slice(0, 6),
+      amenities: newRoomAmenities,
       images: newRoomPhotos,
     };
 
@@ -430,6 +533,7 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
     setNewRoomNumber('');
     setNewRoomDesc('');
     setNewRoomPhotos([]);
+    setNewRoomAmenities([...PREDEFINED_AMENITIES.slice(0, 6)]);
     setAddRoomError(null);
   };
 
@@ -767,32 +871,7 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
 
                             <div className="flex items-center gap-2 flex-wrap">
                               {/* Status badge */}
-                              {room.status === 'available' ? (
-                                <>
-                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                    Available
-                                  </span>
-                                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white text-emerald-600 border border-emerald-200">
-                                    Not Reserved
-                                  </span>
-                                </>
-                              ) : room.status === 'occupied' ? (
-                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
-                                  Occupied
-                                </span>
-                              ) : room.status === 'reserved' ? (
-                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                                  Reserved
-                                </span>
-                              ) : room.status === 'cleaning' ? (
-                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                                  Cleaning
-                                </span>
-                              ) : (
-                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-300">
-                                  Maintenance
-                                </span>
-                              )}
+                              {renderRoomStatusBadge(room.status)}
 
                               <button
                                 onClick={() => handleOpenEditRoom(room)}
@@ -904,27 +983,7 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
 
                       {/* Status */}
                       <td className="py-3 px-4">
-                        {room.status === 'available' ? (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            available
-                          </span>
-                        ) : room.status === 'occupied' ? (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
-                            occupied
-                          </span>
-                        ) : room.status === 'reserved' ? (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                            reserved
-                          </span>
-                        ) : room.status === 'cleaning' ? (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                            cleaning
-                          </span>
-                        ) : (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-300">
-                            maintenance
-                          </span>
-                        )}
+                        {renderRoomStatusBadge(room.status)}
                       </td>
 
                       {/* Guest / Reservation */}
@@ -942,13 +1001,24 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
                           <select
                             value={room.status}
                             onChange={(e) => handleChangeRoomStatus(room, e.target.value as any)}
-                            className="text-[11px] font-semibold px-2.5 py-1 border border-neutral-200 rounded-full bg-white focus:outline-none focus:border-black"
+                            className="text-[11px] font-semibold px-2.5 py-1 border border-neutral-200 rounded-lg bg-white focus:outline-none focus:border-black"
                           >
-                            <option value="available">available</option>
-                            <option value="occupied">occupied</option>
-                            <option value="reserved">reserved</option>
-                            <option value="cleaning">cleaning</option>
-                            <option value="maintenance">maintenance</option>
+                            <optgroup label="Operational Statuses">
+                              <option value="Vacant / Clean">Vacant / Clean</option>
+                              <option value="Vacant / Dirty">Vacant / Dirty</option>
+                              <option value="Occupied / Clean">Occupied / Clean</option>
+                              <option value="Occupied / Needs Service">Occupied / Needs Service</option>
+                              <option value="Cleaning in Progress">Cleaning in Progress</option>
+                              <option value="Inspected">Inspected</option>
+                              <option value="Maintenance">Maintenance</option>
+                            </optgroup>
+                            <optgroup label="Legacy Statuses">
+                              <option value="available">available</option>
+                              <option value="occupied">occupied</option>
+                              <option value="reserved">reserved</option>
+                              <option value="cleaning">cleaning</option>
+                              <option value="maintenance">maintenance</option>
+                            </optgroup>
                           </select>
 
                           <button
@@ -1084,6 +1154,39 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
                   placeholder="Water, king size bed, tv, balcony, 24/7 room service, office"
                   className="w-full px-4 py-2.5 rounded-2xl border border-neutral-300 text-xs focus:outline-none focus:border-black"
                 />
+              </div>
+
+              {/* Amenities selection grid */}
+              <div className="space-y-2 pt-1 border-t border-neutral-100">
+                <label className="block font-semibold text-neutral-700">Amenities included</label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {PREDEFINED_AMENITIES.map((amenity) => {
+                    const isSelected = newRoomAmenities.includes(amenity);
+                    return (
+                      <button
+                        key={amenity}
+                        type="button"
+                        onClick={() => {
+                          setNewRoomAmenities((prev) =>
+                            prev.includes(amenity)
+                              ? prev.filter((a) => a !== amenity)
+                              : [...prev, amenity]
+                          );
+                        }}
+                        className={`flex items-center gap-2 px-3.5 py-2 rounded-lg border text-left text-[11px] transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-neutral-900 text-white border-neutral-900 font-semibold'
+                            : 'bg-white text-neutral-700 border-neutral-200 hover:border-neutral-300'
+                        }`}
+                      >
+                        <div className={`shrink-0 ${isSelected ? 'text-white' : 'text-neutral-400'}`}>
+                          {getAmenityIcon(amenity, "w-4 h-4")}
+                        </div>
+                        <span className="truncate">{amenity}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Room Pictures Option: Up to 6 pictures */}
@@ -1286,7 +1389,7 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
                 />
               </div>
 
-              {/* Amenities included: Selectable pill grid with checkboxes */}
+              {/* Amenities included: Selectable grid with matching Lucide icons */}
               <div className="space-y-2">
                 <label className="block font-semibold text-neutral-700">Amenities included</label>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -1303,20 +1406,14 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
                               : [...prev, amenity]
                           );
                         }}
-                        className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-left text-[11px] transition-all ${
+                        className={`flex items-center gap-2 px-3.5 py-2.5 rounded-lg border text-left text-[11px] transition-all cursor-pointer ${
                           isSelected
                             ? 'bg-neutral-900 text-white border-neutral-900 font-semibold'
                             : 'bg-white text-neutral-700 border-neutral-200 hover:border-neutral-300'
                         }`}
                       >
-                        <div
-                          className={`w-3.5 h-3.5 rounded-full flex items-center justify-center shrink-0 border ${
-                            isSelected
-                              ? 'bg-white border-white text-black'
-                              : 'border-neutral-300 bg-white'
-                          }`}
-                        >
-                          {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                        <div className={`shrink-0 ${isSelected ? 'text-white' : 'text-neutral-400'}`}>
+                          {getAmenityIcon(amenity, "w-4 h-4")}
                         </div>
                         <span className="truncate">{amenity}</span>
                       </button>
