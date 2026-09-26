@@ -366,6 +366,111 @@ export default function App() {
     saveToStorage('igho_db_guestReports', guestReports);
   }, [guestReports]);
 
+  // Real-Time Full-Stack Backend Database Synchronization Hooks
+  const [profileUpdateTrigger, setProfileUpdateTrigger] = useState(0);
+
+  useEffect(() => {
+    const handleProfileUpdate = () => {
+      setProfileUpdateTrigger((prev) => prev + 1);
+    };
+    window.addEventListener('igho_profiles_updated', handleProfileUpdate);
+    return () => window.removeEventListener('igho_profiles_updated', handleProfileUpdate);
+  }, []);
+
+  // 1. Polling interval to retrieve database state from backend (Real-Time Sync)
+  useEffect(() => {
+    let active = true;
+
+    const fetchState = async () => {
+      try {
+        const res = await fetch('/api/state');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.success && data.state && active) {
+          const s = data.state;
+          // Only update states if they exist in response to avoid overriding with empty
+          if (Array.isArray(s.hotels)) setHotels(s.hotels);
+          if (Array.isArray(s.rooms)) setRooms(s.rooms);
+          if (Array.isArray(s.reservations)) setReservations(s.reservations);
+          if (Array.isArray(s.staff)) setStaff(s.staff);
+          if (Array.isArray(s.housekeeping)) setHousekeeping(s.housekeeping);
+          if (Array.isArray(s.invitations)) setInvitations(s.invitations);
+          if (Array.isArray(s.guestReports)) setGuestReports(s.guestReports);
+          if (Array.isArray(s.plans)) setPlans(s.plans);
+          if (s.platformSettings) setPlatformSettings(s.platformSettings);
+          if (Array.isArray(s.customRoles)) setCustomRoles(s.customRoles);
+
+          if (Array.isArray(s.customerProfiles)) {
+            localStorage.setItem('igho_db_customer_profiles', JSON.stringify(s.customerProfiles));
+          }
+        }
+      } catch (err) {
+        console.warn('Backend real-time sync poll error:', err);
+      }
+    };
+
+    fetchState();
+    const interval = setInterval(fetchState, 3000); // Poll every 3 seconds for real-time synchronization
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  // 2. Automatically post state changes to the backend server (Real-Time Sync Write-Back)
+  useEffect(() => {
+    let active = true;
+    const saveState = async () => {
+      try {
+        const currentProfiles = JSON.parse(localStorage.getItem('igho_db_customer_profiles') || '[]');
+        const payload = {
+          hotels,
+          rooms,
+          reservations,
+          staff,
+          housekeeping,
+          invitations,
+          guestReports,
+          plans,
+          platformSettings,
+          customRoles,
+          customerProfiles: currentProfiles,
+        };
+
+        const res = await fetch('/api/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error('Network response not ok');
+      } catch (err) {
+        console.warn('Backend state persist write-back error:', err);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      if (active) saveState();
+    }, 500);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [
+    hotels,
+    rooms,
+    reservations,
+    staff,
+    housekeeping,
+    invitations,
+    guestReports,
+    plans,
+    platformSettings,
+    customRoles,
+    profileUpdateTrigger,
+  ]);
+
   // Booking draft state for checkout
   const [bookingDraft, setBookingDraft] = useState({
     room: rooms[0] || DEFAULT_FALLBACK_ROOM,

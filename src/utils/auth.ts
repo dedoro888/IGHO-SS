@@ -53,6 +53,8 @@ export function saveCustomerProfile(profile: CustomerProfile): void {
       profiles.push(profile);
     }
     localStorage.setItem('igho_db_customer_profiles', JSON.stringify(profiles));
+    // Dispatch custom event to notify App of customer profile updates
+    window.dispatchEvent(new Event('igho_profiles_updated'));
   } catch (e) {
     console.warn('Failed to save customer profile', e);
   }

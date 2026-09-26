@@ -106,25 +106,21 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
         transition={{ duration: 0.3, ease: 'easeInOut' }}
         className={`${
           isMobile
-            ? 'fixed top-0 bottom-0 left-0 h-full w-[272px] z-50 rounded-r-[2rem] border-r shadow-2xl bg-white/95 flex flex-col justify-between pb-6 px-5 pt-4 gap-4'
-            : 'hidden md:flex sticky top-4 h-[calc(100vh-2rem)] ml-4 my-4 flex-col justify-between gap-4 shrink-0 bg-transparent shadow-none border-none px-0'
+            ? 'fixed top-0 bottom-0 left-0 h-full w-[272px] z-50 rounded-r-[2rem] border-r shadow-2xl bg-white/95 flex flex-col justify-start pb-6 px-5 pt-4 gap-4'
+            : 'hidden md:flex sticky top-4 h-[calc(100vh-2rem)] ml-4 my-4 flex-col justify-start gap-4 shrink-0 bg-transparent shadow-none border-none px-0'
         }`}
       >
         {/* SECTION 1: HEADER BRANDING PILL */}
         <div
-          className={`flex flex-row items-center justify-center w-full shrink-0 relative bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 ${
-            isMobile
-              ? 'rounded-2xl p-4 h-16'
-              : isCollapsed
-              ? 'rounded-[2rem] p-2 h-16'
-              : 'rounded-[2rem] px-5 py-3.5 h-16'
-          }`}
+          className="flex flex-row items-center justify-center w-full shrink-0 relative bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-4 h-16"
         >
           {isCollapsed ? (
-            <IghoOfficialEmblem className="w-7 h-7 mx-auto cursor-pointer" />
+            <div className="flex items-center justify-center w-full">
+              <IghoOfficialEmblem className="w-7 h-7 cursor-pointer" />
+            </div>
           ) : (
             <div className="flex items-center gap-2.5 min-w-0 w-full justify-start">
-              <IghoOfficialEmblem className="w-7 h-7 cursor-pointer" />
+              <IghoOfficialEmblem className="w-7 h-7 cursor-pointer shrink-0" />
               <div className="flex flex-col text-left leading-tight min-w-0">
                 <div className="flex items-center gap-1">
                   <span className="font-extrabold text-[12px] tracking-tight text-neutral-900 font-sans">IGHO</span>
@@ -141,22 +137,16 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
 
         {/* SECTION 2: NAVIGATION & SCROLLABLE CONTROLS LIST */}
         <div
-          className={`flex-1 flex flex-col min-h-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 ${
-            isMobile
-              ? 'rounded-2xl p-4'
-              : isCollapsed
-              ? 'rounded-[2rem] p-3'
-              : 'rounded-[2rem] p-5'
-          }`}
+          className="flex flex-col shrink-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-4 nav-second-segment"
         >
-          <div className="flex-1 overflow-y-auto space-y-2.5 scrollbar-thin scrollbar-thumb-neutral-200 text-xs w-full">
+          <div className="max-h-[55vh] overflow-y-auto space-y-2.5 scrollbar-thin scrollbar-thumb-neutral-200 text-xs w-full">
             {/* Overview Tab Link */}
-            <div className="flex justify-start w-full">
+            <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
               <button
                 onClick={() => onSelectTab('dashboard')}
                 title="Overview"
                 className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
-                  isCollapsed ? 'w-10' : 'w-full'
+                  isCollapsed ? 'w-10 justify-center' : 'w-full'
                 } ${
                   currentTab === 'dashboard'
                     ? 'bg-black border-white text-white font-bold shadow-md'
@@ -174,7 +164,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: -10 }}
                       transition={{ duration: 0.15 }}
-                      className="text-xs font-bold whitespace-nowrap overflow-hidden ml-1"
+                      className="text-[11px] font-bold whitespace-nowrap overflow-hidden ml-1"
                     >
                       Overview
                     </motion.span>
@@ -184,7 +174,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
             </div>
 
             {/* Organizations Group */}
-            <div className="relative flex justify-start w-full group">
+            <div className={`relative flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full group`}>
               <button
                 onClick={() => {
                   if (isCollapsed) {
@@ -195,7 +185,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                 }}
                 title="Organizations"
                 className={`flex items-center justify-between h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
-                  isCollapsed ? 'w-10' : 'w-full pr-4'
+                  isCollapsed ? 'w-10 justify-center' : 'w-full pr-4'
                 } ${
                   isOrgTab
                     ? 'bg-black border-white text-white font-bold shadow-md'
@@ -214,7 +204,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                         animate={{ opacity: 1, x: 0 }}
                         exit={{ opacity: 0, x: -10 }}
                         transition={{ duration: 0.15 }}
-                        className="text-xs font-bold whitespace-nowrap overflow-hidden ml-1"
+                        className="text-[11px] font-bold whitespace-nowrap overflow-hidden ml-1"
                       >
                         Organizations
                       </motion.span>
@@ -344,21 +334,23 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
 
             {/* Secondary Controls Links */}
             <div className="pt-2 space-y-1.5 w-full">
-              <div className="px-4 text-[10px] font-bold text-neutral-500 uppercase tracking-widest font-mono h-6 flex items-center shrink-0">
-                <span className={`transition-all duration-300 ${isCollapsed ? 'opacity-0 scale-75' : 'opacity-100'}`}>
-                  Controls
-                </span>
+              <div className="px-4 text-[10px] font-bold text-neutral-500 uppercase tracking-widest font-mono flex items-center shrink-0 h-6 mt-2">
+                {isCollapsed ? (
+                  <div className="w-4 h-[1px] bg-neutral-200/60 mx-auto" />
+                ) : (
+                  <span>Controls</span>
+                )}
               </div>
               {secondaryNavItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = currentTab === item.id;
                 return (
-                  <div key={item.id} className="flex justify-start w-full">
+                  <div key={item.id} className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
                     <button
                       onClick={() => onSelectTab(item.id)}
                       title={item.label}
                       className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
-                        isCollapsed ? 'w-10' : 'w-full'
+                        isCollapsed ? 'w-10 justify-center' : 'w-full'
                       } ${
                         isActive
                           ? 'bg-black border-white text-white font-bold shadow-md'
@@ -376,7 +368,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                             animate={{ opacity: 1, x: 0 }}
                             exit={{ opacity: 0, x: -10 }}
                             transition={{ duration: 0.15 }}
-                            className="text-[11px] font-semibold whitespace-nowrap overflow-hidden ml-1"
+                            className="text-[11px] font-bold whitespace-nowrap overflow-hidden ml-1"
                           >
                             {item.label}
                           </motion.span>
@@ -402,17 +394,19 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
 
             {/* Infrastructure Section */}
             <div className="pt-2 space-y-1.5 w-full border-t border-neutral-100 mt-2">
-              <div className="px-4 text-[10px] font-bold text-neutral-500 uppercase tracking-widest font-mono h-6 flex items-center shrink-0">
-                <span className={`transition-all duration-300 ${isCollapsed ? 'opacity-0 scale-75' : 'opacity-100'}`}>
-                  Infrastructure
-                </span>
+              <div className="px-4 text-[10px] font-bold text-neutral-500 uppercase tracking-widest font-mono flex items-center shrink-0 h-6 mt-2">
+                {isCollapsed ? (
+                  <div className="w-4 h-[1px] bg-neutral-200/60 mx-auto" />
+                ) : (
+                  <span>Infrastructure</span>
+                )}
               </div>
-              <div className="flex justify-start w-full">
+              <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
                 <button
                   onClick={() => onSelectTab('storage')}
                   title="Storage Usage"
                   className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
-                    isCollapsed ? 'w-10' : 'w-full'
+                    isCollapsed ? 'w-10 justify-center' : 'w-full'
                   } ${
                     currentTab === 'storage'
                       ? 'bg-black border-white text-white font-bold shadow-md'
@@ -429,7 +423,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                         animate={{ opacity: 1, x: 0 }}
                         exit={{ opacity: 0, x: -10 }}
                         transition={{ duration: 0.15 }}
-                        className="text-[11px] font-semibold whitespace-nowrap overflow-hidden ml-1"
+                        className="text-[11px] font-bold whitespace-nowrap overflow-hidden ml-1"
                       >
                         Storage Usage
                       </motion.span>
@@ -443,84 +437,84 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
 
         {/* SECTION 3: FOOTER PROFILE, COLLAPSE & LOGOUT PILL */}
         <div
-          className={`shrink-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 space-y-3 ${
-            isMobile
-              ? 'rounded-2xl p-4'
-              : isCollapsed
-              ? 'rounded-[2rem] p-3'
-              : 'rounded-[2rem] p-5'
-          }`}
+          className="shrink-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 space-y-3 rounded-[2rem] p-4"
         >
           {/* Section 3: Profile Pill */}
-          <button
-            onClick={onEditProfileClick}
-            title="Edit Admin Profile"
-            className={`flex items-center gap-2.5 hover:bg-neutral-50/80 border border-neutral-200/60 rounded-full cursor-pointer transition-all duration-300 ${
-              isCollapsed ? 'w-10 h-10 justify-center p-0' : 'w-full px-3.5 py-1.5'
-            }`}
-          >
-            {profilePicture ? (
-              <img src={profilePicture} alt="Profile" className="w-7 h-7 rounded-full object-cover shadow-xs shrink-0" />
-            ) : (
-              <div className="w-7 h-7 rounded-full overflow-hidden shadow-xs shrink-0">
-                <IghoOfficialEmblem className="w-full h-full" inverted={false} />
-              </div>
-            )}
-            <AnimatePresence initial={false}>
-              {!isCollapsed && (
-                <motion.div
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -10 }}
-                  transition={{ duration: 0.15 }}
-                  className="min-w-0 text-left leading-tight flex-1"
-                >
-                  <p className="text-[11px] font-extrabold text-neutral-900 truncate">{profileName}</p>
-                  <p className="text-[9px] text-[#10b981] font-mono truncate">{profileEmail}</p>
-                </motion.div>
+          <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
+            <button
+              onClick={onEditProfileClick}
+              title="Edit Admin Profile"
+              className={`flex items-center gap-2.5 hover:bg-neutral-50/80 border border-neutral-200/60 rounded-full cursor-pointer transition-all duration-300 ${
+                isCollapsed ? 'w-10 h-10 justify-center p-0' : 'w-full px-3.5 py-1.5'
+              }`}
+            >
+              {profilePicture ? (
+                <img src={profilePicture} alt="Profile" className="w-7 h-7 rounded-full object-cover shadow-xs shrink-0" />
+              ) : (
+                <div className="w-7 h-7 rounded-full overflow-hidden shadow-xs shrink-0">
+                  <IghoOfficialEmblem className="w-full h-full" inverted={false} />
+                </div>
               )}
-            </AnimatePresence>
-          </button>
+              <AnimatePresence initial={false}>
+                {!isCollapsed && (
+                  <motion.div
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
+                    transition={{ duration: 0.15 }}
+                    className="min-w-0 text-left leading-tight flex-1"
+                  >
+                    <p className="text-[11px] font-extrabold text-neutral-900 truncate">{profileName}</p>
+                    <p className="text-[9px] text-[#10b981] font-mono truncate">{profileEmail}</p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </button>
+          </div>
 
           {/* Section 1: Collapse and Logout */}
           <div className="flex flex-col gap-2 w-full">
             {/* Collapse */}
-            <button
-              onClick={onToggleCollapse}
-              title={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
-              className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700 ${
-                isCollapsed ? 'w-10' : 'w-full'
-              }`}
-            >
-              <div className="w-10 h-10 flex items-center justify-center shrink-0">
-                {isCollapsed ? (
-                  <ChevronRight className="w-4 h-4 text-neutral-400 font-bold" />
-                ) : (
-                  <ChevronLeft className="w-4 h-4 text-white font-bold" />
+            <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
+              <button
+                onClick={onToggleCollapse}
+                title={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
+                className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700 ${
+                  isCollapsed ? 'w-10 justify-center' : 'w-full'
+                }`}
+              >
+                <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                  {isCollapsed ? (
+                    <ChevronRight className="w-4 h-4 text-neutral-400 font-bold" />
+                  ) : (
+                    <ChevronLeft className="w-4 h-4 text-white font-bold" />
+                  )}
+                </div>
+                {!isCollapsed && (
+                  <span className="text-[11px] font-bold whitespace-nowrap ml-1">Collapse</span>
                 )}
-              </div>
-              {!isCollapsed && (
-                <span className="text-[11px] font-bold whitespace-nowrap ml-1">Collapse</span>
-              )}
-            </button>
+              </button>
+            </div>
 
             {/* Log Out */}
-            <button
-              onClick={() => {
-                if (onNavigate) onNavigate('guest_login');
-              }}
-              title="Log Out"
-              className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 text-rose-600 hover:text-rose-700 bg-rose-50/50 hover:bg-rose-50 border-rose-100 hover:border-rose-200 ${
-                isCollapsed ? 'w-10' : 'w-full'
-              }`}
-            >
-              <div className="w-10 h-10 flex items-center justify-center shrink-0">
-                <LogOut className="w-4 h-4 shrink-0" />
-              </div>
-              {!isCollapsed && (
-                <span className="text-[11px] font-bold whitespace-nowrap ml-1">Log Out</span>
-              )}
-            </button>
+            <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
+              <button
+                onClick={() => {
+                  if (onNavigate) onNavigate('guest_login');
+                }}
+                title="Log Out"
+                className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 text-rose-600 hover:text-rose-700 bg-rose-50/50 hover:bg-rose-50 border-rose-100 hover:border-rose-200 ${
+                  isCollapsed ? 'w-10 justify-center' : 'w-full'
+                }`}
+              >
+                <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                  <LogOut className="w-4 h-4 shrink-0" />
+                </div>
+                {!isCollapsed && (
+                  <span className="text-[11px] font-bold whitespace-nowrap ml-1">Log Out</span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </motion.aside>
