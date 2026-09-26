@@ -43,6 +43,8 @@ import {
 import { INITIAL_FEEDBACK as INITIAL_FEEDBACKS } from '../data/mockData';
 
 import { ConsoleSidebar, ConsoleTab } from './console/ConsoleSidebar';
+import { ConsoleStorageView } from './console/ConsoleStorageView';
+import { IghoOfficialEmblem } from './IghoLogo';
 import { ConsoleDashboardView } from './console/ConsoleDashboardView';
 import { ConsoleHotelsView } from './console/ConsoleHotelsView';
 import { ConsoleSchoolsView } from './console/ConsoleSchoolsView';
@@ -642,7 +644,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
       />
 
       {/* Main Content Area (Naturally side-by-side with no fixed overlap) */}
-      <div className="flex-1 flex flex-col min-w-0 bg-neutral-50 transition-all duration-300 ease-in-out">
+      <div className="flex-1 flex flex-col min-w-0 bg-neutral-50">
         {/* Top Floating Navbar Capsule */}
         <div className="pt-4 px-4 sm:px-8">
           <header className="bg-white border border-neutral-200/80 shadow-xs rounded-full px-5 py-2 flex items-center justify-between gap-4 text-neutral-900">
@@ -657,7 +659,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
               </button>
 
               {/* Minimalist Indicator when Sidebar is Collapsed / on mobile */}
-              {(sidebarCollapsed || mobileMenuOpen || true) && (
+              {(sidebarCollapsed || mobileMenuOpen) && (
                 <div className="flex items-center gap-2">
                   <span className="font-black text-sm text-black">IGHO</span>
                   <span className="text-neutral-300">|</span>
@@ -704,10 +706,10 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
                   title="Profile Menu"
                 >
                   {profilePicture ? (
-                    <img src={profilePicture} alt="Profile" className="w-8 h-8 rounded-full object-cover shadow-sm" />
+                    <img src={profilePicture} alt="Profile" className="w-8 h-8 rounded-full object-cover shadow-sm shrink-0" />
                   ) : (
-                    <div className="w-8 h-8 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-xs shadow-sm">
-                      {profileName.split(' ').map(n => n[0]).join('').toUpperCase()}
+                    <div className="w-8 h-8 rounded-full overflow-hidden shadow-sm shrink-0">
+                      <IghoOfficialEmblem className="w-full h-full" inverted={false} />
                     </div>
                   )}
                   <div className="hidden sm:block text-left leading-tight">
@@ -728,8 +730,8 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
                         {profilePicture ? (
                           <img src={profilePicture} alt="Profile" className="w-8 h-8 rounded-full object-cover shadow-sm shrink-0" />
                         ) : (
-                          <div className="w-8 h-8 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-xs shadow-sm shrink-0">
-                            {profileName.split(' ').map(n => n[0]).join('').toUpperCase()}
+                          <div className="w-8 h-8 rounded-full overflow-hidden shadow-sm shrink-0">
+                            <IghoOfficialEmblem className="w-full h-full" inverted={false} />
                           </div>
                         )}
                         <div className="min-w-0">
@@ -901,6 +903,16 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
           {currentTab === 'audit' && (
             <ConsoleAuditLogsView
               auditLogs={auditLogs}
+              onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+            />
+          )}
+
+          {currentTab === 'storage' && (
+            <ConsoleStorageView
+              hotels={hotels}
+              rooms={rooms}
+              reservations={reservations}
+              staff={staff}
               onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
             />
           )}

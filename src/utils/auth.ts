@@ -83,6 +83,38 @@ export function resolveUserAccount(email: string, customProfile?: CustomerProfil
     };
   }
 
+  // Check dynamic staff list in localStorage first to resolve newly created hotel accounts
+  if (typeof window !== 'undefined') {
+    try {
+      const rawStaff = localStorage.getItem('igho_db_staff');
+      if (rawStaff) {
+        const staffList = JSON.parse(rawStaff);
+        const foundStaff = staffList.find((s: any) => s.email?.toLowerCase() === normalizedEmail);
+        if (foundStaff) {
+          let orgName = 'Palmview Grand Hotel';
+          const rawHotels = localStorage.getItem('igho_db_hotels');
+          if (rawHotels) {
+            const hotelsList = JSON.parse(rawHotels);
+            const hotel = hotelsList.find((h: any) => h.id === foundStaff.hotelId);
+            if (hotel) orgName = hotel.name;
+          }
+          return {
+            email: normalizedEmail,
+            name: foundStaff.name || foundStaff.email.split('@')[0],
+            role: foundStaff.role,
+            roleLabel: String(foundStaff.role).replace('_', ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+            targetScreen: 'staff_portal',
+            organizationId: foundStaff.hotelId,
+            organizationName: orgName,
+            description: `Staff portal access for ${foundStaff.role}`,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to resolve dynamic staff member from storage', e);
+    }
+  }
+
   // If this email belongs to an explicit customer profile and is not a designated staff account,
   // ensure they are treated as a customer!
   const savedProf = customProfile || getSavedCustomerProfile(normalizedEmail);

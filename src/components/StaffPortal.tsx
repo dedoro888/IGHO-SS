@@ -703,7 +703,6 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
     <div className="min-h-screen bg-neutral-50 text-neutral-900 flex flex-col md:flex-row">
        {/* SIDEBAR (Upgraded to transparent track with standalone floating circle/pill capsule buttons) */}
        <motion.aside
-         layout="size"
          animate={{ width: sidebarCollapsed ? 80 : 272 }}
          transition={{ duration: 0.3, ease: 'easeInOut' }}
          className={`fixed z-50 bg-transparent text-white flex flex-col justify-between top-4 bottom-4 left-4 px-5 ${
@@ -816,12 +815,20 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                   {profileName.split(' ').map(n => n[0]).join('').toUpperCase()}
                 </div>
               )}
-              {!sidebarCollapsed && (
-                <div className="min-w-0 text-left leading-tight flex-1">
-                  <p className="text-[11px] font-extrabold text-white truncate">{profileName}</p>
-                  <p className="text-[9px] text-[#10b981] font-mono truncate">{profileEmail}</p>
-                </div>
-              )}
+              <AnimatePresence initial={false}>
+                {!sidebarCollapsed && (
+                  <motion.div
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
+                    transition={{ duration: 0.15 }}
+                    className="min-w-0 text-left leading-tight flex-1"
+                  >
+                    <p className="text-[11px] font-extrabold text-white truncate">{profileName}</p>
+                    <p className="text-[9px] text-[#10b981] font-mono truncate">{profileEmail}</p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </button>
 
             {/* Section 1: Collapse and Logout */}

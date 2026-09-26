@@ -11,6 +11,8 @@ import {
   Bed,
   LogOut,
   Calendar,
+  Shield,
+  Building2,
 } from 'lucide-react';
 import { ActiveScreen, CustomerProfile } from '../types';
 import { resolveUserAccount, SUPER_ADMIN_EMAIL, getSavedCustomerProfile, saveCustomerProfile } from '../utils/auth';
@@ -93,7 +95,7 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
       const resolved = resolveUserAccount(cleanEmail, userProfile || undefined);
       setLoading(false);
       onNavigate(resolved.targetScreen);
-    }, 650);
+    }, 150);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -164,7 +166,7 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
         const resolved = resolveUserAccount(cleanEmail, newAccountProfile);
         setLoading(false);
         onNavigate(resolved.targetScreen);
-      }, 700);
+      }, 150);
       return;
     }
 
@@ -202,7 +204,7 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
       const resolved = resolveUserAccount(cleanEmail, userProfile || undefined);
       setLoading(false);
       onNavigate(resolved.targetScreen);
-    }, 700);
+    }, 150);
   };
 
   return (
@@ -252,10 +254,30 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
             </div>
 
             <div className="space-y-2.5 pt-2">
+              {currentUserEmail && ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'].includes(currentUserEmail.trim().toLowerCase()) ? (
+                <button
+                  type="button"
+                  onClick={() => onNavigate('super_admin_console')}
+                  className="w-full py-3 px-4 rounded-full bg-[#10b981] hover:bg-[#0da06f] text-white text-xs font-bold transition-all active:scale-[0.99] cursor-pointer flex items-center justify-center gap-2 shadow-sm"
+                >
+                  <Shield className="w-4 h-4" />
+                  <span>Go to IGHO Super Admin Console</span>
+                </button>
+              ) : currentUserEmail && resolveUserAccount(currentUserEmail).role !== 'customer' ? (
+                <button
+                  type="button"
+                  onClick={() => onNavigate('staff_portal')}
+                  className="w-full py-3 px-4 rounded-full bg-black text-white text-xs font-bold hover:bg-neutral-800 transition-all active:scale-[0.99] cursor-pointer flex items-center justify-center gap-2 shadow-sm"
+                >
+                  <Building2 className="w-4 h-4" />
+                  <span>Go to Hotel Staff Portal</span>
+                </button>
+              ) : null}
+
               <button
                 type="button"
                 onClick={() => onNavigate('guest_dashboard')}
-                className="w-full py-3 px-4 rounded-full bg-black text-white text-xs font-bold hover:bg-neutral-800 transition-all active:scale-[0.99] cursor-pointer flex items-center justify-center gap-2"
+                className="w-full py-3 px-4 rounded-full bg-neutral-100 text-neutral-800 border border-neutral-200 text-xs font-bold hover:bg-neutral-200 transition-all active:scale-[0.99] cursor-pointer flex items-center justify-center gap-2"
               >
                 <Calendar className="w-4 h-4" />
                 <span>Go to My Stays & Bookings</span>
@@ -560,6 +582,33 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
             <span>{isRegister ? 'Create Account' : 'Sign in to IGHO Systems'}</span>
           </button>
         </form>
+
+        {/* Quick Demo Access (for convenience & testing) */}
+        {!isRegister && (
+          <div className="pt-4 border-t border-neutral-100 flex flex-col gap-2">
+            <p className="text-[10px] text-neutral-400 font-bold text-center uppercase tracking-widest font-mono">
+              Quick Access Demo Accounts
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => executeLoginWithEmail('rumeobire@gmail.com')}
+                className="py-2.5 px-3.5 text-[11px] font-bold border border-neutral-200 rounded-xl hover:border-black bg-neutral-50/50 hover:bg-white text-neutral-800 transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98]"
+              >
+                <Shield className="w-3.5 h-3.5 text-neutral-600 shrink-0" />
+                <span>Super Admin</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => executeLoginWithEmail('avendoorcompany@gmail.com')}
+                className="py-2.5 px-3.5 text-[11px] font-bold border border-neutral-200 rounded-xl hover:border-black bg-neutral-50/50 hover:bg-white text-neutral-800 transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98]"
+              >
+                <Building2 className="w-3.5 h-3.5 text-neutral-600 shrink-0" />
+                <span>Hotel Owner</span>
+              </button>
+            </div>
+          </div>
+        )}
           </>
         )}
       </div>
