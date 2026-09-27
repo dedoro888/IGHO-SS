@@ -431,3 +431,19 @@ export interface PlatformSettings {
     enableMedBayBeta: boolean;
   };
 }
+
+export interface DemoRequest {
+  id: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  orgName: string;
+  orgType: string;
+  productInterested: 'stay' | 'classroom' | 'medbay';
+  demoDate: string;
+  demoTime: string;
+  message?: string;
+  status: 'pending' | 'scheduled' | 'completed' | 'cancelled';
+  createdAt: string;
+}
+

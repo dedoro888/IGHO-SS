@@ -21,6 +21,7 @@ import {
   Lock,
 } from 'lucide-react';
 import { ActiveScreen, CustomerProfile } from '../types';
+import { IghoOfficialEmblem } from './IghoLogo';
 
 interface HeaderNavProps {
   onNavigate: (screen: ActiveScreen) => void;
@@ -181,9 +182,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
           }}
           className="flex items-center gap-2 text-left group cursor-pointer"
         >
-          <div className="w-7 h-7 bg-black text-white font-black rounded flex items-center justify-center text-sm shadow-sm group-hover:scale-105 transition-transform">
-            <span className="translate-x-[0.5px]">I</span>
-          </div>
+          <IghoOfficialEmblem className="w-7 h-7 shadow-xs group-hover:scale-105 transition-transform shrink-0" inverted={false} />
           <span className="font-extrabold text-xl tracking-tight text-black">IGHO</span>
         </button>
 

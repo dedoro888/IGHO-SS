@@ -116,11 +116,11 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
         >
           {isCollapsed ? (
             <div className="flex items-center justify-center w-full">
-              <IghoOfficialEmblem className="w-7 h-7 cursor-pointer" />
+              <IghoOfficialEmblem className="w-7 h-7 cursor-pointer animate-none" />
             </div>
           ) : (
-            <div className="flex items-center gap-2.5 min-w-0 w-full justify-start">
-              <IghoOfficialEmblem className="w-7 h-7 cursor-pointer shrink-0" />
+            <div className="flex items-center gap-2.5 min-w-0 justify-start w-full pl-[10px]">
+              <IghoOfficialEmblem className="w-7 h-7 cursor-pointer shrink-0 animate-none" />
               <div className="flex flex-col text-left leading-tight min-w-0">
                 <div className="flex items-center gap-1">
                   <span className="font-extrabold text-[12px] tracking-tight text-neutral-900 font-sans">IGHO</span>
@@ -137,16 +137,16 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
 
         {/* SECTION 2: NAVIGATION & SCROLLABLE CONTROLS LIST */}
         <div
-          className="flex flex-col shrink-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-4 nav-second-segment"
+          className="flex flex-col shrink-0 h-fit w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-4 nav-second-segment"
         >
-          <div className="max-h-[55vh] overflow-y-auto space-y-2.5 scrollbar-thin scrollbar-thumb-neutral-200 text-xs w-full">
+          <div className="h-fit space-y-2.5 text-xs w-full">
             {/* Overview Tab Link */}
             <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
               <button
                 onClick={() => onSelectTab('dashboard')}
                 title="Overview"
-                className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
-                  isCollapsed ? 'w-10 justify-center' : 'w-full'
+                className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
+                  isCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px]'
                 } ${
                   currentTab === 'dashboard'
                     ? 'bg-black border-white text-white font-bold shadow-md'
@@ -184,8 +184,8 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                   }
                 }}
                 title="Organizations"
-                className={`flex items-center justify-between h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
-                  isCollapsed ? 'w-10 justify-center' : 'w-full pr-4'
+                className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
+                  isCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px] pr-4'
                 } ${
                   isOrgTab
                     ? 'bg-black border-white text-white font-bold shadow-md'
@@ -219,7 +219,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.8 }}
                       transition={{ duration: 0.15 }}
-                      className="ml-3 shrink-0"
+                      className="ml-auto mr-1 shrink-0"
                     >
                       <ChevronDown
                         className={`w-3.5 h-3.5 text-neutral-400 transition-transform duration-300 ${
@@ -333,12 +333,12 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
             </AnimatePresence>
 
             {/* Secondary Controls Links */}
-            <div className="pt-2 space-y-1.5 w-full">
-              <div className="px-4 text-[10px] font-bold text-neutral-500 uppercase tracking-widest font-mono flex items-center shrink-0 h-6 mt-2">
+            <div className="pt-1.5 space-y-1.5 w-full">
+              <div className={`text-[10px] font-bold text-neutral-500 uppercase tracking-widest font-mono flex items-center justify-center shrink-0 h-6 mt-1 mb-1 ${isCollapsed ? 'px-4' : 'pl-[14px]'}`}>
                 {isCollapsed ? (
-                  <div className="w-4 h-[1px] bg-neutral-200/60 mx-auto" />
+                  <div className="w-4 h-[1px] bg-neutral-200/60" />
                 ) : (
-                  <span>Controls</span>
+                  <span className="w-full text-left">Controls</span>
                 )}
               </div>
               {secondaryNavItems.map((item) => {
@@ -349,8 +349,8 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                     <button
                       onClick={() => onSelectTab(item.id)}
                       title={item.label}
-                      className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
-                        isCollapsed ? 'w-10 justify-center' : 'w-full'
+                      className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
+                        isCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px] pr-4'
                       } ${
                         isActive
                           ? 'bg-black border-white text-white font-bold shadow-md'
@@ -393,20 +393,20 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
             </div>
 
             {/* Infrastructure Section */}
-            <div className="pt-2 space-y-1.5 w-full border-t border-neutral-100 mt-2">
-              <div className="px-4 text-[10px] font-bold text-neutral-500 uppercase tracking-widest font-mono flex items-center shrink-0 h-6 mt-2">
+            <div className="pt-1.5 space-y-1.5 w-full border-t border-neutral-100 mt-1.5">
+              <div className={`text-[10px] font-bold text-neutral-500 uppercase tracking-widest font-mono flex items-center justify-center shrink-0 h-6 mt-1 mb-1 ${isCollapsed ? 'px-4' : 'pl-[14px]'}`}>
                 {isCollapsed ? (
-                  <div className="w-4 h-[1px] bg-neutral-200/60 mx-auto" />
+                  <div className="w-4 h-[1px] bg-neutral-200/60" />
                 ) : (
-                  <span>Infrastructure</span>
+                  <span className="w-full text-left">Infrastructure</span>
                 )}
               </div>
               <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
                 <button
                   onClick={() => onSelectTab('storage')}
                   title="Storage Usage"
-                  className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
-                    isCollapsed ? 'w-10 justify-center' : 'w-full'
+                  className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
+                    isCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px]'
                   } ${
                     currentTab === 'storage'
                       ? 'bg-black border-white text-white font-bold shadow-md'
@@ -435,7 +435,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
           </div>
         </div>
 
-        {/* SECTION 3: FOOTER PROFILE, COLLAPSE & LOGOUT PILL */}
+        {/* SECTION 3: FOOTER PROFILE, COLLAPSE & LOGOUT PILL - Flowing immediately after Section 2 */}
         <div
           className="shrink-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 space-y-3 rounded-[2rem] p-4"
         >
@@ -445,14 +445,14 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
               onClick={onEditProfileClick}
               title="Edit Admin Profile"
               className={`flex items-center gap-2.5 hover:bg-neutral-50/80 border border-neutral-200/60 rounded-full cursor-pointer transition-all duration-300 ${
-                isCollapsed ? 'w-10 h-10 justify-center p-0' : 'w-full px-3.5 py-1.5'
+                isCollapsed ? 'w-10 h-10 justify-center p-0' : 'w-full pl-[10px] pr-3.5 py-1.5'
               }`}
             >
               {profilePicture ? (
                 <img src={profilePicture} alt="Profile" className="w-7 h-7 rounded-full object-cover shadow-xs shrink-0" />
               ) : (
-                <div className="w-7 h-7 rounded-full overflow-hidden shadow-xs shrink-0">
-                  <IghoOfficialEmblem className="w-full h-full" inverted={false} />
+                <div className="w-7 h-7 rounded-full overflow-hidden shadow-xs shrink-0 flex items-center justify-center bg-neutral-900">
+                  <IghoOfficialEmblem className="w-full h-full" inverted={true} />
                 </div>
               )}
               <AnimatePresence initial={false}>
@@ -479,8 +479,8 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
               <button
                 onClick={onToggleCollapse}
                 title={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
-                className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700 ${
-                  isCollapsed ? 'w-10 justify-center' : 'w-full'
+                className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700 ${
+                  isCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px]'
                 }`}
               >
                 <div className="w-10 h-10 flex items-center justify-center shrink-0">
@@ -503,8 +503,8 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                   if (onNavigate) onNavigate('guest_login');
                 }}
                 title="Log Out"
-                className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 text-rose-600 hover:text-rose-700 bg-rose-50/50 hover:bg-rose-50 border-rose-100 hover:border-rose-200 ${
-                  isCollapsed ? 'w-10 justify-center' : 'w-full'
+                className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 text-rose-600 hover:text-rose-700 bg-rose-50/50 hover:bg-rose-50 border-rose-100 hover:border-rose-200 ${
+                  isCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px]'
                 }`}
               >
                 <div className="w-10 h-10 flex items-center justify-center shrink-0">

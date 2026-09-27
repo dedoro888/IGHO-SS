@@ -23,13 +23,15 @@ import {
   HeartPulse,
   Hotel as HotelIcon,
 } from 'lucide-react';
-import { Hotel } from '../../types';
+import { Hotel, DemoRequest } from '../../types';
 
 interface ConsoleRegistrationsViewProps {
   hotels?: Hotel[];
   onApproveHotel?: (hotelId: string) => void;
   onRejectHotel?: (hotelId: string, reason: string) => void;
   onNavigateBreadcrumb?: () => void;
+  demoRequests?: DemoRequest[];
+  onUpdateDemoRequests?: (demos: DemoRequest[]) => void;
 }
 
 export const ConsoleRegistrationsView: React.FC<ConsoleRegistrationsViewProps> = ({
@@ -37,6 +39,8 @@ export const ConsoleRegistrationsView: React.FC<ConsoleRegistrationsViewProps> =
   onApproveHotel,
   onRejectHotel,
   onNavigateBreadcrumb,
+  demoRequests = [],
+  onUpdateDemoRequests,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [orgTypeFilter, setOrgTypeFilter] = useState<'all' | 'hotels' | 'schools' | 'hospitals'>('all');
@@ -45,6 +49,10 @@ export const ConsoleRegistrationsView: React.FC<ConsoleRegistrationsViewProps> =
   const [approvedHotelModal, setApprovedHotelModal] = useState<Hotel | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
+
+  const [activeTab, setActiveTab] = useState<'registrations' | 'demos'>('registrations');
+  const [demoSearchQuery, setDemoSearchQuery] = useState('');
+  const [demoProductFilter, setDemoProductFilter] = useState<'all' | 'stay' | 'classroom' | 'medbay'>('all');
 
   // Pending hotel registrations derived from real hotels
   const pendingHotels = hotels.filter(
@@ -68,6 +76,35 @@ export const ConsoleRegistrationsView: React.FC<ConsoleRegistrationsViewProps> =
     return matchesSearch;
   });
 
+  // Filtered demo requests
+  const filteredDemos = demoRequests.filter((d) => {
+    const q = demoSearchQuery.toLowerCase();
+    const matchesSearch =
+      !q ||
+      d.fullName.toLowerCase().includes(q) ||
+      d.email.toLowerCase().includes(q) ||
+      d.orgName.toLowerCase().includes(q) ||
+      (d.phone && d.phone.toLowerCase().includes(q));
+
+    const matchesProduct =
+      demoProductFilter === 'all' || d.productInterested === demoProductFilter;
+
+    return matchesSearch && matchesProduct;
+  });
+
+  const handleUpdateDemoStatus = (demoId: string, newStatus: any) => {
+    const updated = demoRequests.map((d) =>
+      d.id === demoId ? { ...d, status: newStatus } : d
+    );
+    if (onUpdateDemoRequests) {
+      onUpdateDemoRequests(updated);
+    }
+    // Also save to localStorage for fallback
+    try {
+      localStorage.setItem('igho_demo_requests', JSON.stringify(updated));
+    } catch {}
+  };
+
   const handleApprove = (hotel: Hotel) => {
     if (onApproveHotel) {
       onApproveHotel(hotel.id);
@@ -86,6 +123,8 @@ export const ConsoleRegistrationsView: React.FC<ConsoleRegistrationsViewProps> =
     }
   };
 
+  const pendingDemosCount = demoRequests.filter((d) => d.status === 'pending').length;
+
   return (
     <div className="space-y-6 text-neutral-900">
       {/* Breadcrumb */}
@@ -98,177 +137,418 @@ export const ConsoleRegistrationsView: React.FC<ConsoleRegistrationsViewProps> =
           <span>Dashboard</span>
         </button>
         <span className="text-neutral-300">/</span>
-        <span className="text-neutral-900 font-bold">Registration Requests Review Queue</span>
+        <span className="text-neutral-900 font-bold">Requests Queue & Inquiries</span>
       </div>
 
-      {/* Header (Hotel Admin Portal Style) */}
-      <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
-          <div className="w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center font-bold">
-            <Clock className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-black tracking-tight text-black">
-              Tenant Registration Queue
-            </h1>
-            <p className="text-xs text-neutral-500">
-              Audit and verify organization onboarding requests across IGHO Stay, Classroom, and MedBay.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
-            {pendingHotels.length} Awaiting Verification
-          </span>
-        </div>
+      {/* Sub-Tabs Selector */}
+      <div className="flex items-center gap-2 border-b border-neutral-200 pb-1">
+        <button
+          onClick={() => setActiveTab('registrations')}
+          className={`px-4 py-2 text-xs font-extrabold transition-all relative ${
+            activeTab === 'registrations'
+              ? 'text-black border-b-2 border-black font-black'
+              : 'text-neutral-500 hover:text-black'
+          }`}
+        >
+          Tenant Registrations Review Queue ({pendingHotels.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('demos')}
+          className={`px-4 py-2 text-xs font-extrabold transition-all relative ${
+            activeTab === 'demos'
+              ? 'text-black border-b-2 border-black font-black'
+              : 'text-neutral-500 hover:text-black'
+          }`}
+        >
+          Executive Demo Requests ({demoRequests.length})
+          {pendingDemosCount > 0 && (
+            <span className="ml-1.5 px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[9px] font-black font-mono">
+              {pendingDemosCount}
+            </span>
+          )}
+        </button>
       </div>
 
-      {/* Filter Bar with Organization Type Switching */}
-      <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="relative flex-1 min-w-[240px] max-w-md">
-            <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by name, city, state, or email..."
-              className="w-full bg-neutral-50 border border-neutral-200 rounded-xl pl-9 pr-3 py-2 text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black focus:bg-white transition-colors"
-            />
+      {activeTab === 'registrations' ? (
+        <>
+          {/* Header (Hotel Admin Portal Style) */}
+          <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div className="w-11 h-11 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center font-bold">
+                <Clock className="w-5 h-5" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-black tracking-tight text-black">
+                  Tenant Registration Queue
+                </h1>
+                <p className="text-xs text-neutral-500">
+                  Audit and verify organization onboarding requests across IGHO Stay, Classroom, and MedBay.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                {pendingHotels.length} Awaiting Verification
+              </span>
+            </div>
           </div>
 
-          {/* Org Type Filters */}
-          <div className="flex items-center gap-1.5 p-1 bg-neutral-100 rounded-xl text-xs font-semibold">
-            <button
-              onClick={() => setOrgTypeFilter('all')}
-              className={`px-3 py-1.5 rounded-lg transition-colors ${
-                orgTypeFilter === 'all'
-                  ? 'bg-white text-black font-bold shadow-xs'
-                  : 'text-neutral-600 hover:text-black'
-              }`}
-            >
-              All Requests
-            </button>
-            <button
-              onClick={() => setOrgTypeFilter('hotels')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
-                orgTypeFilter === 'hotels'
-                  ? 'bg-white text-black font-bold shadow-xs'
-                  : 'text-neutral-600 hover:text-black'
-              }`}
-            >
-              <HotelIcon className="w-3.5 h-3.5" />
-              <span>Hotels (IGHO Stay)</span>
-            </button>
-            <button
-              onClick={() => setOrgTypeFilter('schools')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
-                orgTypeFilter === 'schools'
-                  ? 'bg-white text-black font-bold shadow-xs'
-                  : 'text-neutral-600 hover:text-black'
-              }`}
-            >
-              <GraduationCap className="w-3.5 h-3.5" />
-              <span>Schools (Classroom)</span>
-            </button>
-            <button
-              onClick={() => setOrgTypeFilter('hospitals')}
-              className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
-                orgTypeFilter === 'hospitals'
-                  ? 'bg-white text-black font-bold shadow-xs'
-                  : 'text-neutral-600 hover:text-black'
-              }`}
-            >
-              <HeartPulse className="w-3.5 h-3.5" />
-              <span>Hospitals (MedBay)</span>
-            </button>
-          </div>
-        </div>
-      </div>
+          {/* Filter Bar with Organization Type Switching */}
+          <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="relative flex-1 min-w-[240px] max-w-md">
+                <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search by name, city, state, or email..."
+                  className="w-full bg-neutral-50 border border-neutral-200 rounded-xl pl-9 pr-3 py-2 text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black focus:bg-white transition-colors"
+                />
+              </div>
 
-      {/* Queue Table or Empty State */}
-      {filteredHotels.length === 0 ? (
-        <div className="bg-white border border-neutral-200 rounded-2xl p-12 text-center space-y-4 shadow-xs">
-          <div className="w-12 h-12 rounded-2xl bg-neutral-100 border border-neutral-200 flex items-center justify-center mx-auto text-neutral-500">
-            <FileCheck2 className="w-6 h-6" />
+              {/* Org Type Filters */}
+              <div className="flex items-center gap-1.5 p-1 bg-neutral-100 rounded-xl text-xs font-semibold">
+                <button
+                  onClick={() => setOrgTypeFilter('all')}
+                  className={`px-3 py-1.5 rounded-lg transition-colors ${
+                    orgTypeFilter === 'all'
+                      ? 'bg-white text-black font-bold shadow-xs'
+                      : 'text-neutral-600 hover:text-black'
+                  }`}
+                >
+                  All Requests
+                </button>
+                <button
+                  onClick={() => setOrgTypeFilter('hotels')}
+                  className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                    orgTypeFilter === 'hotels'
+                      ? 'bg-white text-black font-bold shadow-xs'
+                      : 'text-neutral-600 hover:text-black'
+                  }`}
+                >
+                  <HotelIcon className="w-3.5 h-3.5" />
+                  <span>Hotels (IGHO Stay)</span>
+                </button>
+                <button
+                  onClick={() => setOrgTypeFilter('schools')}
+                  className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                    orgTypeFilter === 'schools'
+                      ? 'bg-white text-black font-bold shadow-xs'
+                      : 'text-neutral-600 hover:text-black'
+                  }`}
+                >
+                  <GraduationCap className="w-3.5 h-3.5" />
+                  <span>Schools (Classroom)</span>
+                </button>
+                <button
+                  onClick={() => setOrgTypeFilter('hospitals')}
+                  className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                    orgTypeFilter === 'hospitals'
+                      ? 'bg-white text-black font-bold shadow-xs'
+                      : 'text-neutral-600 hover:text-black'
+                  }`}
+                >
+                  <HeartPulse className="w-3.5 h-3.5" />
+                  <span>Hospitals (MedBay)</span>
+                </button>
+              </div>
+            </div>
           </div>
-          <div className="space-y-1 max-w-md mx-auto">
-            <h3 className="text-base font-bold text-black">Review queue is clear</h3>
-            <p className="text-xs text-neutral-500 leading-relaxed">
-              {orgTypeFilter === 'all'
-                ? 'No organization registration requests are currently pending review.'
-                : `No pending registration requests found for category: ${orgTypeFilter}.`}
-            </p>
-          </div>
-        </div>
+
+          {/* Queue Table or Empty State */}
+          {filteredHotels.length === 0 ? (
+            <div className="bg-white border border-neutral-200 rounded-2xl p-12 text-center space-y-4 shadow-xs">
+              <div className="w-12 h-12 rounded-2xl bg-neutral-100 border border-neutral-200 flex items-center justify-center mx-auto text-neutral-500">
+                <FileCheck2 className="w-6 h-6" />
+              </div>
+              <div className="space-y-1 max-w-md mx-auto">
+                <h3 className="text-base font-bold text-black">Review queue is clear</h3>
+                <p className="text-xs text-neutral-500 leading-relaxed">
+                  {orgTypeFilter === 'all'
+                    ? 'No organization registration requests are currently pending review.'
+                    : `No pending registration requests found for category: ${orgTypeFilter}.`}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white border border-neutral-200 rounded-2xl shadow-xs overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-neutral-50 border-b border-neutral-200 text-[10px] font-bold uppercase tracking-wider text-neutral-500">
+                      <th className="p-4">Organization & Type</th>
+                      <th className="p-4">Location</th>
+                      <th className="p-4">Rooms / Capacity</th>
+                      <th className="p-4">Contact Info</th>
+                      <th className="p-4">CAC Number</th>
+                      <th className="p-4 text-right">Review Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100 text-xs text-neutral-800">
+                    {filteredHotels.map((hotel) => (
+                      <tr key={hotel.id} className="hover:bg-neutral-50/80 transition-colors">
+                        <td className="p-4">
+                          <div className="font-bold text-neutral-900">{hotel.name}</div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                              IGHO Stay
+                            </span>
+                            <span className="text-[10px] text-neutral-400 font-mono">ID: {hotel.id}</span>
+                          </div>
+                        </td>
+                        <td className="p-4">
+                          <div className="flex items-center gap-1 text-neutral-700">
+                            <MapPin className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                            <span>{hotel.city || 'N/A'}, {hotel.state || 'N/A'}</span>
+                          </div>
+                        </td>
+                        <td className="p-4 font-mono font-medium">{hotel.roomCount || 0} rooms</td>
+                        <td className="p-4 text-neutral-600 font-mono text-[11px]">
+                          <div>{hotel.email || '—'}</div>
+                          <div className="text-[10px] text-neutral-400">{hotel.phone || ''}</div>
+                        </td>
+                        <td className="p-4 font-mono text-[11px] font-medium text-neutral-700">
+                          {hotel.cacNumber || 'Pending CAC'}
+                        </td>
+                        <td className="p-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => handleApprove(hotel)}
+                              className="px-3 py-1.5 rounded-xl bg-black hover:bg-neutral-800 text-white font-bold text-xs transition-colors flex items-center gap-1 shadow-xs"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Approve & Launch</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setRejectingHotel(hotel);
+                                setRejectionReason('');
+                              }}
+                              className="px-3 py-1.5 rounded-xl border border-neutral-300 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300 text-neutral-700 font-semibold text-xs transition-colors flex items-center gap-1"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>Reject</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
       ) : (
-        <div className="bg-white border border-neutral-200 rounded-2xl shadow-xs overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-neutral-50 border-b border-neutral-200 text-[10px] font-bold uppercase tracking-wider text-neutral-500">
-                  <th className="p-4">Organization & Type</th>
-                  <th className="p-4">Location</th>
-                  <th className="p-4">Rooms / Capacity</th>
-                  <th className="p-4">Contact Info</th>
-                  <th className="p-4">CAC Number</th>
-                  <th className="p-4 text-right">Review Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-100 text-xs text-neutral-800">
-                {filteredHotels.map((hotel) => (
-                  <tr key={hotel.id} className="hover:bg-neutral-50/80 transition-colors">
-                    <td className="p-4">
-                      <div className="font-bold text-neutral-900">{hotel.name}</div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                          IGHO Stay
-                        </span>
-                        <span className="text-[10px] text-neutral-400 font-mono">ID: {hotel.id}</span>
-                      </div>
-                    </td>
-                    <td className="p-4">
-                      <div className="flex items-center gap-1 text-neutral-700">
-                        <MapPin className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                        <span>{hotel.city || 'N/A'}, {hotel.state || 'N/A'}</span>
-                      </div>
-                    </td>
-                    <td className="p-4 font-mono font-medium">{hotel.roomCount || 0} rooms</td>
-                    <td className="p-4 text-neutral-600 font-mono text-[11px]">
-                      <div>{hotel.email || '—'}</div>
-                      <div className="text-[10px] text-neutral-400">{hotel.phone || ''}</div>
-                    </td>
-                    <td className="p-4 font-mono text-[11px] font-medium text-neutral-700">
-                      {hotel.cacNumber || 'Pending CAC'}
-                    </td>
-                    <td className="p-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => handleApprove(hotel)}
-                          className="px-3 py-1.5 rounded-xl bg-black hover:bg-neutral-800 text-white font-bold text-xs transition-colors flex items-center gap-1 shadow-xs"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Approve & Launch</span>
-                        </button>
-                        <button
-                          onClick={() => {
-                            setRejectingHotel(hotel);
-                            setRejectionReason('');
-                          }}
-                          className="px-3 py-1.5 rounded-xl border border-neutral-300 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300 text-neutral-700 font-semibold text-xs transition-colors flex items-center gap-1"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                          <span>Reject</span>
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <>
+          {/* Header (Demo Requests Style) */}
+          <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div className="w-11 h-11 rounded-xl bg-blue-50 border border-blue-200 text-blue-700 flex items-center justify-center font-bold">
+                <Sparkles className="w-5 h-5 text-blue-600" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-black tracking-tight text-black">
+                  Product Demo Requests Queue
+                </h1>
+                <p className="text-xs text-neutral-500">
+                  Manage live executive demo requests and scheduled walk-throughs across all IGHO suite products.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-800 border border-blue-200">
+                {demoRequests.length} Total Requests
+              </span>
+            </div>
           </div>
-        </div>
+
+          {/* Filter Bar with Product Switching */}
+          <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="relative flex-1 min-w-[240px] max-w-md">
+                <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={demoSearchQuery}
+                  onChange={(e) => setDemoSearchQuery(e.target.value)}
+                  placeholder="Search by name, company, email, or phone..."
+                  className="w-full bg-neutral-50 border border-neutral-200 rounded-xl pl-9 pr-3 py-2 text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black focus:bg-white transition-colors"
+                />
+              </div>
+
+              {/* Product interested filters */}
+              <div className="flex items-center gap-1.5 p-1 bg-neutral-100 rounded-xl text-xs font-semibold">
+                <button
+                  onClick={() => setDemoProductFilter('all')}
+                  className={`px-3 py-1.5 rounded-lg transition-colors ${
+                    demoProductFilter === 'all'
+                      ? 'bg-white text-black font-bold shadow-xs'
+                      : 'text-neutral-600 hover:text-black'
+                  }`}
+                >
+                  All Products
+                </button>
+                <button
+                  onClick={() => setDemoProductFilter('stay')}
+                  className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                    demoProductFilter === 'stay'
+                      ? 'bg-white text-black font-bold shadow-xs'
+                      : 'text-neutral-600 hover:text-black'
+                  }`}
+                >
+                  <Building2 className="w-3.5 h-3.5" />
+                  <span>IGHO Stay</span>
+                </button>
+                <button
+                  onClick={() => setDemoProductFilter('classroom')}
+                  className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                    demoProductFilter === 'classroom'
+                      ? 'bg-white text-black font-bold shadow-xs'
+                      : 'text-neutral-600 hover:text-black'
+                  }`}
+                >
+                  <GraduationCap className="w-3.5 h-3.5" />
+                  <span>Classroom</span>
+                </button>
+                <button
+                  onClick={() => setDemoProductFilter('medbay')}
+                  className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                    demoProductFilter === 'medbay'
+                      ? 'bg-white text-black font-bold shadow-xs'
+                      : 'text-neutral-600 hover:text-black'
+                  }`}
+                >
+                  <HeartPulse className="w-3.5 h-3.5" />
+                  <span>MedBay</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Demos Table or Empty State */}
+          {filteredDemos.length === 0 ? (
+            <div className="bg-white border border-neutral-200 rounded-2xl p-12 text-center space-y-4 shadow-xs">
+              <div className="w-12 h-12 rounded-2xl bg-neutral-100 border border-neutral-200 flex items-center justify-center mx-auto text-neutral-500">
+                <Sparkles className="w-6 h-6 text-neutral-400" />
+              </div>
+              <div className="space-y-1 max-w-md mx-auto">
+                <h3 className="text-base font-bold text-black">No demo requests found</h3>
+                <p className="text-xs text-neutral-500 leading-relaxed">
+                  {demoProductFilter === 'all'
+                    ? 'No executive product demo inquiries have been submitted yet.'
+                    : `No demo inquiries found for category: ${demoProductFilter}.`}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white border border-neutral-200 rounded-2xl shadow-xs overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-neutral-50 border-b border-neutral-200 text-[10px] font-bold uppercase tracking-wider text-neutral-500">
+                      <th className="p-4">Contact Person</th>
+                      <th className="p-4">Company & Type</th>
+                      <th className="p-4">Product Interested</th>
+                      <th className="p-4">Scheduled Session</th>
+                      <th className="p-4">Status</th>
+                      <th className="p-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100 text-xs text-neutral-800">
+                    {filteredDemos.map((demo) => {
+                      const ProductIcon =
+                        demo.productInterested === 'classroom'
+                          ? GraduationCap
+                          : demo.productInterested === 'medbay'
+                          ? HeartPulse
+                          : Building2;
+
+                      const prodLabel =
+                        demo.productInterested === 'classroom'
+                          ? 'IGHO Classroom'
+                          : demo.productInterested === 'medbay'
+                          ? 'IGHO MedBay'
+                          : 'IGHO Stay';
+
+                      const statusColors = {
+                        pending: 'bg-amber-50 text-amber-800 border-amber-200',
+                        scheduled: 'bg-blue-50 text-blue-800 border-blue-200',
+                        completed: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+                        cancelled: 'bg-neutral-100 text-neutral-600 border-neutral-200',
+                      };
+
+                      return (
+                        <tr key={demo.id} className="hover:bg-neutral-50/80 transition-colors">
+                          <td className="p-4">
+                            <div className="font-bold text-neutral-900">{demo.fullName}</div>
+                            <div className="text-[10px] text-neutral-400 font-mono">{demo.email}</div>
+                            <div className="text-[10px] text-neutral-400 font-mono">{demo.phone}</div>
+                          </td>
+                          <td className="p-4">
+                            <div className="font-semibold text-neutral-800">{demo.orgName}</div>
+                            <div className="text-[10px] text-neutral-500">{demo.orgType}</div>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-1.5 font-bold">
+                              <ProductIcon className="w-4 h-4 text-neutral-700" />
+                              <span>{prodLabel}</span>
+                            </div>
+                          </td>
+                          <td className="p-4 font-mono">
+                            <div className="flex items-center gap-1 text-neutral-800 font-semibold">
+                              <span>{demo.demoDate}</span>
+                            </div>
+                            <div className="text-[10px] text-neutral-400">Time: {demo.demoTime}</div>
+                          </td>
+                          <td className="p-4">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${statusColors[demo.status as keyof typeof statusColors] || ''}`}>
+                              {demo.status}
+                            </span>
+                          </td>
+                          <td className="p-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {demo.status === 'pending' && (
+                                <button
+                                  onClick={() => handleUpdateDemoStatus(demo.id, 'scheduled')}
+                                  className="px-2 py-1 bg-black text-white hover:bg-neutral-800 text-[10px] font-bold rounded-lg transition-colors cursor-pointer"
+                                >
+                                  Schedule
+                                </button>
+                              )}
+                              {(demo.status === 'pending' || demo.status === 'scheduled') && (
+                                <>
+                                  <button
+                                    onClick={() => handleUpdateDemoStatus(demo.id, 'completed')}
+                                    className="px-2 py-1 bg-emerald-600 text-white hover:bg-emerald-700 text-[10px] font-bold rounded-lg transition-colors cursor-pointer"
+                                  >
+                                    Complete
+                                  </button>
+                                  <button
+                                    onClick={() => handleUpdateDemoStatus(demo.id, 'cancelled')}
+                                    className="px-2 py-1 border border-neutral-300 hover:bg-neutral-50 text-[10px] font-semibold text-neutral-600 rounded-lg transition-colors cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              )}
+                              {(demo.status === 'completed' || demo.status === 'cancelled') && (
+                                <span className="text-[10px] text-neutral-400 font-medium">Session End</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Approval Success & Credentials Modal */}

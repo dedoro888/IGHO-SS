@@ -30,6 +30,7 @@ import {
   PlatformUser,
   PlatformProduct,
   PlatformSettings,
+  DemoRequest,
 } from '../types';
 import {
   INITIAL_PLANS,
@@ -73,6 +74,8 @@ interface SuperAdminConsoleProps {
   onUpdateHotels?: (hotels: Hotel[]) => void;
   onUpdatePlans?: (plans: SubscriptionPlan[]) => void;
   onUpdateSettings?: (settings: PlatformSettings) => void;
+  demoRequests?: DemoRequest[];
+  onUpdateDemoRequests?: (demos: DemoRequest[]) => void;
 }
 
 export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
@@ -88,6 +91,8 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   onUpdateHotels,
   onUpdatePlans,
   onUpdateSettings,
+  demoRequests: initialDemoRequests = [],
+  onUpdateDemoRequests,
 }) => {
   // Current user identity
   const [activeUserEmail, setActiveUserEmail] = useState<string>(currentUserEmail);
@@ -121,6 +126,18 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   const [products] = useState<PlatformProduct[]>(INITIAL_PRODUCTS);
   const [settings, setSettings] = useState<PlatformSettings>(initialPassedSettings || INITIAL_PLATFORM_SETTINGS);
   const [feedbacks, setFeedbacks] = useState<CustomerFeedback[]>(INITIAL_FEEDBACKS as CustomerFeedback[]);
+  const [demoRequests, setDemoRequests] = useState<DemoRequest[]>(initialDemoRequests);
+
+  React.useEffect(() => {
+    setDemoRequests(initialDemoRequests);
+  }, [initialDemoRequests]);
+
+  const handleUpdateDemoRequests = (updated: DemoRequest[]) => {
+    setDemoRequests(updated);
+    if (onUpdateDemoRequests) {
+      onUpdateDemoRequests(updated);
+    }
+  };
 
   // Helper to record immutable audit log entry
   const recordAuditLog = (
@@ -816,6 +833,8 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
               onApproveHotel={handleApproveHotel}
               onRejectHotel={handleRejectHotel}
               onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+              demoRequests={demoRequests}
+              onUpdateDemoRequests={handleUpdateDemoRequests}
             />
           )}
 

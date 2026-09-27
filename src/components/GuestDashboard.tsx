@@ -21,6 +21,7 @@ import {
 import { Reservation, Room, ActiveScreen, CustomerProfile, Hotel } from '../types';
 import { BackButton } from './BackButton';
 import { getSavedCustomerProfile } from '../utils/auth';
+import { IghoOfficialEmblem } from './IghoLogo';
 
 interface GuestDashboardProps {
   hotel?: Hotel | null;
@@ -217,9 +218,7 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
             onClick={() => onNavigate('hotel_guest_portal')}
             className="flex items-center gap-2 text-left"
           >
-            <div className="w-6 h-6 bg-black text-white font-black rounded flex items-center justify-center text-xs">
-              I
-            </div>
+            <IghoOfficialEmblem className="w-6 h-6 shrink-0" inverted={false} />
             <span className="font-extrabold text-sm text-black tracking-tight">IGHO Stay</span>
           </button>
 

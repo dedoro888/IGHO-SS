@@ -12,6 +12,7 @@ import {
   CustomRole,
   GuestReport,
   CustomerProfile,
+  DemoRequest,
 } from './types';
 import {
   INITIAL_HOTELS,
@@ -366,6 +367,14 @@ export default function App() {
     saveToStorage('igho_db_guestReports', guestReports);
   }, [guestReports]);
 
+  // Demo requests state (synced with backend and localStorage)
+  const [demoRequests, setDemoRequests] = useState<any[]>(() =>
+    loadFromStorage<any[]>('igho_demo_requests', [])
+  );
+  useEffect(() => {
+    saveToStorage('igho_demo_requests', demoRequests);
+  }, [demoRequests]);
+
   // Real-Time Full-Stack Backend Database Synchronization Hooks
   const [profileUpdateTrigger, setProfileUpdateTrigger] = useState(0);
 
@@ -376,6 +385,18 @@ export default function App() {
     window.addEventListener('igho_profiles_updated', handleProfileUpdate);
     return () => window.removeEventListener('igho_profiles_updated', handleProfileUpdate);
   }, []);
+
+  useEffect(() => {
+    const handleDemoRequestsUpdate = () => {
+      setDemoRequests(loadFromStorage<any[]>('igho_demo_requests', []));
+    };
+    window.addEventListener('igho_demo_requests_updated', handleDemoRequestsUpdate);
+    return () => window.removeEventListener('igho_demo_requests_updated', handleDemoRequestsUpdate);
+  }, []);
+
+  // Prevent race conditions and infinite write-back loops on load / sync
+  const [initialStateLoaded, setInitialStateLoaded] = React.useState(false);
+  const isSyncingFromServer = React.useRef(false);
 
   // 1. Polling interval to retrieve database state from backend (Real-Time Sync)
   useEffect(() => {
@@ -388,6 +409,10 @@ export default function App() {
         const data = await res.json();
         if (data.success && data.state && active) {
           const s = data.state;
+          
+          // Mark that we are applying server state so write-back does not trigger a POST
+          isSyncingFromServer.current = true;
+
           // Only update states if they exist in response to avoid overriding with empty
           if (Array.isArray(s.hotels)) setHotels(s.hotels);
           if (Array.isArray(s.rooms)) setRooms(s.rooms);
@@ -399,10 +424,22 @@ export default function App() {
           if (Array.isArray(s.plans)) setPlans(s.plans);
           if (s.platformSettings) setPlatformSettings(s.platformSettings);
           if (Array.isArray(s.customRoles)) setCustomRoles(s.customRoles);
+          
+          if (Array.isArray(s.demoRequests)) {
+            setDemoRequests(s.demoRequests);
+            saveToStorage('igho_demo_requests', s.demoRequests);
+          }
 
           if (Array.isArray(s.customerProfiles)) {
             localStorage.setItem('igho_db_customer_profiles', JSON.stringify(s.customerProfiles));
           }
+
+          setInitialStateLoaded(true);
+          
+          // Release the sync lock after a brief layout settle
+          setTimeout(() => {
+            if (active) isSyncingFromServer.current = false;
+          }, 100);
         }
       } catch (err) {
         console.warn('Backend real-time sync poll error:', err);
@@ -421,6 +458,16 @@ export default function App() {
   // 2. Automatically post state changes to the backend server (Real-Time Sync Write-Back)
   useEffect(() => {
     let active = true;
+    
+    // Strictly guard to prevent writing empty / old state before first load is complete
+    if (!initialStateLoaded) return;
+    
+    // Skip posting back if the trigger was an incoming sync event
+    if (isSyncingFromServer.current) {
+      isSyncingFromServer.current = false;
+      return;
+    }
+
     const saveState = async () => {
       try {
         const currentProfiles = JSON.parse(localStorage.getItem('igho_db_customer_profiles') || '[]');
@@ -436,6 +483,7 @@ export default function App() {
           platformSettings,
           customRoles,
           customerProfiles: currentProfiles,
+          demoRequests,
         };
 
         const res = await fetch('/api/state', {
@@ -468,7 +516,9 @@ export default function App() {
     plans,
     platformSettings,
     customRoles,
+    demoRequests,
     profileUpdateTrigger,
+    initialStateLoaded,
   ]);
 
   // Booking draft state for checkout
@@ -802,8 +852,16 @@ export default function App() {
           settings={platformSettings}
           onUpdatePlans={(updatedPlans) => setPlans(updatedPlans)}
           onUpdateSettings={(updatedSettings) => setPlatformSettings(updatedSettings)}
-          onNavigate={navigateTo}
+          onNavigate={(screen) => {
+            if (screen === 'guest_login') {
+              setCurrentUserEmail('');
+              setCurrentGuestProfile(null);
+            }
+            navigateTo(screen);
+          }}
           onUpdateHotels={(updatedHotels) => setHotels(updatedHotels)}
+          demoRequests={demoRequests}
+          onUpdateDemoRequests={setDemoRequests}
           onSelectHotel={(h) => {
             setSelectedHotel(h);
             navigateTo('staff_portal');

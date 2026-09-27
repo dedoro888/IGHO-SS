@@ -88,6 +88,7 @@ export const DemoRequestModal: React.FC<DemoRequestModalProps> = ({ onClose, onN
       const currentList = JSON.parse(localStorage.getItem('igho_demo_requests') || '[]');
       currentList.push(newDemo);
       localStorage.setItem('igho_demo_requests', JSON.stringify(currentList));
+      window.dispatchEvent(new Event('igho_demo_requests_updated'));
     } catch (e) {
       console.error(e);
     }

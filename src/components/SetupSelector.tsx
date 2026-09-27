@@ -2,6 +2,7 @@ import React from 'react';
 import { Building2, GraduationCap, Cross, Check } from 'lucide-react';
 import { ActiveScreen } from '../types';
 import { BackButton } from './BackButton';
+import { IghoOfficialEmblem } from './IghoLogo';
 
 interface SetupSelectorProps {
   onNavigate: (screen: ActiveScreen) => void;
@@ -16,9 +17,7 @@ export const SetupSelector: React.FC<SetupSelectorProps> = ({ onNavigate }) => {
           <BackButton onClick={() => onNavigate('landing')} className="bg-neutral-900 border-neutral-800 text-neutral-300 hover:text-white hover:bg-neutral-800" />
 
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-white text-black font-black rounded flex items-center justify-center text-xs">
-              I
-            </div>
+            <IghoOfficialEmblem className="w-6 h-6 shrink-0" inverted={true} />
             <span className="font-extrabold text-base tracking-tight text-white">IGHO</span>
           </div>
 
