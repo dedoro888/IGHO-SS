@@ -19,6 +19,7 @@ import {
   ShieldAlert,
   SlidersHorizontal,
   AlertCircle,
+  ExternalLink,
 } from 'lucide-react';
 import {
   Hotel,
@@ -87,6 +88,7 @@ interface ConsoleHotelsViewProps {
   onReactivateHotel: (hotelId: string) => void;
   onDeleteHotel: (hotelId: string) => void;
   onNavigateBreadcrumb?: () => void;
+  onSelectHotel?: (hotel: Hotel) => void;
 }
 
 export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
@@ -100,6 +102,7 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
   onReactivateHotel,
   onDeleteHotel,
   onNavigateBreadcrumb,
+  onSelectHotel,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -459,7 +462,16 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
                       />
                     </td>
                     <td className="p-4">
-                      <div className="font-bold text-neutral-900">{hotel.name}</div>
+                      <button
+                        onClick={() => {
+                          if (onSelectHotel) onSelectHotel(hotel);
+                          else setInspectingHotel(hotel);
+                        }}
+                        className="font-bold text-neutral-900 hover:text-black hover:underline text-left block cursor-pointer"
+                        title="Click to view hotel dashboard"
+                      >
+                        {hotel.name}
+                      </button>
                       <div className="text-[10px] text-neutral-400 font-mono">{hotel.id}</div>
                     </td>
                     <td className="p-4">
@@ -489,6 +501,16 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
                     </td>
                     <td className="p-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        {onSelectHotel && (
+                          <button
+                            onClick={() => onSelectHotel(hotel)}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-black text-white hover:bg-neutral-800 text-[11px] font-bold shadow-xs cursor-pointer transition-all active:scale-95"
+                            title="Open Hotel PMS Dashboard"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            <span>Dashboard</span>
+                          </button>
+                        )}
                         <button
                           onClick={() => setInspectingHotel(hotel)}
                           className="p-1.5 rounded-lg hover:bg-neutral-100 text-neutral-600 hover:text-black transition-colors"
@@ -887,6 +909,7 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
             onDeleteHotel(inspectingHotel.id);
             setInspectingHotel(null);
           }}
+          onOpenDashboard={onSelectHotel}
         />
       )}
     </div>

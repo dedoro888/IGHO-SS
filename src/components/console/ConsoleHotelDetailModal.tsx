@@ -34,6 +34,7 @@ interface ConsoleHotelDetailModalProps {
   onSuspend: (hotel: Hotel, reason: string) => void;
   onReactivate: (hotel: Hotel) => void;
   onDeleteRequest: (hotel: Hotel) => void;
+  onOpenDashboard?: (hotel: Hotel) => void;
 }
 
 export const ConsoleHotelDetailModal: React.FC<ConsoleHotelDetailModalProps> = ({
@@ -47,6 +48,7 @@ export const ConsoleHotelDetailModal: React.FC<ConsoleHotelDetailModalProps> = (
   onSuspend,
   onReactivate,
   onDeleteRequest,
+  onOpenDashboard,
 }) => {
   if (!hotel) return null;
 
@@ -106,12 +108,27 @@ export const ConsoleHotelDetailModal: React.FC<ConsoleHotelDetailModalProps> = (
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="p-2 rounded-full text-neutral-400 hover:text-black hover:bg-neutral-100 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenDashboard && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onOpenDashboard(hotel);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-black text-white hover:bg-neutral-800 text-xs font-bold transition-all shadow-xs cursor-pointer"
+                title="Launch Hotel PMS Dashboard"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Open Hotel Dashboard</span>
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="p-2 rounded-full text-neutral-400 hover:text-black hover:bg-neutral-100 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Tab Navigation */}

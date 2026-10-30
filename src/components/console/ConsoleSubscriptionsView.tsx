@@ -15,8 +15,9 @@ import {
   Sparkles,
   ExternalLink,
 } from 'lucide-react';
-import { SubscriptionPlan, HotelSubscription, Hotel, PlatformSettings } from '../../types';
+import { SubscriptionPlan, HotelSubscription, Hotel, PlatformSettings, TrialToken } from '../../types';
 import { BackButton } from '../BackButton';
+import { KeyRound, Copy, Clock, RefreshCw, Check as CheckIcon, Tag } from 'lucide-react';
 
 interface ConsoleSubscriptionsViewProps {
   subscriptions: HotelSubscription[];
@@ -30,6 +31,36 @@ interface ConsoleSubscriptionsViewProps {
   onNavigateBreadcrumb?: () => void;
 }
 
+const DEFAULT_TRIAL_TOKENS: TrialToken[] = [
+  {
+    id: 'tok-trial-30',
+    code: 'IGHO-TRIAL-30',
+    durationDays: 30,
+    status: 'active',
+    createdAt: '2026-10-01 10:00:00',
+    createdBy: 'Super Admin',
+    notes: 'Default launch 1-month free trial promo code',
+  },
+  {
+    id: 'tok-ighofree',
+    code: 'IGHOFREE',
+    durationDays: 30,
+    status: 'active',
+    createdAt: '2026-10-05 14:30:00',
+    createdBy: 'Super Admin',
+    notes: 'Universal 1-month access token',
+  },
+  {
+    id: 'tok-trial2026',
+    code: 'TRIAL2026',
+    durationDays: 30,
+    status: 'active',
+    createdAt: '2026-10-10 09:15:00',
+    createdBy: 'Super Admin',
+    notes: 'Partner hotelier pilot code',
+  },
+];
+
 export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> = ({
   subscriptions,
   plans: initialPlans,
@@ -41,9 +72,95 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
   onUpdateSubscriptionStatus,
   onNavigateBreadcrumb,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'plans' | 'subscriptions' | 'wallet'>('plans');
+  const [activeSubTab, setActiveSubTab] = useState<'plans' | 'subscriptions' | 'wallet' | 'tokens'>('plans');
   const [subStatusFilter, setSubStatusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // 1-Month Free Trial Tokens state
+  const [trialTokens, setTrialTokens] = useState<TrialToken[]>(() => {
+    try {
+      const saved = localStorage.getItem('igho_trial_tokens');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return DEFAULT_TRIAL_TOKENS;
+  });
+
+  const saveTrialTokens = (tokens: TrialToken[]) => {
+    setTrialTokens(tokens);
+    try {
+      localStorage.setItem('igho_trial_tokens', JSON.stringify(tokens));
+      window.dispatchEvent(new Event('igho_tokens_updated'));
+    } catch {}
+  };
+
+  // Trial Token Generator Form States
+  const [newTokenCode, setNewTokenCode] = useState('');
+  const [newTokenHotelId, setNewTokenHotelId] = useState('universal');
+  const [newTokenNotes, setNewTokenNotes] = useState('');
+  const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
+  const [tokenGeneratedSuccess, setTokenGeneratedSuccess] = useState<string | null>(null);
+  const [tokenFilter, setTokenFilter] = useState<'all' | 'active' | 'used' | 'revoked'>('all');
+
+  const generateRandomToken = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = 'IGHO-TR-';
+    for (let i = 0; i < 5; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setNewTokenCode(code);
+  };
+
+  const handleCreateToken = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = (newTokenCode.trim() || `IGHO-TR-${Math.floor(1000 + Math.random() * 9000)}`).toUpperCase();
+
+    if (trialTokens.some((t) => t.code === clean)) {
+      alert(`Token code "${clean}" already exists.`);
+      return;
+    }
+
+    const assignedHotel = hotels.find((h) => h.id === newTokenHotelId);
+
+    const now = new Date();
+    const timestamp = `${now.toISOString().split('T')[0]} ${now.toTimeString().split(' ')[0]}`;
+
+    const created: TrialToken = {
+      id: `tok-${Date.now()}`,
+      code: clean,
+      durationDays: 30, // strictly 1 month
+      assignedHotelId: newTokenHotelId === 'universal' ? undefined : newTokenHotelId,
+      assignedHotelName: assignedHotel?.name,
+      status: 'active',
+      createdAt: timestamp,
+      createdBy: 'Super Admin',
+      notes: newTokenNotes.trim() || '1-Month Free Trial Token',
+    };
+
+    const nextList = [created, ...trialTokens];
+    saveTrialTokens(nextList);
+
+    setTokenGeneratedSuccess(clean);
+    setNewTokenCode('');
+    setNewTokenNotes('');
+    setTimeout(() => setTokenGeneratedSuccess(null), 5000);
+  };
+
+  const handleCopyToken = (token: TrialToken) => {
+    navigator.clipboard.writeText(token.code);
+    setCopiedTokenId(token.id);
+    setTimeout(() => setCopiedTokenId(null), 2500);
+  };
+
+  const handleRevokeToken = (tokenId: string) => {
+    const next = trialTokens.map((t) => (t.id === tokenId ? { ...t, status: 'revoked' as const } : t));
+    saveTrialTokens(next);
+  };
+
+  const handleDeleteToken = (tokenId: string) => {
+    if (!confirm('Are you sure you want to delete this trial token?')) return;
+    const next = trialTokens.filter((t) => t.id !== tokenId);
+    saveTrialTokens(next);
+  };
 
   // Plans state
   const [plans, setPlans] = useState<SubscriptionPlan[]>(initialPlans);
@@ -168,7 +285,7 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
         </div>
 
         {/* Tab Switcher */}
-        <div className="flex items-center bg-neutral-100 p-1 rounded-xl text-xs font-semibold self-start sm:self-auto">
+        <div className="flex items-center flex-wrap gap-1 bg-neutral-100 p-1 rounded-xl text-xs font-semibold self-start sm:self-auto">
           <button
             onClick={() => setActiveSubTab('plans')}
             className={`px-3 py-1.5 rounded-lg transition-colors ${
@@ -188,6 +305,17 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
             }`}
           >
             Hotel Subscriptions ({subscriptions.length})
+          </button>
+          <button
+            onClick={() => setActiveSubTab('tokens')}
+            className={`px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+              activeSubTab === 'tokens'
+                ? 'bg-black text-white font-bold shadow-xs'
+                : 'text-neutral-600 hover:text-black'
+            }`}
+          >
+            <KeyRound className="w-3.5 h-3.5" />
+            <span>Trial Tokens ({trialTokens.filter((t) => t.status === 'active').length})</span>
           </button>
           <button
             onClick={() => setActiveSubTab('wallet')}
@@ -215,14 +343,14 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
           <span className="text-[10px] text-emerald-700 font-medium">Paying live hotels</span>
         </div>
         <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs">
+          <span className="text-[10px] text-neutral-500 font-bold uppercase tracking-wider block">Trial Tokens</span>
+          <div className="text-2xl font-black text-emerald-600 mt-1">{trialTokens.filter((t) => t.status === 'active').length}</div>
+          <span className="text-[10px] text-neutral-400">1-Month active tokens</span>
+        </div>
+        <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs">
           <span className="text-[10px] text-neutral-500 font-bold uppercase tracking-wider block">Pending Payments</span>
           <div className="text-2xl font-black text-amber-700 mt-1">{pendingCount}</div>
           <span className="text-[10px] text-amber-600 font-medium">Awaiting verification</span>
-        </div>
-        <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs">
-          <span className="text-[10px] text-neutral-500 font-bold uppercase tracking-wider block">Available Tiers</span>
-          <div className="text-2xl font-black text-black mt-1">{plans.length}</div>
-          <span className="text-[10px] text-neutral-500">Configured plans</span>
         </div>
       </div>
 
@@ -443,7 +571,309 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
         </div>
       )}
 
-      {/* TAB 3: WALLET / BANK RECIPIENT DESTINATION */}
+      {/* TAB 3: 1-MONTH FREE TRIAL TOKENS GENERATOR & MANAGER */}
+      {activeSubTab === 'tokens' && (
+        <div className="space-y-6">
+          {/* Header & Token Generator */}
+          <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-neutral-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-black text-white flex items-center justify-center font-bold">
+                  <KeyRound className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-black">Generate 1-Month Free Trial Token</h2>
+                  <p className="text-xs text-neutral-500">
+                    Create special codes for approved hotels to claim their 1-month free trial before paying.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1 rounded-full flex items-center gap-1.5">
+                  <Clock className="w-3 h-3 text-emerald-600" />
+                  <span>Valid for 1 Month (30 Days)</span>
+                </span>
+              </div>
+            </div>
+
+            {/* Success notification banner */}
+            {tokenGeneratedSuccess && (
+              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-3 text-xs text-emerald-950 animate-in fade-in">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>
+                    New Trial Token created: <strong className="font-mono text-sm tracking-wider text-black">{tokenGeneratedSuccess}</strong>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(tokenGeneratedSuccess);
+                    setCopiedTokenId(tokenGeneratedSuccess);
+                    setTimeout(() => setCopiedTokenId(null), 2500);
+                  }}
+                  className="px-3 py-1 bg-black text-white rounded-lg text-xs font-bold hover:bg-neutral-800 transition-colors flex items-center gap-1 shadow-2xs"
+                >
+                  {copiedTokenId === tokenGeneratedSuccess ? (
+                    <>
+                      <CheckIcon className="w-3.5 h-3.5" />
+                      <span>Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy Token</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* Form */}
+            <form onSubmit={handleCreateToken} className="grid grid-cols-1 md:grid-cols-12 gap-3.5 items-end">
+              <div className="md:col-span-4 space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-neutral-700 uppercase tracking-wider">
+                    Special Token Code
+                  </label>
+                  <button
+                    type="button"
+                    onClick={generateRandomToken}
+                    className="text-[11px] text-black font-semibold hover:underline flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" /> Auto-generate
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={newTokenCode}
+                  onChange={(e) => setNewTokenCode(e.target.value.toUpperCase())}
+                  placeholder="e.g. IGHO-TRIAL-30 or IGHO-TR-9428"
+                  className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-neutral-900 uppercase focus:outline-none focus:border-black"
+                />
+              </div>
+
+              <div className="md:col-span-3 space-y-1">
+                <label className="text-[11px] font-bold text-neutral-700 uppercase tracking-wider">
+                  Assigned Hotel (Optional)
+                </label>
+                <select
+                  value={newTokenHotelId}
+                  onChange={(e) => setNewTokenHotelId(e.target.value)}
+                  className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3 py-2 text-xs text-neutral-900 focus:outline-none focus:border-black"
+                >
+                  <option value="universal">Universal (Any Approved Hotel)</option>
+                  {hotels.map((h) => (
+                    <option key={h.id} value={h.id}>
+                      {h.name} ({h.city || 'Nigeria'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="md:col-span-3 space-y-1">
+                <label className="text-[11px] font-bold text-neutral-700 uppercase tracking-wider">
+                  Notes / Reference
+                </label>
+                <input
+                  type="text"
+                  value={newTokenNotes}
+                  onChange={(e) => setNewTokenNotes(e.target.value)}
+                  placeholder="e.g. Pilot launch partner token"
+                  className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3 py-2 text-xs text-neutral-900 focus:outline-none focus:border-black"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <button
+                  type="submit"
+                  className="w-full py-2 bg-black hover:bg-neutral-800 text-white rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Generate Token</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Tokens List & History */}
+          <div className="bg-white border border-neutral-200 rounded-2xl shadow-xs overflow-hidden space-y-3 p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-neutral-100">
+              <div className="flex items-center gap-2">
+                <Tag className="w-4 h-4 text-neutral-500" />
+                <h3 className="text-sm font-bold text-black">
+                  Issued Free Trial Tokens ({trialTokens.length})
+                </h3>
+              </div>
+
+              <div className="flex items-center gap-1.5 bg-neutral-100 p-0.5 rounded-lg text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setTokenFilter('all')}
+                  className={`px-2.5 py-1 rounded-md transition-colors ${
+                    tokenFilter === 'all' ? 'bg-white text-black shadow-xs font-bold' : 'text-neutral-600'
+                  }`}
+                >
+                  All ({trialTokens.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTokenFilter('active')}
+                  className={`px-2.5 py-1 rounded-md transition-colors ${
+                    tokenFilter === 'active' ? 'bg-white text-black shadow-xs font-bold' : 'text-neutral-600'
+                  }`}
+                >
+                  Active ({trialTokens.filter((t) => t.status === 'active').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTokenFilter('used')}
+                  className={`px-2.5 py-1 rounded-md transition-colors ${
+                    tokenFilter === 'used' ? 'bg-white text-black shadow-xs font-bold' : 'text-neutral-600'
+                  }`}
+                >
+                  Claimed / Used ({trialTokens.filter((t) => t.status === 'used').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTokenFilter('revoked')}
+                  className={`px-2.5 py-1 rounded-md transition-colors ${
+                    tokenFilter === 'revoked' ? 'bg-white text-black shadow-xs font-bold' : 'text-neutral-600'
+                  }`}
+                >
+                  Revoked ({trialTokens.filter((t) => t.status === 'revoked').length})
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-neutral-50 border-b border-neutral-200 text-[10px] font-bold uppercase tracking-wider text-neutral-500">
+                    <th className="p-3">Special Token Code</th>
+                    <th className="p-3">Duration</th>
+                    <th className="p-3">Designated Scope</th>
+                    <th className="p-3">Token Status</th>
+                    <th className="p-3">Created / Claimed Details</th>
+                    <th className="p-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100 text-neutral-800">
+                  {trialTokens
+                    .filter((t) => tokenFilter === 'all' || t.status === tokenFilter)
+                    .map((token) => {
+                      const isCopied = copiedTokenId === token.id;
+                      return (
+                        <tr key={token.id} className="hover:bg-neutral-50/70 transition-colors">
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-black text-sm tracking-wide text-neutral-900 bg-neutral-100 px-2.5 py-1 rounded-lg border border-neutral-200">
+                                {token.code}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyToken(token)}
+                                className="p-1 hover:bg-neutral-200 rounded text-neutral-600 hover:text-black transition-colors"
+                                title="Copy code"
+                              >
+                                {isCopied ? (
+                                  <CheckIcon className="w-3.5 h-3.5 text-emerald-600" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </div>
+                            {token.notes && (
+                              <div className="text-[10px] text-neutral-500 mt-1 truncate max-w-xs">
+                                {token.notes}
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="p-3 font-semibold text-neutral-900">
+                            1 Month ({token.durationDays} Days)
+                          </td>
+
+                          <td className="p-3">
+                            {token.assignedHotelName ? (
+                              <div>
+                                <span className="font-bold text-black">{token.assignedHotelName}</span>
+                                <span className="block text-[10px] font-mono text-neutral-400">{token.assignedHotelId}</span>
+                              </div>
+                            ) : (
+                              <span className="text-neutral-500 italic">Universal (Any Hotel)</span>
+                            )}
+                          </td>
+
+                          <td className="p-3">
+                            {token.status === 'active' && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                Active & Valid
+                              </span>
+                            )}
+                            {token.status === 'used' && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                <CheckCircle2 className="w-3 h-3 text-blue-600" />
+                                Claimed
+                              </span>
+                            )}
+                            {token.status === 'revoked' && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-neutral-100 text-neutral-600 border border-neutral-300">
+                                Revoked
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="p-3 text-[11px] text-neutral-500 space-y-0.5">
+                            <div>Created: {token.createdAt}</div>
+                            {token.claimedByHotelName && (
+                              <div className="text-blue-700 font-semibold">
+                                Claimed by: {token.claimedByHotelName} on {new Date(token.claimedAt || '').toLocaleDateString()}
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="p-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleCopyToken(token)}
+                                className="px-2.5 py-1 rounded-lg border border-neutral-200 hover:bg-neutral-100 text-xs font-semibold text-neutral-700"
+                              >
+                                {isCopied ? 'Copied' : 'Copy'}
+                              </button>
+                              {token.status === 'active' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRevokeToken(token.id)}
+                                  className="px-2.5 py-1 rounded-lg border border-amber-200 hover:bg-amber-50 text-xs font-semibold text-amber-700"
+                                >
+                                  Revoke
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteToken(token.id)}
+                                className="p-1 hover:bg-rose-50 text-neutral-400 hover:text-rose-600 rounded transition-colors"
+                                title="Delete token"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: WALLET / BANK RECIPIENT DESTINATION */}
       {activeSubTab === 'wallet' && (
         <div className="max-w-2xl bg-white border border-neutral-200 rounded-2xl p-6 shadow-xs space-y-5">
           <div>

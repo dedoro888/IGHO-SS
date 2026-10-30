@@ -27,12 +27,15 @@ import {
   Eye,
   Droplets,
   Bell,
+  Plus,
+  Minus,
 } from 'lucide-react';
 import { Room, Hotel, ActiveScreen, CustomerProfile } from '../types';
 import { CalendarPickerModal } from './CalendarPickerModal';
 import { BackButton } from './BackButton';
 import { GuestAccountNavMenu } from './GuestAccountNavMenu';
 import { resolveUserAccount } from '../utils/auth';
+import { getRoomLevelInfo, isRoomStatusAvailable } from '../utils/roomCategories';
 
 interface RoomDetailViewProps {
   room: Room;
@@ -69,26 +72,48 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
   const [checkIn, setCheckIn] = useState('2026-09-08');
   const [checkOut, setCheckOut] = useState('2026-09-09');
   const [guests, setGuests] = useState(1);
+  const [guestsInput, setGuestsInput] = useState('1');
   const [activeDatePicker, setActiveDatePicker] = useState<'checkIn' | 'checkOut' | null>(null);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [hasSavedDraft, setHasSavedDraft] = useState(false);
 
-  const roomImages = room?.images && room.images.length > 0 ? room.images : [];
+  const activeRoom = allRooms.find((r) => r.id === room?.id) || room;
+  const isRoomRemoved = allRooms.length > 0 && !!room?.id && !allRooms.some((r) => r.id === room.id);
+  const levelInfo = getRoomLevelInfo(activeRoom, allRooms);
+  const isAvailable = isRoomStatusAvailable(activeRoom?.status);
+  const maxGuests = activeRoom?.maxGuests || activeRoom?.capacity || 2;
+
+  const roomImages = (activeRoom?.images && activeRoom.images.length > 0)
+    ? activeRoom.images
+    : [activeRoom?.image || 'https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?auto=format&fit=crop&w=800&q=80'];
+
+  // Auto-redirect if room was removed by hotel staff while viewing
+  useEffect(() => {
+    if (isRoomRemoved) {
+      const timer = setTimeout(() => {
+        onNavigate('hotel_guest_portal');
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [isRoomRemoved, onNavigate]);
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(`igho_booking_draft_${hotel.id}_${room.id}`);
+      const saved = localStorage.getItem(`igho_booking_draft_${hotel.id}_${room?.id}`);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed.checkIn) setCheckIn(parsed.checkIn);
         if (parsed.checkOut) setCheckOut(parsed.checkOut);
-        if (parsed.guests) setGuests(parsed.guests);
+        if (parsed.guests) {
+          const g = Math.max(1, parsed.guests);
+          setGuests(g);
+          setGuestsInput(String(g));
+        }
         setHasSavedDraft(true);
       }
     } catch (e) {}
-  }, [hotel.id, room.id]);
+  }, [hotel?.id, room?.id]);
 
-  // Calculate nights
   const calculateNights = (inDate: string, outDate: string) => {
     try {
       const d1 = new Date(inDate);
@@ -102,13 +127,13 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
   };
 
   const nights = calculateNights(checkIn, checkOut);
-  const basePrice = room.pricePerNight * nights;
+  const basePrice = (activeRoom?.pricePerNight || 0) * nights;
   const taxes = Math.round(basePrice * 0.075);
   const totalPrice = basePrice + taxes;
 
   const handleBookNow = () => {
     onStartBooking({
-      room,
+      room: activeRoom,
       checkIn,
       checkOut,
       nights,
@@ -118,7 +143,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
     onNavigate('guest_checkout');
   };
 
-  const otherRooms = allRooms.filter((r) => r.id !== room.id).slice(0, 2);
+  const otherRooms = allRooms.filter((r) => r.id !== activeRoom.id).slice(0, 2);
 
   return (
     <div className="min-h-screen bg-white text-neutral-900 pb-16">
@@ -165,13 +190,31 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
         </div>
       </header>
 
+      {/* Real-Time Live Removal Notification Banner */}
+      {isRoomRemoved && (
+        <div className="bg-rose-600 text-white px-4 sm:px-6 py-3 flex items-center justify-between text-xs animate-in slide-in-from-top-2">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
+            <span>
+              <strong>Real-Time Live Update:</strong> This room category was just updated by hotel management. Redirecting to available categories...
+            </span>
+          </div>
+          <button
+            onClick={() => onNavigate('hotel_guest_portal')}
+            className="px-3 py-1 bg-white text-rose-700 font-bold rounded-full text-xs shadow-xs cursor-pointer"
+          >
+            View Available Rooms
+          </button>
+        </div>
+      )}
+
       {/* Draft Resume Banner */}
       {hasSavedDraft && (
         <div className="bg-neutral-900 text-white px-4 sm:px-6 py-2.5 flex items-center justify-between text-xs animate-in fade-in">
           <div className="flex items-center gap-2">
             <BookmarkCheck className="w-4 h-4 text-emerald-400" />
             <span>
-              You have an unfinished booking draft saved for <strong>Room {room.number}</strong>.
+              You have an unfinished booking draft saved for <strong>{activeRoom.type} ({levelInfo.levelLabel})</strong>.
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -189,7 +232,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
                 } catch (e) {}
                 setHasSavedDraft(false);
               }}
-              className="text-neutral-400 hover:text-white"
+              className="text-neutral-400 hover:text-white cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -207,7 +250,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
               <img src={roomImages[0]} alt="Main Room" className="w-full h-full object-cover" />
               <button
                 onClick={() => setGalleryOpen(true)}
-                className="absolute bottom-3 left-3 bg-black/75 hover:bg-black text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg backdrop-blur-xs flex items-center gap-1.5 shadow-sm transition-colors"
+                className="absolute bottom-3 left-3 bg-black/75 hover:bg-black text-white text-[11px] font-semibold px-3 py-1.5 rounded-lg backdrop-blur-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
               >
                 <Maximize2 className="w-3.5 h-3.5" />
                 <span>View gallery</span>
@@ -229,7 +272,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
           </div>
         ) : (
           <div className="border border-dashed border-neutral-200 rounded-2xl p-8 text-center text-neutral-400 text-xs bg-neutral-50/50">
-            No pictures uploaded for this room by the administrator.
+            No pictures uploaded for this room category.
           </div>
         )}
 
@@ -239,21 +282,25 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
           <div className="lg:col-span-7 space-y-6">
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">
-                  {room.type}
+                <span className="text-[11px] font-extrabold text-neutral-500 uppercase tracking-wider bg-neutral-100 px-2.5 py-0.5 rounded-full">
+                  {levelInfo.levelLabel} · {activeRoom.tier || 'Room Category'}
                 </span>
-                {room.status === 'available' ? (
-                  <span className="bg-emerald-50 text-emerald-700 text-xs font-bold px-2.5 py-0.5 rounded-full border border-emerald-200">
+                {isAvailable ? (
+                  <span className="bg-emerald-50 text-emerald-700 text-xs font-bold px-2.5 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
                     Available
                   </span>
                 ) : (
-                  <span className="bg-amber-50 text-amber-800 text-xs font-bold px-2.5 py-0.5 rounded-full border border-amber-200">
-                    Maintenance
+                  <span className="bg-neutral-100 text-neutral-500 text-xs font-bold px-2.5 py-0.5 rounded-full border border-neutral-300">
+                    Not available for your dates
                   </span>
                 )}
               </div>
 
-              <h1 className="text-3xl font-extrabold text-black">Room {room.number}</h1>
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-black">{activeRoom.type}</h1>
+              {activeRoom.typeName && activeRoom.typeName !== activeRoom.type && (
+                <p className="text-xs text-neutral-500 font-medium">{activeRoom.typeName}</p>
+              )}
             </div>
 
             {/* Quick Specs Grid */}
@@ -387,18 +434,74 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
                 </div>
               </div>
 
-              {/* Guests Input */}
-              <div className="space-y-1">
-                <label className="block text-[11px] font-semibold text-neutral-600">Guests</label>
-                <input
-                  type="number"
-                  min="1"
-                  max={room.maxGuests}
-                  value={guests}
-                  onChange={(e) => setGuests(parseInt(e.target.value) || 1)}
-                  className="w-full px-3 py-2 bg-neutral-50 border border-neutral-300 rounded-xl text-xs font-semibold text-neutral-800 focus:outline-none focus:border-black"
-                />
-                <span className="text-[10px] text-neutral-400">Up to {room.maxGuests} guests</span>
+              {/* Guests Input with Plus and Minus Steppers */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] font-semibold text-neutral-600">Guests</label>
+                  <span className="text-[10px] text-neutral-400">Up to {maxGuests} {maxGuests === 1 ? 'guest' : 'guests'}</span>
+                </div>
+
+                <div className="flex items-center justify-between bg-neutral-50 border border-neutral-300 rounded-xl p-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Math.max(1, guests - 1);
+                      setGuests(next);
+                      setGuestsInput(String(next));
+                    }}
+                    disabled={guests <= 1}
+                    className="w-9 h-9 rounded-lg bg-white border border-neutral-200 text-neutral-800 hover:bg-neutral-100 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center font-bold transition-all shadow-3xs cursor-pointer active:scale-95"
+                    title="Decrease guests"
+                  >
+                    <Minus className="w-4 h-4" />
+                  </button>
+
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={guestsInput}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setGuestsInput(val);
+                        const parsed = parseInt(val, 10);
+                        if (!isNaN(parsed) && parsed >= 1) {
+                          setGuests(Math.min(maxGuests, parsed));
+                        }
+                      }}
+                      onBlur={() => {
+                        const parsed = parseInt(guestsInput, 10);
+                        if (isNaN(parsed) || parsed < 1) {
+                          setGuests(1);
+                          setGuestsInput('1');
+                        } else {
+                          const clamped = Math.min(maxGuests, Math.max(1, parsed));
+                          setGuests(clamped);
+                          setGuestsInput(String(clamped));
+                        }
+                      }}
+                      className="w-10 text-center bg-transparent font-extrabold text-sm text-neutral-900 focus:outline-none"
+                    />
+                    <span className="text-xs font-semibold text-neutral-600 select-none">
+                      {guests === 1 ? 'Guest' : 'Guests'}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Math.min(maxGuests, guests + 1);
+                      setGuests(next);
+                      setGuestsInput(String(next));
+                    }}
+                    disabled={guests >= maxGuests}
+                    className="w-9 h-9 rounded-lg bg-white border border-neutral-200 text-neutral-800 hover:bg-neutral-100 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center font-bold transition-all shadow-3xs cursor-pointer active:scale-95"
+                    title="Increase guests"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
 
               {/* Price Breakdown */}
@@ -425,11 +528,11 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
               </p>
 
               {/* Action Button */}
-              {room.status === 'available' ? (
+              {isAvailable ? (
                 <button
                   type="button"
                   onClick={handleBookNow}
-                  className="w-full bg-black text-white py-3 rounded-full font-bold text-xs hover:bg-neutral-800 transition-all active:scale-95 shadow-sm"
+                  className="w-full bg-black text-white py-3 rounded-full font-bold text-xs hover:bg-neutral-800 transition-all active:scale-95 shadow-sm cursor-pointer"
                 >
                   Book Now
                 </button>
@@ -437,9 +540,9 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
                 <button
                   type="button"
                   disabled
-                  className="w-full bg-neutral-200 text-neutral-500 py-3 rounded-full font-bold text-xs cursor-not-allowed"
+                  className="w-full bg-neutral-200 text-neutral-400 py-3 rounded-full font-bold text-xs cursor-not-allowed"
                 >
-                  Not available
+                  Not available for your dates
                 </button>
               )}
             </div>
@@ -474,7 +577,9 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
                   <div>
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-sm text-black">{r.type}</span>
-                      <span className="text-[11px] font-semibold text-neutral-400">#{r.number}</span>
+                      <span className="text-[10px] font-bold text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded-full">
+                        {getRoomLevelInfo(r, allRooms).levelLabel}
+                      </span>
                     </div>
                     <div className="text-xs font-extrabold text-neutral-900 mt-1">
                       ₦{r.pricePerNight.toLocaleString()}
@@ -504,7 +609,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
       {galleryOpen && (
         <div className="fixed inset-0 z-50 bg-black/95 p-4 flex flex-col justify-between">
           <div className="flex justify-between items-center text-white px-2 py-2">
-            <span className="text-sm font-semibold">Room {room.number} Gallery</span>
+            <span className="text-sm font-semibold">{room.type} Gallery</span>
             <button
               onClick={() => setGalleryOpen(false)}
               className="p-1 rounded-full bg-neutral-800 text-white"

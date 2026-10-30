@@ -198,8 +198,8 @@ export const ReceiptViewerModal: React.FC<ReceiptViewerModalProps> = ({
                   </span>
                   <div className="grid grid-cols-3 gap-2 text-[11px]">
                     <div>
-                      <span className="text-neutral-400 block">Room</span>
-                      <span className="font-bold text-black">Room {reservation.roomNumber} ({reservation.roomType})</span>
+                      <span className="text-neutral-400 block">Room Category</span>
+                      <span className="font-bold text-black">{reservation.roomType}</span>
                     </div>
                     <div>
                       <span className="text-neutral-400 block">Stay Duration</span>

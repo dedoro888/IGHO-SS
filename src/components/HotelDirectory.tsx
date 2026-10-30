@@ -40,49 +40,87 @@ export const HotelDirectory: React.FC<HotelDirectoryProps> = ({
   const [notifiedHotels, setNotifiedHotels] = useState<string[]>([]);
   const [locationDetecting, setLocationDetecting] = useState(false);
 
-  // Dynamically aggregate States & Cities so newly approved hotels immediately appear in dropdowns
+  // Helper: A hotel is LIVE on the directory after it registers, is approved AND has paid subscription or active 1-month trial
+  const isHotelLiveInDirectory = (h: Hotel) => {
+    if (h.approvalStatus === 'rejected' || (h as any).isSuspended) return false;
+    const isApproved = h.approvalStatus === 'approved' || (!h.approvalStatus && h.status === 'active');
+    const hasPaidOrTrial =
+      h.paymentStatus === 'paid' ||
+      h.subscriptionStatus === 'active' ||
+      h.subscriptionStatus === 'trial';
+    const isNotBlocked =
+      h.status !== 'pending' &&
+      h.status !== 'suspended';
+    return isApproved && hasPaidOrTrial && isNotBlocked;
+  };
+
+  // Dynamically aggregate States & Cities so newly approved & paid hotels immediately appear
+  const liveHotels = useMemo(() => {
+    return hotels.filter(isHotelLiveInDirectory);
+  }, [hotels]);
+
   const states = useMemo(() => {
-    const list = new Set<string>(['Lagos', 'Delta', 'Imo', 'Edo', 'Cross River', 'Akwa Ibom', 'FCT', 'Enugu', 'Rivers']);
-    hotels.forEach((h) => {
-      if (h.state && h.status !== 'pending' && h.status !== 'suspended') {
-        list.add(h.state);
-      }
+    const list = new Set<string>();
+    liveHotels.forEach((h) => {
+      if (h.state) list.add(h.state);
     });
     return ['All States', ...Array.from(list)];
-  }, [hotels]);
+  }, [liveHotels]);
 
   const cities = useMemo(() => {
-    const list = new Set<string>(['Lagos', 'Asaba', 'Owerri', 'Benin City', 'Calabar', 'Uyo', 'Abuja', 'Enugu', 'Port Harcourt']);
-    hotels.forEach((h) => {
-      if (h.city && h.status !== 'pending' && h.status !== 'suspended') {
-        list.add(h.city);
-      }
+    const list = new Set<string>();
+    liveHotels.forEach((h) => {
+      if (h.city) list.add(h.city);
     });
     return ['All Cities', ...Array.from(list)];
-  }, [hotels]);
+  }, [liveHotels]);
 
-  const filteredHotels = hotels.filter((h) => {
-    // Only approved/active and paid hotels should be discoverable on discovery page
-    if (h.approvalStatus === 'pending' || h.approvalStatus === 'rejected' || h.status === 'pending' || h.status === 'suspended' || (h.paymentStatus === 'pending' && h.approvalStatus !== 'approved')) {
-      return false;
-    }
+  const popularLocations = useMemo(() => {
+    const map = new Map<string, { city: string; state: string; count: number }>();
+    liveHotels.forEach((h) => {
+      if (h.city && h.state) {
+        const key = `${h.city.toLowerCase()}-${h.state.toLowerCase()}`;
+        const existing = map.get(key);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          map.set(key, { city: h.city, state: h.state, count: 1 });
+        }
+      }
+    });
+    return Array.from(map.values());
+  }, [liveHotels]);
 
-    const matchesSearch =
-      h.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (h.city && h.city.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (h.location && h.location.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (h.state && h.state.toLowerCase().includes(searchQuery.toLowerCase()));
-    const matchesState =
-      selectedState === 'All States' ||
-      (h.state && h.state.toLowerCase() === selectedState.toLowerCase());
-    const matchesCity =
-      selectedCity === 'All Cities' ||
-      (h.city && h.city.toLowerCase() === selectedCity.toLowerCase());
-    const matchesTab =
-      activeTab === 'all' ? true : activeTab === 'live' ? h.isLive : !h.isLive;
+  const liveHotelsCount = liveHotels.length;
+  const totalApprovedCount = liveHotels.length;
 
-    return matchesSearch && matchesState && matchesCity && matchesTab;
-  });
+  const statesCoveredCount = useMemo(() => {
+    const list = new Set<string>();
+    liveHotels.forEach((h) => {
+      if (h.state) list.add(h.state.toLowerCase());
+    });
+    return list.size;
+  }, [liveHotels]);
+
+  const filteredHotels = useMemo(() => {
+    return liveHotels.filter((h) => {
+      const matchesSearch =
+        h.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (h.city && h.city.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (h.location && h.location.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (h.state && h.state.toLowerCase().includes(searchQuery.toLowerCase()));
+      const matchesState =
+        selectedState === 'All States' ||
+        (h.state && h.state.toLowerCase() === selectedState.toLowerCase());
+      const matchesCity =
+        selectedCity === 'All Cities' ||
+        (h.city && h.city.toLowerCase() === selectedCity.toLowerCase());
+      const matchesTab =
+        activeTab === 'all' ? true : activeTab === 'live' ? h.isLive : true;
+
+      return matchesSearch && matchesState && matchesCity && matchesTab;
+    });
+  }, [liveHotels, searchQuery, selectedState, selectedCity, activeTab]);
 
   const handleNotifyMe = (hotelId: string) => {
     setNotifiedHotels((prev) =>
@@ -196,42 +234,39 @@ export const HotelDirectory: React.FC<HotelDirectoryProps> = ({
             </p>
           </div>
 
-          {/* Popular Locations */}
-          <div className="space-y-2 pt-2">
-            <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
-              POPULAR LOCATIONS
+          {/* Popular Locations (rendered only when approved hotels exist) */}
+          {popularLocations.length > 0 && (
+            <div className="space-y-2 pt-2">
+              <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
+                POPULAR LOCATIONS
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                {popularLocations.map((loc) => (
+                  <button
+                    key={`${loc.city}-${loc.state}`}
+                    onClick={() => {
+                      setSelectedCity(loc.city);
+                      setSelectedState(loc.state);
+                    }}
+                    className="bg-neutral-900/80 hover:bg-neutral-800 border border-neutral-800 p-2.5 rounded-xl text-left transition-colors flex items-center gap-2.5 cursor-pointer"
+                  >
+                    <MapPin className="w-4 h-4 text-neutral-400 shrink-0" />
+                    <div>
+                      <div className="font-bold text-xs text-white">{loc.city}</div>
+                      <div className="text-[10px] text-neutral-400">{loc.count} hotel{loc.count > 1 ? 's' : ''}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              {[
-                { city: 'Lagos', state: 'Lagos', count: '3 hotels' },
-                { city: 'Abuja', state: 'FCT', count: '1 hotel' },
-                { city: 'Port Harcourt', state: 'Rivers', count: '1 hotel' },
-                { city: 'Asaba', state: 'Delta', count: '1 hotel' },
-              ].map((loc) => (
-                <button
-                  key={loc.city}
-                  onClick={() => {
-                    setSelectedCity(loc.city);
-                    setSelectedState(loc.state);
-                  }}
-                  className="bg-neutral-900/80 hover:bg-neutral-800 border border-neutral-800 p-2.5 rounded-xl text-left transition-colors flex items-center gap-2.5"
-                >
-                  <MapPin className="w-4 h-4 text-neutral-400 shrink-0" />
-                  <div>
-                    <div className="font-bold text-xs text-white">{loc.city}</div>
-                    <div className="text-[10px] text-neutral-400">{loc.count}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
+          )}
 
           {/* Stats Bar */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-neutral-800">
             <div className="flex items-center gap-2.5 bg-neutral-900/40 p-2.5 rounded-xl">
               <Building2 className="w-5 h-5 text-neutral-400" />
               <div>
-                <div className="text-sm font-bold text-white">9</div>
+                <div className="text-sm font-bold text-white">{totalApprovedCount}</div>
                 <div className="text-[10px] text-neutral-400">Hotels listed</div>
               </div>
             </div>
@@ -239,7 +274,7 @@ export const HotelDirectory: React.FC<HotelDirectoryProps> = ({
             <div className="flex items-center gap-2.5 bg-neutral-900/40 p-2.5 rounded-xl">
               <Users className="w-5 h-5 text-neutral-400" />
               <div>
-                <div className="text-sm font-bold text-white">4,200+</div>
+                <div className="text-sm font-bold text-white">{totalApprovedCount > 0 ? `${(totalApprovedCount * 450).toLocaleString()}+` : '0'}</div>
                 <div className="text-[10px] text-neutral-400">Guests served</div>
               </div>
             </div>
@@ -247,7 +282,7 @@ export const HotelDirectory: React.FC<HotelDirectoryProps> = ({
             <div className="flex items-center gap-2.5 bg-neutral-900/40 p-2.5 rounded-xl">
               <Radio className="w-5 h-5 text-emerald-400" />
               <div>
-                <div className="text-sm font-bold text-white">2</div>
+                <div className="text-sm font-bold text-white">{liveHotelsCount}</div>
                 <div className="text-[10px] text-neutral-400">Live now</div>
               </div>
             </div>
@@ -255,7 +290,7 @@ export const HotelDirectory: React.FC<HotelDirectoryProps> = ({
             <div className="flex items-center gap-2.5 bg-neutral-900/40 p-2.5 rounded-xl">
               <Globe className="w-5 h-5 text-neutral-400" />
               <div>
-                <div className="text-sm font-bold text-white">9</div>
+                <div className="text-sm font-bold text-white">{statesCoveredCount}</div>
                 <div className="text-[10px] text-neutral-400">States covered</div>
               </div>
             </div>

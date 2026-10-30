@@ -21,6 +21,7 @@ import {
   Lock,
 } from 'lucide-react';
 import { ActiveScreen, CustomerProfile } from '../types';
+import { resolveUserAccount } from '../utils/auth';
 import { IghoOfficialEmblem } from './IghoLogo';
 
 interface HeaderNavProps {
@@ -68,9 +69,23 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
     }
   });
 
+  const userAccount = isLoggedIn ? resolveUserAccount(currentUserEmail, currentGuestProfile || undefined) : null;
+
   const userHotel = isLoggedIn
-    ? hotels.find((h) => h.email?.toLowerCase() === currentUserEmail.trim().toLowerCase())
+    ? hotels.find(
+        (h) =>
+          h.email?.toLowerCase() === currentUserEmail.trim().toLowerCase() ||
+          h.ownerEmail?.toLowerCase() === currentUserEmail.trim().toLowerCase() ||
+          (userAccount?.organizationId && h.id === userAccount.organizationId)
+      )
     : null;
+
+  const isHotelStaffOrOwner = isLoggedIn && (
+    userAccount?.targetScreen === 'staff_portal' ||
+    userAccount?.role === 'hotel_owner' ||
+    userAccount?.role === 'hotel_manager' ||
+    Boolean(userHotel)
+  );
 
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showPlanSelection, setShowPlanSelection] = useState(false);
@@ -307,6 +322,17 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
             </button>
           )}
 
+          {/* Direct Hotel Dashboard button if logged in as Hotel Owner or Staff */}
+          {isHotelStaffOrOwner && (
+            <button
+              onClick={() => onNavigate('staff_portal')}
+              className="hidden sm:flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-black text-white text-xs font-bold hover:bg-neutral-800 transition-all shadow-xs cursor-pointer active:scale-95"
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>Hotel Dashboard</span>
+            </button>
+          )}
+
           {/* Conditional Account Area: If logged in, show Account Profile pill; if NOT, show Sign In */}
           {isLoggedIn ? (
             <div className="relative" ref={accountMenuRef}>
@@ -348,12 +374,29 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                         {currentUserEmail}
                       </div>
                       <div className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-neutral-200/70 text-neutral-700">
-                        {isSuperAdmin ? 'Super Admin' : 'IGHO Guest Account'}
+                        {isSuperAdmin
+                          ? 'Super Admin'
+                          : isHotelStaffOrOwner
+                          ? `Hotel Management (${userHotel?.name || 'Lava Hotel'})`
+                          : 'IGHO Guest Account'}
                       </div>
                     </div>
 
-                    {/* Options: Edit Profile, My Bookings, Console, Sign Out */}
+                    {/* Options: Hotel Dashboard, Edit Profile, My Bookings, Console, Sign Out */}
                     <div className="space-y-0.5">
+                      {isHotelStaffOrOwner && (
+                        <button
+                          onClick={() => {
+                            setAccountMenuOpen(false);
+                            onNavigate('staff_portal');
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-white bg-black hover:bg-neutral-800 rounded-xl transition-colors text-left cursor-pointer mb-1 shadow-2xs"
+                        >
+                          <Building2 className="w-3.5 h-3.5 text-white" />
+                          <span>Hotel Dashboard ({userHotel?.name || 'Lava Hotel'})</span>
+                        </button>
+                      )}
+
                       <button
                         onClick={handleGoToEditProfile}
                         className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-neutral-700 hover:text-black hover:bg-neutral-100 rounded-xl transition-colors text-left cursor-pointer"
@@ -452,20 +495,35 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <button
-                    onClick={handleGoToEditProfile}
-                    className="w-full py-2 px-3 text-xs font-semibold bg-white hover:bg-neutral-100 border border-neutral-200 rounded-full text-neutral-800 text-center"
-                  >
-                    Edit Profile
-                  </button>
-                  <button
-                    onClick={handleLogoutAction}
-                    className="w-full py-2 px-3 text-xs font-bold bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-full text-rose-600 text-center flex items-center justify-center gap-1"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>Sign out</span>
-                  </button>
+                <div className="space-y-2 pt-1">
+                  {isHotelStaffOrOwner && (
+                    <button
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        onNavigate('staff_portal');
+                      }}
+                      className="w-full py-2 px-3 text-xs font-bold bg-black text-white rounded-full text-center flex items-center justify-center gap-1.5 shadow-2xs"
+                    >
+                      <Building2 className="w-3.5 h-3.5" />
+                      <span>Enter Hotel Dashboard</span>
+                    </button>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={handleGoToEditProfile}
+                      className="w-full py-2 px-3 text-xs font-semibold bg-white hover:bg-neutral-100 border border-neutral-200 rounded-full text-neutral-800 text-center"
+                    >
+                      Edit Profile
+                    </button>
+                    <button
+                      onClick={handleLogoutAction}
+                      className="w-full py-2 px-3 text-xs font-bold bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-full text-rose-600 text-center flex items-center justify-center gap-1"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Sign out</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -646,7 +704,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                 <button
                   onClick={() => {
                     setShowStatusModal(false);
-                    setShowPlanSelection(true);
+                    onNavigate('hotel_subscription_plan');
                   }}
                   className="w-full bg-black text-white py-2.5 rounded-full text-xs font-bold hover:bg-neutral-800 transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                 >

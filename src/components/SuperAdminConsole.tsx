@@ -172,7 +172,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
     }
   };
 
-  // 1. APPROVE HOTEL
+  // 1. APPROVE HOTEL (Approved hotel must pay subscription or activate 1-month trial before going live)
   const handleApproveHotel = (hotelId: string) => {
     const target = hotels.find((h) => h.id === hotelId);
     if (!target) return;
@@ -181,9 +181,11 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
       h.id === hotelId
         ? {
             ...h,
-            isLive: true,
+            isLive: false, // Goes live immediately once they pay subscription or activate 1-month trial
             status: 'active' as const,
             approvalStatus: 'approved' as const,
+            paymentStatus: 'pending' as const,
+            subscriptionStatus: 'pending' as const,
             reviewedBy: 'Super Admin',
             reviewedAt: new Date().toISOString(),
           }
@@ -191,32 +193,13 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
     );
     updateHotelsList(updated);
 
-    // Create / activate subscription
-    setSubscriptions((prev) => [
-      {
-        id: `sub-${Date.now()}`,
-        hotelId: target.id,
-        hotelName: target.name,
-        planId: 'plan-starter',
-        planName: 'Starter Tier',
-        status: 'trial',
-        amount: 45000,
-        billingCycle: 'monthly',
-        startDate: new Date().toISOString().split('T')[0],
-        renewalDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
-        trialEndDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
-        paymentStatus: 'pending',
-      },
-      ...prev,
-    ]);
-
     recordAuditLog(
       'APPROVE_HOTEL',
       `${target.name} (${target.id})`,
       'hotel',
       { rooms: target.roomCount, city: target.city, state: target.state },
       'status: pending, approvalStatus: pending, isLive: false',
-      'status: active, approvalStatus: approved, isLive: true'
+      'status: active, approvalStatus: approved, isLive: false (Awaiting subscription payment / 1-month trial)'
     );
   };
 
@@ -395,11 +378,26 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
     );
   };
 
-  // 9. UPDATE SUBSCRIPTION STATUS
+  // 9. UPDATE SUBSCRIPTION STATUS (Confirming payment immediately makes the hotel live on Discover page)
   const handleUpdateSubscriptionStatus = (subId: string, status: any, paymentStatus: any) => {
+    const targetSub = subscriptions.find((s) => s.id === subId);
     setSubscriptions((prev) =>
       prev.map((s) => (s.id === subId ? { ...s, status, paymentStatus } : s))
     );
+    if (targetSub && status === 'active' && paymentStatus === 'paid') {
+      const updated = hotels.map((h) =>
+        h.id === targetSub.hotelId
+          ? {
+              ...h,
+              isLive: true,
+              status: 'active' as const,
+              paymentStatus: 'paid' as const,
+              subscriptionStatus: 'active' as const,
+            }
+          : h
+      );
+      updateHotelsList(updated);
+    }
   };
 
   // 10. ISSUE REFUND
@@ -816,6 +814,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
               onReactivateHotel={handleReactivateHotel}
               onDeleteHotel={handleDeleteHotel}
               onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+              onSelectHotel={onSelectHotel}
             />
           )}
 

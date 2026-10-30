@@ -201,6 +201,7 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
   const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [photosRoom, setPhotosRoom] = useState<Room | null>(null);
   const [showQuickBookModal, setShowQuickBookModal] = useState(false);
+  const [roomToDelete, setRoomToDelete] = useState<{ id: string; number: string; type: string } | null>(null);
 
   // Add Room form state
   const [newRoomNumber, setNewRoomNumber] = useState('');
@@ -888,6 +889,15 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
                                 <Camera className="w-3 h-3" />
                                 <span>Photos</span>
                               </button>
+
+                              <button
+                                onClick={() => setRoomToDelete({ id: room.id, number: room.number, type: room.type })}
+                                className="flex items-center gap-1 px-3 py-1 rounded-full border border-rose-200 bg-rose-50 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition-colors cursor-pointer"
+                                title="Remove Room"
+                              >
+                                <Trash2 className="w-3 h-3 text-rose-600" />
+                                <span>Remove</span>
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -1035,6 +1045,14 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
                             title="Room Photos"
                           >
                             <Camera className="w-3.5 h-3.5" />
+                          </button>
+
+                          <button
+                            onClick={() => setRoomToDelete({ id: room.id, number: room.number, type: room.type })}
+                            className="p-1.5 rounded-full border border-rose-200 bg-rose-50/60 hover:bg-rose-100 text-rose-600 transition-colors cursor-pointer"
+                            title="Remove / Delete Room"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>
@@ -1422,7 +1440,20 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center justify-end pt-3 border-t border-neutral-100">
+              <div className="flex items-center justify-between pt-3 border-t border-neutral-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const r = editingRoom;
+                    setEditingRoom(null);
+                    setRoomToDelete({ id: r.id, number: r.number, type: r.type });
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold transition-all cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Remove Room</span>
+                </button>
+
                 <button
                   type="submit"
                   className="px-6 py-2 bg-black text-white text-xs font-bold rounded-full hover:bg-neutral-800 transition-all shadow-xs"
@@ -1949,6 +1980,56 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* DELETE / REMOVE ROOM CONFIRMATION MODAL */}
+      {roomToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-white rounded-2xl p-6 shadow-2xl space-y-4 border border-neutral-100">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-black text-base text-black">Remove Room {roomToDelete.number}?</h3>
+                <p className="text-xs text-neutral-500">{roomToDelete.type}</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-rose-50/60 border border-rose-200 rounded-xl text-xs text-rose-900 leading-relaxed space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-rose-800">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>Instant Real-Time Removal</span>
+              </div>
+              <p className="text-[11px] text-rose-700">
+                Once removed, this room will immediately disappear from your hotel dashboard, and in real time from all live guest booking portals and discovery searches.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-neutral-100">
+              <button
+                type="button"
+                onClick={() => setRoomToDelete(null)}
+                className="px-4 py-2 rounded-full border border-neutral-300 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onDeleteRoom) {
+                    onDeleteRoom(roomToDelete.id);
+                  }
+                  setRoomToDelete(null);
+                }}
+                className="px-5 py-2 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Confirm Removal</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

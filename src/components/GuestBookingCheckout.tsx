@@ -19,6 +19,7 @@ import { Room, Hotel, Reservation, ActiveScreen, CustomerProfile } from '../type
 import { BackButton } from './BackButton';
 import { GuestAccountNavMenu } from './GuestAccountNavMenu';
 import { saveCustomerProfile } from '../utils/auth';
+import { getRoomLevelInfo } from '../utils/roomCategories';
 
 interface GuestBookingCheckoutProps {
   room: Room;
@@ -54,6 +55,8 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [showMediaPicker, setShowMediaPicker] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+
+  const levelInfo = getRoomLevelInfo(room);
 
   // Form inputs with local draft recovery
   const DRAFT_STORAGE_KEY = `igho_booking_draft_${hotel.id}_${room.id}`;
@@ -477,8 +480,11 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
                 </div>
 
                 <div className="space-y-1">
-                  <div className="font-bold text-base text-black">
-                    {room.type} — Room {room.number}
+                  <div className="font-bold text-base text-black flex items-center gap-2">
+                    <span>{room.type}</span>
+                    <span className="text-[10px] font-bold text-neutral-600 bg-neutral-200/80 px-2 py-0.5 rounded-full">
+                      {levelInfo.levelLabel}
+                    </span>
                   </div>
                   <div className="text-xs text-neutral-500">
                     {bookingDraft.checkIn} → {bookingDraft.checkOut} · {bookingDraft.nights} night ·{' '}
@@ -729,7 +735,7 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
               <div className="font-bold text-neutral-900">Booking summary</div>
               <div className="grid grid-cols-2 gap-2 text-neutral-600">
                 <div>
-                  Room: <span className="font-semibold text-black">{room.type} - Room {room.number}</span>
+                  Room Category: <span className="font-semibold text-black">{room.type} ({levelInfo.levelLabel})</span>
                 </div>
                 <div>
                   Guests: <span className="font-semibold text-black">{bookingDraft.guests}</span>
@@ -851,9 +857,9 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
                 <span className="font-mono font-bold text-black">{reference}</span>
               </div>
               <div className="flex justify-between py-1 border-b border-neutral-200/60">
-                <span className="text-neutral-500">Room</span>
+                <span className="text-neutral-500">Room Category</span>
                 <span className="font-semibold text-black">
-                  {room.type} — Room {room.number}
+                  {room.type} ({levelInfo.levelLabel})
                 </span>
               </div>
               <div className="flex justify-between py-1 border-b border-neutral-200/60">

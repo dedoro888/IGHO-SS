@@ -37,6 +37,48 @@ async function createServer() {
     }
   }
 
+  // SSE Client Connections for instant real-time live push
+  const sseClients = new Set<express.Response>();
+
+  function broadcastLiveEvent(eventType: string, data: any) {
+    const payload = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const client of sseClients) {
+      try {
+        client.write(payload);
+      } catch (e) {
+        sseClients.delete(client);
+      }
+    }
+  }
+
+  // SSE Real-Time Event Stream Endpoint
+  app.get('/api/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    // Send initial handshake
+    res.write(`event: connected\ndata: ${JSON.stringify({ status: 'connected', time: Date.now() })}\n\n`);
+
+    sseClients.add(res);
+
+    const keepAlive = setInterval(() => {
+      try {
+        res.write(`event: ping\ndata: ${JSON.stringify({ time: Date.now() })}\n\n`);
+      } catch {
+        clearInterval(keepAlive);
+        sseClients.delete(res);
+      }
+    }, 15000);
+
+    req.on('close', () => {
+      clearInterval(keepAlive);
+      sseClients.delete(res);
+    });
+  });
+
   // API Endpoints
   app.get('/api/state', (req, res) => {
     const state = getDbState();
@@ -48,7 +90,39 @@ async function createServer() {
 
   app.post('/api/state', (req, res) => {
     const success = saveDbState(req.body);
+    broadcastLiveEvent('state_updated', { timestamp: Date.now() });
     res.json({ success });
+  });
+
+  // Dedicated real-time room action endpoint (add, update, delete)
+  app.post('/api/rooms/live-action', (req, res) => {
+    const { action, room, roomId, hotelId, timestamp } = req.body;
+    const state = getDbState() || {};
+    let rooms = state.rooms || [];
+
+    if (action === 'add' && room) {
+      if (!rooms.some((r: any) => r.id === room.id)) {
+        rooms = [room, ...rooms];
+      }
+    } else if (action === 'update' && room) {
+      rooms = rooms.map((r: any) => (r.id === room.id ? { ...r, ...room } : r));
+    } else if (action === 'delete' && roomId) {
+      rooms = rooms.filter((r: any) => r.id !== roomId);
+    }
+
+    state.rooms = rooms;
+    saveDbState(state);
+
+    // Broadcast immediately to all connected browsers in <10ms
+    broadcastLiveEvent('room_changed', {
+      action,
+      room,
+      roomId,
+      hotelId,
+      timestamp: timestamp || Date.now(),
+    });
+
+    res.json({ success: true, count: rooms.length });
   });
 
   const isProd = process.env.NODE_ENV === 'production' || fs.existsSync(path.join(__dirname, 'dist'));

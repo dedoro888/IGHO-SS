@@ -22,6 +22,7 @@ import {
   Building,
   HeartPulse,
   Hotel as HotelIcon,
+  Sparkles,
 } from 'lucide-react';
 import { Hotel, DemoRequest } from '../../types';
 

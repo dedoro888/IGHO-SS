@@ -117,59 +117,84 @@ export function resolveUserAccount(email: string, customProfile?: CustomerProfil
     }
   }
 
+  // Check dynamic hotels list in localStorage to resolve registered hotel owners
+  if (typeof window !== 'undefined') {
+    try {
+      const rawHotels = localStorage.getItem('igho_db_hotels');
+      if (rawHotels) {
+        const hotelsList = JSON.parse(rawHotels);
+        const matchedHotel = hotelsList.find((h: any) =>
+          h.email?.toLowerCase() === normalizedEmail ||
+          h.ownerEmail?.toLowerCase() === normalizedEmail
+        );
+        if (matchedHotel) {
+          return {
+            email: normalizedEmail,
+            name: matchedHotel.ownerName || matchedHotel.name,
+            role: 'hotel_owner',
+            roleLabel: 'Hotel Owner',
+            targetScreen: 'staff_portal',
+            organizationId: matchedHotel.id,
+            organizationName: matchedHotel.name,
+            description: `Owner portal access for ${matchedHotel.name}`,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to resolve dynamic hotel owner from storage', e);
+    }
+  }
+
   // If this email belongs to an explicit customer profile and is not a designated staff account,
   // ensure they are treated as a customer!
   const savedProf = customProfile || getSavedCustomerProfile(normalizedEmail);
 
-  // 2. Hotel Owner (Exact emails only)
+  // 2. Hotel Owner & Staff for Lava Hotel & Suites and other partner properties
   if (
     normalizedEmail === 'avendoorcompany@gmail.com' ||
+    normalizedEmail === 'info@lavahotel.ng' ||
+    normalizedEmail === 'admin@lavahotel.com' ||
+    normalizedEmail === 'admin@lavahotel.ng' ||
+    normalizedEmail === 'admin@lavahotels.ng' ||
+    normalizedEmail === 'lavahotel@info.com' ||
+    normalizedEmail === 'manager@lavahotel.ng' ||
+    normalizedEmail === 'manager@lavahotel.com' ||
     normalizedEmail === 'owner@palmviewgrand.com' ||
     normalizedEmail === 'owner@grandkuba.com' ||
-    normalizedEmail === 'admin@lavahotel.com'
+    (normalizedEmail.includes('lava') && (normalizedEmail.includes('hotel') || normalizedEmail.includes('admin') || normalizedEmail.includes('owner')))
   ) {
+    const isLava =
+      normalizedEmail.includes('lava') ||
+      normalizedEmail === 'avendoorcompany@gmail.com';
+    const isManager = normalizedEmail.includes('manager');
+    const isKuba = normalizedEmail.includes('kuba');
     return {
       email: normalizedEmail,
-      name: normalizedEmail.includes('kuba') ? 'Kuba Obasi' : 'Avendoor Management',
-      role: 'hotel_owner',
-      roleLabel: 'Hotel Owner',
+      name: isLava ? (isManager ? 'Adaeze Okafor' : 'Obi Chidi') : isKuba ? 'Kuba Obasi' : 'Avendoor Management',
+      role: isManager ? 'hotel_manager' : 'hotel_owner',
+      roleLabel: isManager ? 'Hotel Manager' : 'Hotel Owner',
       targetScreen: 'staff_portal',
-      organizationId: normalizedEmail.includes('kuba') ? 'hotel-5' : 'hotel-6',
-      organizationName: normalizedEmail.includes('kuba') ? 'Grand Kuba Hotel' : 'Palmview Grand Hotel',
-      description: 'Owner portal access to room inventory, folios, multi-branch operations & staff.',
-    };
-  }
-
-  // 3. Hotel Manager (Exact emails only)
-  if (
-    normalizedEmail === 'manager@palmviewgrand.com' ||
-    normalizedEmail === 'manager@lavahotel.com'
-  ) {
-    return {
-      email: normalizedEmail,
-      name: 'Sandra Eze',
-      role: 'hotel_manager',
-      roleLabel: 'Hotel Manager',
-      targetScreen: 'staff_portal',
-      organizationId: 'hotel-6',
-      organizationName: 'Palmview Grand Hotel',
-      description: 'Operational manager with reservations, check-ins, staff & housekeeping management.',
+      organizationId: isLava ? 'hotel-lava' : isKuba ? 'hotel-5' : 'hotel-6',
+      organizationName: isLava ? 'Lava Hotel & Suites' : isKuba ? 'Grand Kuba Hotel' : 'Palmview Grand Hotel',
+      description: 'Hotel dashboard access to room inventory, folios, check-ins and staff management.',
     };
   }
 
   // 4. Receptionist (Exact emails only)
   if (
     normalizedEmail === 'reception@palmviewgrand.com' ||
-    normalizedEmail === 'frontdesk@lavahotel.com'
+    normalizedEmail === 'frontdesk@lavahotel.com' ||
+    normalizedEmail === 'frontdesk@lavahotel.ng'
   ) {
+    const isLava = normalizedEmail.includes('lavahotel');
     return {
       email: normalizedEmail,
-      name: 'David Adeleke',
+      name: isLava ? 'Chiamaka Obi' : 'David Adeleke',
       role: 'receptionist',
       roleLabel: 'Front Desk Receptionist',
       targetScreen: 'staff_portal',
-      organizationId: 'hotel-6',
-      organizationName: 'Palmview Grand Hotel',
+      organizationId: isLava ? 'hotel-lava' : 'hotel-6',
+      organizationName: isLava ? 'Lava Hotel & Suites' : 'Palmview Grand Hotel',
       description: 'Front desk access for checking guests in, managing room keys & creating reservations.',
     };
   }
@@ -177,16 +202,18 @@ export function resolveUserAccount(email: string, customProfile?: CustomerProfil
   // 5. Finance (Exact emails only)
   if (
     normalizedEmail === 'finance@palmviewgrand.com' ||
-    normalizedEmail === 'finance@lavahotel.com'
+    normalizedEmail === 'finance@lavahotel.com' ||
+    normalizedEmail === 'finance@lavahotel.ng'
   ) {
+    const isLava = normalizedEmail.includes('lavahotel');
     return {
       email: normalizedEmail,
       name: 'Blessing Ade',
       role: 'finance',
       roleLabel: 'Hotel Finance Officer',
       targetScreen: 'staff_portal',
-      organizationId: 'hotel-6',
-      organizationName: 'Palmview Grand Hotel',
+      organizationId: isLava ? 'hotel-lava' : 'hotel-6',
+      organizationName: isLava ? 'Lava Hotel & Suites' : 'Palmview Grand Hotel',
       description: 'Financial ledger, room billing reconciliation & payment verification.',
     };
   }
@@ -194,16 +221,18 @@ export function resolveUserAccount(email: string, customProfile?: CustomerProfil
   // 6. Housekeeping (Exact emails only)
   if (
     normalizedEmail === 'housekeeping@palmviewgrand.com' ||
-    normalizedEmail === 'housekeeping@lavahotel.com'
+    normalizedEmail === 'housekeeping@lavahotel.com' ||
+    normalizedEmail === 'housekeeping@lavahotel.ng'
   ) {
+    const isLava = normalizedEmail.includes('lavahotel');
     return {
       email: normalizedEmail,
       name: 'Emeka Nwosu',
       role: 'housekeeping',
       roleLabel: 'Housekeeping Staff',
       targetScreen: 'staff_portal',
-      organizationId: 'hotel-6',
-      organizationName: 'Palmview Grand Hotel',
+      organizationId: isLava ? 'hotel-lava' : 'hotel-6',
+      organizationName: isLava ? 'Lava Hotel & Suites' : 'Palmview Grand Hotel',
       description: 'Room cleaning, maintenance status & laundry operations.',
     };
   }

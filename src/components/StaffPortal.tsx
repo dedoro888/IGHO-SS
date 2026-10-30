@@ -48,7 +48,15 @@ import {
   Calendar,
   TrendingUp,
   Check,
+  ArrowUpCircle,
+  CalendarRange,
+  Ban,
+  RotateCcw,
+  Info,
+  Bell,
+  Trash2,
 } from 'lucide-react';
+import { IghoOfficialEmblem } from './IghoLogo';
 import {
   Hotel,
   Room,
@@ -102,6 +110,7 @@ interface StaffPortalProps {
   onUpdateRoom?: (room: Room) => void;
   onDeleteRoom?: (roomId: string) => void;
   onAddReservation: (res: Reservation) => void;
+  onUpdateReservation?: (updatedRes: Reservation) => void;
   onUpdateReservationStatus?: (resId: string, status: Reservation['status']) => void;
   onUpdateStaffPermissions?: (staffId: string, permissions: PermissionId[]) => void;
   onInviteStaff?: (invite: StaffInvitation) => void;
@@ -134,6 +143,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   onUpdateRoom,
   onDeleteRoom,
   onAddReservation,
+  onUpdateReservation,
   onUpdateReservationStatus,
   onUpdateStaffPermissions,
   onInviteStaff,
@@ -165,13 +175,13 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
     } catch {}
   }, [activeTab]);
 
-  // Shrink side menu bar to only icons (default true, persists in localStorage)
+  // Shrink side menu bar to only icons (default false, persists in localStorage)
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem('igho_staff_sidebar_collapsed');
-      return saved !== null ? saved === 'true' : true;
+      return saved !== null ? saved === 'true' : false;
     } catch {
-      return true;
+      return false;
     }
   });
 
@@ -206,6 +216,28 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   const [selectedBranchId, setSelectedBranchId] = useState<string>('all');
   const [managingReservation, setManagingReservation] = useState<Reservation | null>(null);
   const [selectedReservationForReceipt, setSelectedReservationForReceipt] = useState<Reservation | null>(null);
+
+  // States for Managing Reservations (Refunds, Date Changes, Room Allocations)
+  const [allocationSelectedRoomId, setAllocationSelectedRoomId] = useState<string>('');
+  const [refundAmountInput, setRefundAmountInput] = useState<string>('');
+  const [refundMethodInput, setRefundMethodInput] = useState<string>('Original Payment Method (Paystack / Transfer)');
+  const [staffDateCheckIn, setStaffDateCheckIn] = useState<string>('');
+  const [staffDateCheckOut, setStaffDateCheckOut] = useState<string>('');
+  const [showStaffDateEdit, setShowStaffDateEdit] = useState<boolean>(false);
+  const [managementToast, setManagementToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (managingReservation) {
+      setRefundAmountInput(String(managingReservation.refundAmount || managingReservation.total));
+      setStaffDateCheckIn(managingReservation.checkIn);
+      setStaffDateCheckOut(managingReservation.checkOut);
+      setShowStaffDateEdit(false);
+      // Preselect matching room of the target room tier
+      const targetType = (managingReservation.upgradeDetails?.upgradedRoomType || managingReservation.roomType || '').toLowerCase();
+      const matching = rooms.filter((r) => r.type.toLowerCase() === targetType);
+      setAllocationSelectedRoomId(matching[0]?.id || rooms[0]?.id || '');
+    }
+  }, [managingReservation, rooms]);
 
   // Branch creation form state
   const [newBranchName, setNewBranchName] = useState('');
@@ -397,10 +429,15 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   const [copiedPortalUrl, setCopiedPortalUrl] = useState(false);
 
   // Filter in reservations
-  const [resFilter, setResFilter] = useState<'all' | 'pending_verification' | 'pending_payment' | 'confirmed' | 'rejected' | 'checked_in' | 'checked_out'>('all');
+  const [resFilter, setResFilter] = useState<
+    'all' | 'pending_verification' | 'pending_payment' | 'confirmed' | 'rejected' | 'checked_in' | 'checked_out' | 'cancelled' | 'date_changed' | 'upgraded'
+  >('all');
 
   const filteredReservations = localReservations.filter((r) => {
     if (resFilter === 'all') return true;
+    if (resFilter === 'cancelled') return r.status === 'cancelled' || r.refundStatus === 'pending' || r.refundStatus === 'initiated';
+    if (resFilter === 'date_changed') return r.status === 'date_changed' || !!r.originalDates;
+    if (resFilter === 'upgraded') return r.status === 'upgraded' || !!r.upgradeDetails;
     return r.status === resFilter;
   });
 
@@ -700,118 +737,242 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   ];
 
   return (
-    <div className="min-h-screen bg-neutral-50 text-neutral-900 flex flex-col md:flex-row">
-       {/* SIDEBAR (Upgraded to transparent track with standalone floating circle/pill capsule buttons) */}
-       <motion.aside
-         animate={{ width: sidebarCollapsed ? 80 : 272 }}
-         transition={{ duration: 0.3, ease: 'easeInOut' }}
-         className={`fixed z-50 bg-transparent text-white flex flex-col justify-between top-4 bottom-4 left-4 px-5 ${
-           mobileSidebarOpen ? 'translate-x-0' : '-translate-x-[calc(100%+2rem)] md:translate-x-0'
-         }`}
-         style={{ height: 'calc(100vh - 2rem)' }}
-       >
-         {/* Mobile close button */}
-         <button
-           onClick={() => setMobileSidebarOpen(false)}
-           className="absolute top-4 right-4 md:hidden text-neutral-400 hover:text-white p-1 cursor-pointer z-30"
-         >
-           <X className="w-4 h-4" />
-         </button>
+    <div className="min-h-screen bg-neutral-50 text-neutral-900 flex font-sans overflow-x-hidden relative">
+      {/* Mobile Drawer Sidebar */}
+      <AnimatePresence>
+        {mobileSidebarOpen && (
+          <>
+            {/* Backdrop overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMobileSidebarOpen(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 md:hidden"
+            />
 
-         <div className="space-y-4 w-full">
-           {/* Hotel Identity Header */}
-           <div className="flex flex-row items-center justify-center h-10 w-full shrink-0 relative">
-             {sidebarCollapsed ? (
-               <div className="w-10 h-10 bg-black text-white rounded-full flex items-center justify-center font-bold text-xs border border-neutral-800 shrink-0 select-none mx-auto shadow-md">
-                 <Bed className="w-4 h-4 text-white" />
-               </div>
-             ) : (
-               <div className="p-2 bg-black border border-neutral-850 rounded-full flex items-center justify-start shadow-md overflow-hidden shrink-0 h-10 w-full">
-                 <div className="flex items-center gap-2.5 min-w-0">
-                   <div className="w-6 h-6 bg-neutral-900 text-white rounded-full flex items-center justify-center font-bold text-xs border border-neutral-800 shrink-0 select-none">
-                     <Bed className="w-3.5 h-3.5 text-white" />
-                   </div>
-                   <div className="leading-tight min-w-0">
-                     <div className="font-bold text-xs text-white truncate max-w-[170px]">
-                       {hotel.name || 'Lava Hotel'}
-                     </div>
-                     <div className="text-[9px] text-neutral-400 font-mono">HTL-LAVA-005</div>
-                   </div>
-                 </div>
-               </div>
-             )}
-           </div>
+            {/* Sidebar Drawer Container */}
+            <motion.div
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 250 }}
+              className="fixed top-0 bottom-0 left-0 z-50 md:hidden h-full w-[272px] pb-6 px-4 pt-4 flex flex-col gap-3 bg-neutral-50 shadow-2xl"
+            >
+              {/* Pill 1: Header */}
+              <div className="flex flex-row items-center justify-between w-full shrink-0 bg-white border border-neutral-200/50 shadow-xs rounded-[2rem] p-4 h-16">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <IghoOfficialEmblem className="w-7 h-7 cursor-pointer shrink-0 animate-none" />
+                  <div className="flex flex-col text-left leading-tight min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="font-extrabold text-[12px] tracking-tight text-neutral-900 font-sans truncate max-w-[130px]">
+                        {hotel.name || 'Cold Lava'}
+                      </span>
+                      <span className="text-neutral-400 text-[10px]">/</span>
+                      <span className="text-[11px] font-bold text-[#10b981]">PMS</span>
+                    </div>
+                    <p className="text-[9px] text-neutral-400 font-medium truncate">
+                      {hotel.city || 'Lagos'}, {hotel.state || 'Nigeria'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setMobileSidebarOpen(false)}
+                  className="p-1 rounded-full text-neutral-400 hover:text-black hover:bg-neutral-100 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
 
-           {/* Navigation Links */}
-           <div className="space-y-1.5 w-full">
-             <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest px-4 font-mono h-6 flex items-center shrink-0">
-                <span className={`transition-all duration-300 ${sidebarCollapsed ? 'opacity-0 scale-75' : 'opacity-100'}`}>
+              {/* Pill 2: Scrollable Navigation List */}
+              <div className="flex flex-col flex-1 min-h-0 w-full bg-white border border-neutral-200/50 shadow-xs rounded-[2rem] p-3.5 overflow-y-auto space-y-1.5">
+                <div className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest pl-3 font-mono h-5 flex items-center shrink-0">
                   Operations
-                </span>
-             </div>
-             {sidebarItems.map((item) => {
-               const Icon = item.icon;
-               const isActive = activeTab === item.id;
-               const hasAccess = can(item.perm);
-               return (
-                 <div key={item.id} className="flex justify-start w-full">
-                   <button
-                     title={item.label}
-                     onClick={() => {
-                       setActiveTab(item.id as any);
-                       setMobileSidebarOpen(false);
-                     }}
-                     className={`group flex items-center justify-start h-10 rounded-full border overflow-hidden relative cursor-pointer transition-all duration-300 ${
-                       sidebarCollapsed ? 'w-10' : 'w-full'
-                     } ${
-                       isActive
-                         ? 'bg-white border-white text-black font-extrabold shadow-lg'
-                         : hasAccess
-                         ? 'border-neutral-800 bg-black text-neutral-400 hover:text-white hover:border-neutral-600 hover:bg-neutral-900'
-                         : 'border-neutral-900/60 bg-neutral-950/60 text-neutral-650 cursor-not-allowed'
-                     }`}
-                   >
-                     {/* Locked Anchor Icon container */}
-                     <div className="w-10 h-10 flex items-center justify-center shrink-0">
-                       <Icon className="w-4 h-4 shrink-0 transition-transform duration-300 group-hover:scale-105" />
-                     </div>
-                     <AnimatePresence initial={false}>
-                       {!sidebarCollapsed && (
-                         <motion.span
-                           initial={{ opacity: 0, x: -10 }}
-                           animate={{ opacity: 1, x: 0 }}
-                           exit={{ opacity: 0, x: -10 }}
-                           transition={{ duration: 0.15 }}
-                           className="text-xs font-bold whitespace-nowrap overflow-hidden ml-1"
-                         >
-                           {item.label}
-                         </motion.span>
-                       )}
-                     </AnimatePresence>
-                     {!hasAccess && !sidebarCollapsed && (
-                       <Lock className="w-3 h-3 text-neutral-600 ml-auto mr-4 shrink-0" />
-                     )}
-                   </button>
-                 </div>
-               );
-             })}
-           </div>
-         </div>
+                </div>
+                {sidebarItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
+                  const hasAccess = can(item.perm);
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setActiveTab(item.id as any);
+                        setMobileSidebarOpen(false);
+                      }}
+                      className={`flex items-center h-10 rounded-full border transition-all duration-200 w-full pl-2 pr-3.5 ${
+                        isActive
+                          ? 'bg-black border-white text-white font-bold shadow-md'
+                          : hasAccess
+                          ? 'bg-black border-neutral-850 text-neutral-300 hover:text-white hover:border-neutral-700'
+                          : 'bg-neutral-900/50 border-neutral-850/50 text-neutral-600 cursor-not-allowed'
+                      }`}
+                    >
+                      <div className="w-8 h-8 flex items-center justify-center shrink-0">
+                        <Icon className="w-4 h-4 shrink-0" />
+                      </div>
+                      <span className="text-xs font-bold whitespace-nowrap overflow-hidden ml-1 truncate">
+                        {item.label}
+                      </span>
+                      {!hasAccess && (
+                        <Lock className="w-3 h-3 text-neutral-600 ml-auto shrink-0" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
 
-          {/* Footer Sections */}
-          <div className="mt-auto space-y-3 w-full shrink-0 pt-4 border-t border-neutral-850">
-            {/* Section 3: Profile Pill */}
+              {/* Pill 3: Footer */}
+              <div className="shrink-0 w-full bg-white border border-neutral-200/50 shadow-xs rounded-[2rem] p-3 space-y-2">
+                <button
+                  onClick={() => {
+                    setEditProfileOpen(true);
+                    setMobileSidebarOpen(false);
+                  }}
+                  className="flex items-center gap-2.5 w-full pl-2 pr-3 py-1.5 rounded-full hover:bg-neutral-50 transition-colors"
+                >
+                  {profilePicture ? (
+                    <img src={profilePicture} alt="Profile" className="w-7 h-7 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="w-7 h-7 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-[10px] shrink-0">
+                      {profileName.split(' ').map(n => n[0]).join('').toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 text-left leading-tight flex-1">
+                    <p className="text-[11px] font-extrabold text-neutral-900 truncate">{profileName}</p>
+                    <p className="text-[9px] text-[#10b981] font-mono truncate">{profileEmail}</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    onNavigate('landing');
+                  }}
+                  className="flex items-center justify-start h-9 rounded-full border w-full text-rose-500 hover:text-rose-600 bg-rose-50 hover:bg-rose-100/70 border-rose-200 px-3 transition-colors cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4 mr-2 shrink-0" />
+                  <span className="text-xs font-bold">Log Out</span>
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Persistent Desktop 3-Capsule Sidebar (Always visible on left on Desktop, never cut off) */}
+      <motion.aside
+        animate={{ width: sidebarCollapsed ? 80 : 272 }}
+        transition={{ duration: 0.3, ease: 'easeInOut' }}
+        className="hidden md:flex sticky top-4 h-[calc(100vh-2rem)] ml-4 my-4 flex-col justify-start gap-3 shrink-0 bg-transparent shadow-none border-none px-0 z-30"
+      >
+        {/* SECTION 1: HEADER BRANDING PILL */}
+        <div className="flex flex-row items-center justify-between w-full shrink-0 relative bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-4 h-16">
+          {sidebarCollapsed ? (
+            <button
+              type="button"
+              onClick={() => setSidebarCollapsed(false)}
+              className="flex items-center justify-center w-full cursor-pointer group"
+              title="Expand navigation bar"
+            >
+              <IghoOfficialEmblem className="w-7 h-7 group-hover:scale-110 transition-transform animate-none" />
+            </button>
+          ) : (
+            <div className="flex items-center justify-between w-full">
+              <div className="flex items-center gap-2.5 min-w-0 justify-start pl-[6px]">
+                <IghoOfficialEmblem className="w-7 h-7 cursor-pointer shrink-0 animate-none" />
+                <div className="flex flex-col text-left leading-tight min-w-0">
+                  <div className="flex items-center gap-1">
+                    <span className="font-extrabold text-[12px] tracking-tight text-neutral-900 font-sans truncate max-w-[130px]">
+                      {hotel.name || 'Lava Hotel & Suites'}
+                    </span>
+                    <span className="text-neutral-400 text-[10px]">/</span>
+                    <span className="text-[11px] font-bold text-[#10b981]">PMS</span>
+                  </div>
+                  <p className="text-[9px] text-neutral-400 font-medium truncate">
+                    {hotel.city || 'Lagos'}, {hotel.state || 'Nigeria'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(true)}
+                className="p-1.5 rounded-full text-neutral-400 hover:text-black hover:bg-neutral-100 transition-colors cursor-pointer shrink-0 ml-1"
+                title="Collapse navigation bar"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* SECTION 2: NAVIGATION & SCROLLABLE OPERATIONS LIST (All 11 items visible & scrollable) */}
+        <div className="flex flex-col flex-1 min-h-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-3 overflow-y-auto space-y-1 scrollbar-thin scrollbar-thumb-neutral-300">
+          <div className={`text-[10px] font-bold text-neutral-400 uppercase tracking-widest font-mono flex items-center justify-center shrink-0 h-4 mb-0.5 ${sidebarCollapsed ? 'px-2' : 'pl-3'}`}>
+            {sidebarCollapsed ? (
+              <div className="w-4 h-[1px] bg-neutral-200/60" />
+            ) : (
+              <span className="w-full text-left">Operations</span>
+            )}
+          </div>
+          {sidebarItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            const hasAccess = can(item.perm);
+            return (
+              <div key={item.id} className={`flex ${sidebarCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
+                <button
+                  title={item.label}
+                  onClick={() => setActiveTab(item.id as any)}
+                  className={`flex items-center h-8.5 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
+                    sidebarCollapsed ? 'w-8.5 justify-center p-0' : 'w-full justify-start pl-[4px] pr-3'
+                  } ${
+                    isActive
+                      ? 'bg-black border-white text-white font-bold shadow-md'
+                      : hasAccess
+                      ? 'bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700'
+                      : 'border-neutral-900/40 bg-neutral-950/40 text-neutral-600 cursor-not-allowed'
+                  }`}
+                >
+                  <div className="w-8.5 h-8.5 flex items-center justify-center shrink-0">
+                    <Icon className="w-3.5 h-3.5 shrink-0 transition-transform duration-300" />
+                  </div>
+                  <AnimatePresence initial={false}>
+                    {!sidebarCollapsed && (
+                      <motion.span
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -10 }}
+                        transition={{ duration: 0.15 }}
+                        className="text-[11px] font-bold whitespace-nowrap overflow-hidden ml-1 truncate"
+                      >
+                        {item.label}
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                  {!hasAccess && !sidebarCollapsed && (
+                    <Lock className="w-3 h-3 text-neutral-600 ml-auto mr-1 shrink-0" />
+                  )}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* SECTION 3: COMPACT FOOTER PROFILE, COLLAPSE & LOGOUT PILL */}
+        <div className="shrink-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 space-y-1.5 rounded-[2rem] p-2.5">
+          {/* User Profile Info */}
+          <div className={`flex ${sidebarCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
             <button
               onClick={() => setEditProfileOpen(true)}
               title="Edit Profile"
-              className={`flex items-center gap-2.5 bg-black border border-neutral-850 hover:border-neutral-700 rounded-full cursor-pointer transition-all duration-300 ${
-                sidebarCollapsed ? 'w-10 h-10 justify-center p-0' : 'w-full px-3.5 py-1.5'
+              className={`flex items-center gap-2 hover:bg-neutral-50/80 border border-neutral-200/60 rounded-full cursor-pointer transition-all duration-300 ${
+                sidebarCollapsed ? 'w-8.5 h-8.5 justify-center p-0' : 'w-full pl-[5px] pr-2.5 py-1'
               }`}
             >
               {profilePicture ? (
-                <img src={profilePicture} alt="Profile" className="w-7 h-7 rounded-full object-cover shadow-xs shrink-0" />
+                <img src={profilePicture} alt="Profile" className="w-6.5 h-6.5 rounded-full object-cover shrink-0" />
               ) : (
-                <div className="w-7 h-7 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-[10px] shadow-xs shrink-0">
+                <div className="w-6.5 h-6.5 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-[9px] shrink-0">
                   {profileName.split(' ').map(n => n[0]).join('').toUpperCase()}
                 </div>
               )}
@@ -824,85 +985,106 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                     transition={{ duration: 0.15 }}
                     className="min-w-0 text-left leading-tight flex-1"
                   >
-                    <p className="text-[11px] font-extrabold text-white truncate">{profileName}</p>
-                    <p className="text-[9px] text-[#10b981] font-mono truncate">{profileEmail}</p>
+                    <p className="text-[10.5px] font-extrabold text-neutral-900 truncate">{profileName}</p>
+                    <p className="text-[8.5px] text-[#10b981] font-mono truncate">{profileEmail}</p>
                   </motion.div>
                 )}
               </AnimatePresence>
             </button>
+          </div>
 
-            {/* Section 1: Collapse and Logout */}
-            <div className="flex flex-col gap-2 w-full">
-              {/* Collapse */}
+          {/* Action Row: Collapse & Log Out */}
+          <div className="flex flex-col gap-2 w-full">
+            {/* Collapse / Expand Toggle Button */}
+            <div className={`flex ${sidebarCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
               <button
+                type="button"
                 onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-                className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700 ${
-                  sidebarCollapsed ? 'w-10' : 'w-full'
+                title={sidebarCollapsed ? 'Expand navigation bar' : 'Collapse navigation bar'}
+                className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700 ${
+                  sidebarCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px]'
                 }`}
               >
                 <div className="w-10 h-10 flex items-center justify-center shrink-0">
                   {sidebarCollapsed ? (
-                    <ChevronRight className="w-4 h-4 text-neutral-400 font-bold" />
+                    <ChevronRight className="w-4 h-4 text-white font-bold" />
                   ) : (
                     <ChevronLeft className="w-4 h-4 text-white font-bold" />
                   )}
                 </div>
                 {!sidebarCollapsed && (
-                  <span className="text-[11px] font-bold text-neutral-400 ml-1">
-                    Collapse
-                  </span>
+                  <span className="text-[11px] font-bold whitespace-nowrap ml-1">Collapse</span>
                 )}
               </button>
+            </div>
 
-              {/* Log Out */}
+            {/* Log Out */}
+            <div className={`flex ${sidebarCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
               <button
-                onClick={() => {
-                  onNavigate('landing');
-                }}
+                type="button"
+                onClick={() => onNavigate('landing')}
                 title="Log Out"
-                className={`flex items-center justify-start h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border-rose-500/20 hover:border-rose-500/40 ${
-                  sidebarCollapsed ? 'w-10' : 'w-full'
+                className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 text-rose-600 hover:text-rose-700 bg-rose-50/50 hover:bg-rose-50 border-rose-100 hover:border-rose-200 ${
+                  sidebarCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px]'
                 }`}
               >
                 <div className="w-10 h-10 flex items-center justify-center shrink-0">
-                  <LogOut className="w-4 h-4 shrink-0 text-rose-400" />
+                  <LogOut className="w-4 h-4 shrink-0" />
                 </div>
                 {!sidebarCollapsed && (
-                  <span className="text-[11px] font-bold whitespace-nowrap ml-1">
-                    Log Out
-                  </span>
+                  <span className="text-[11px] font-bold whitespace-nowrap ml-1">Log Out</span>
                 )}
               </button>
             </div>
           </div>
-       </motion.aside>
+        </div>
+      </motion.aside>
 
-      {/* MAIN VIEWPORT */}
-      <div className={`flex-1 flex flex-col min-w-0 transition-[padding] duration-300 ease-in-out ${
-        sidebarCollapsed ? 'md:pl-28' : 'md:pl-[18.5rem]'
-      }`}>
-        {/* Top Header with Branch & Role Switcher styled as a floating pill */}
-        <div className="pt-4 px-4 sm:px-6 pb-2">
-          <header className="bg-white border border-neutral-200/80 shadow-xs rounded-full px-5 py-2 flex items-center justify-between gap-3 text-neutral-900">
-            <div className="flex items-center gap-3">
+      {/* MAIN VIEWPORT (Naturally side-by-side with no fixed overlap) */}
+      <div className="flex-1 flex flex-col min-w-0 bg-neutral-50">
+        {/* Top Floating Navbar Capsule - Modeled exactly like IGHO Console */}
+        <div className="pt-4 px-4 sm:px-8">
+          <header className="bg-white border border-neutral-200/80 shadow-xs rounded-full px-5 py-2 flex items-center justify-between gap-4 text-neutral-900">
+            <div className="flex items-center gap-2.5">
+              {/* Desktop Expand / Collapse Toggle Button */}
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                className="hidden md:flex p-2 text-neutral-600 hover:text-black hover:bg-neutral-100 border border-neutral-200/80 rounded-full transition-all cursor-pointer items-center justify-center shrink-0 active:scale-95 shadow-3xs"
+                title={sidebarCollapsed ? 'Expand navigation bar' : 'Collapse navigation bar'}
+              >
+                {sidebarCollapsed ? (
+                  <ChevronRight className="w-4 h-4 text-neutral-800" />
+                ) : (
+                  <ChevronLeft className="w-4 h-4 text-neutral-800" />
+                )}
+              </button>
+
+              {/* Mobile Menu Button */}
               <button
                 onClick={() => setMobileSidebarOpen(true)}
-                className="md:hidden p-2 rounded-full border border-neutral-200 text-neutral-700 hover:bg-neutral-50 transition-colors"
+                className="md:hidden p-2 text-neutral-600 hover:text-black hover:bg-neutral-50 rounded-full transition-all cursor-pointer flex items-center justify-center shrink-0"
+                title="Open Menu"
               >
-                <Menu className="w-4 h-4" />
+                <Menu className="w-5 h-5" />
               </button>
-              
-              {/* Breadcrumb Navigation Instead of Clustered Brand Repeating */}
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">PMS Portal</span>
-                <span className="text-neutral-300 text-[10px] font-bold">/</span>
-                <span className="text-[11px] font-extrabold text-neutral-900 capitalize bg-neutral-100 px-2.5 py-0.5 rounded-full border border-neutral-200/60">
-                  {activeTab === 'dashboard' ? 'Overview' : activeTab}
-                </span>
-              </div>
 
-              {/* Branch Selector (Requirement 31) styled as a pill */}
+              {/* Minimalist Indicator when Sidebar is Collapsed / on mobile (exact mirror of IGHO Console) */}
+              {(sidebarCollapsed || mobileSidebarOpen) && (
+                <div className="flex items-center gap-2">
+                  <span className="font-black text-sm text-black">IGHO</span>
+                  <span className="text-neutral-300">|</span>
+                  <span className="text-xs text-[#10b981] font-bold truncate max-w-[140px] sm:max-w-none">
+                    {hotel.name || 'Lava Hotel & Suites'} PMS
+                  </span>
+                  <span className="hidden sm:inline-block text-neutral-300">/</span>
+                  <span className="hidden sm:inline-block text-[11px] font-extrabold text-neutral-900 capitalize bg-neutral-100 px-2.5 py-0.5 rounded-full border border-neutral-200/60">
+                    {activeTab === 'dashboard' ? 'Overview' : activeTab}
+                  </span>
+                </div>
+              )}
+
+              {/* Branch Selector styled as a pill */}
               {hotelBranches.length > 0 && (
                 <div className="hidden lg:flex items-center gap-1.5 ml-2 pl-3 border-l border-neutral-150">
                   <Building className="w-3.5 h-3.5 text-neutral-400" />
@@ -922,41 +1104,47 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               )}
             </div>
 
-            <div className="flex items-center gap-2">
-              {/* Branch Selector on small screens (hidden on desktop if already visible in sidebar/left) */}
-              {hotelBranches.length > 0 && (
-                <div className="flex lg:hidden items-center gap-1">
-                  <select
-                    value={selectedBranchId}
-                    onChange={(e) => setSelectedBranchId(e.target.value)}
-                    className="bg-neutral-50 border border-neutral-200 rounded-full text-[10px] font-bold py-1 px-2.5 focus:outline-none cursor-pointer text-neutral-800"
-                  >
-                    <option value="all">Branches</option>
-                    {hotelBranches.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.code}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+            {/* Center Search Input (Just like IGHO Console) */}
+            <div className="flex-1 max-w-xl relative hidden md:block">
+              <Search className="w-4 h-4 text-neutral-400 absolute left-4 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search reservations, rooms, guests, or bills..."
+                className="w-full bg-neutral-50 border border-neutral-200 rounded-full pl-10 pr-4 py-2 text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black focus:bg-white transition-all"
+              />
+            </div>
 
-              {/* Quick Role Persona Badge / Indicator styled as a premium pill */}
-              <div className="flex items-center gap-1 text-[10px] sm:text-xs font-bold px-2.5 sm:px-3.5 py-1.5 rounded-full bg-emerald-50/80 border border-emerald-100 text-emerald-700">
-                <ShieldCheck className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-emerald-600" />
-                <span className="hidden md:inline">Role:</span>
-                <span className="font-extrabold">{getRoleDisplayName(selectedRolePersona)}</span>
-              </div>
-
+            {/* Right User & Notifications Cluster */}
+            <div className="flex items-center gap-3">
+              {/* Go to Guest Site Button */}
               <button
                 onClick={() => onNavigate('hotel_guest_portal')}
-                className="flex items-center gap-1 text-[10px] sm:text-xs font-bold px-3 sm:px-4 py-1.5 rounded-full border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 transition-all shadow-3xs"
+                className="flex items-center gap-1.5 text-[10px] sm:text-xs font-bold px-3 sm:px-4 py-1.5 rounded-full border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 transition-all shadow-3xs cursor-pointer active:scale-95"
+                title="View Hotel Guest Portal"
               >
-                <ExternalLink className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-neutral-500" />
+                <ExternalLink className="w-3.5 h-3.5 text-neutral-500" />
                 <span className="hidden sm:inline">Guest Site</span>
               </button>
 
-              {/* Interactive Profile Dropdown Menu */}
+              {/* Role Persona Badge */}
+              <div className="hidden lg:flex items-center gap-1 text-[10px] sm:text-xs font-bold px-3 py-1.5 rounded-full bg-emerald-50/80 border border-emerald-100 text-emerald-700">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="font-extrabold">{getRoleDisplayName(selectedRolePersona)}</span>
+              </div>
+
+              {/* Notification Bell with Pill Badge */}
+              <button
+                onClick={() => setActiveTab('reservations')}
+                className="relative p-2 text-neutral-400 hover:text-black hover:bg-neutral-50 rounded-full transition-all cursor-pointer"
+                title="Active Reservations"
+              >
+                <Bell className="w-4 h-4" />
+                <span className="absolute top-1 right-1 w-4 h-4 bg-rose-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center font-mono">
+                  {localReservations.filter((r) => r.status === 'confirmed').length || 1}
+                </span>
+              </button>
+
+              {/* User Profile Info with interactive Dropdown Menu */}
               <div className="relative">
                 <button
                   onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
@@ -964,13 +1152,13 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                   title="Profile Menu"
                 >
                   {profilePicture ? (
-                    <img src={profilePicture} alt="Profile" className="w-8 h-8 rounded-full object-cover shadow-sm" />
+                    <img src={profilePicture} alt="Profile" className="w-8 h-8 rounded-full object-cover shadow-sm shrink-0" />
                   ) : (
-                    <div className="w-8 h-8 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-xs shadow-sm">
+                    <div className="w-8 h-8 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center text-xs shadow-sm shrink-0">
                       {activeStaffMember.name ? activeStaffMember.name.slice(0, 2).toUpperCase() : 'ST'}
                     </div>
                   )}
-                  <div className="hidden md:block text-left leading-tight">
+                  <div className="hidden sm:block text-left leading-tight">
                     <p className="text-xs font-bold text-neutral-900">{activeStaffMember.name}</p>
                     <p className="text-[9px] text-[#10b981] font-extrabold uppercase tracking-wider">{getRoleDisplayName(activeStaffMember.role)}</p>
                   </div>
@@ -1021,10 +1209,10 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                       <div className="py-1">
                         <button
                           onClick={() => {
-                            alert('Hotel Portal Settings are managed by your Hotel Owner account.');
+                            setActiveTab('settings');
                             setProfileDropdownOpen(false);
                           }}
-                          className="w-full text-left px-4 py-2 hover:bg-neutral-50 transition-colors flex items-center gap-2.5 text-neutral-700 hover:text-black font-semibold"
+                          className="w-full text-left px-4 py-2 hover:bg-neutral-50 transition-colors flex items-center gap-2.5 text-neutral-700 hover:text-black font-semibold cursor-pointer"
                         >
                           <Settings className="w-3.5 h-3.5 text-neutral-400" />
                           <span>Hotel PMS Settings</span>
@@ -1034,10 +1222,20 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                             setEditProfileOpen(true);
                             setProfileDropdownOpen(false);
                           }}
-                          className="w-full text-left px-4 py-2 hover:bg-neutral-50 transition-colors flex items-center gap-2.5 text-neutral-700 hover:text-black font-semibold"
+                          className="w-full text-left px-4 py-2 hover:bg-neutral-50 transition-colors flex items-center gap-2.5 text-neutral-700 hover:text-black font-semibold cursor-pointer"
                         >
                           <User className="w-3.5 h-3.5 text-neutral-400" />
                           <span>Edit Staff Profile</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setProfileDropdownOpen(false);
+                            onNavigate('landing');
+                          }}
+                          className="w-full text-left px-4 py-2 hover:bg-rose-50 transition-colors flex items-center gap-2.5 text-rose-600 font-semibold border-t border-neutral-100 cursor-pointer"
+                        >
+                          <LogOut className="w-3.5 h-3.5 text-rose-500" />
+                          <span>Log Out of PMS</span>
                         </button>
                       </div>
                     </div>
@@ -1074,6 +1272,30 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
             <span className="text-[11px] font-bold uppercase tracking-wider bg-rose-200/60 px-2 py-0.5 rounded text-rose-800">
               Action Required
             </span>
+          </div>
+        )}
+
+        {/* 1-MONTH FREE TRIAL ACTIVE BANNER */}
+        {hotel.subscriptionStatus === 'trial' && hotel.trialEndDate && (
+          <div className="bg-gradient-to-r from-emerald-950 via-neutral-900 to-black border-b border-emerald-500/40 px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs text-white">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="font-extrabold text-white">1-Month Free Trial Active</span>
+              {hotel.trialCode && (
+                <span className="text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full">
+                  Special Code: {hotel.trialCode}
+                </span>
+              )}
+              <span className="text-neutral-400 text-[11px] hidden sm:inline">
+                · Valid until {new Date(hotel.trialEndDate).toLocaleDateString()} ({Math.max(1, Math.ceil((new Date(hotel.trialEndDate).getTime() - Date.now()) / (1000 * 3600 * 24)))} days remaining)
+              </span>
+            </div>
+            <button
+              onClick={() => onNavigate('hotel_subscription_plan')}
+              className="px-3.5 py-1 bg-white hover:bg-neutral-100 text-black font-extrabold text-[11px] rounded-full transition-colors cursor-pointer shadow-xs"
+            >
+              Upgrade Subscription
+            </button>
           </div>
         )}
 
@@ -1439,12 +1661,24 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                   { id: 'confirmed', label: `Confirmed (${localReservations.filter((r) => r.status === 'confirmed').length})` },
                   { id: 'checked_in', label: `Checked in (${localReservations.filter((r) => r.status === 'checked_in').length})` },
                   { id: 'checked_out', label: `Checked out (${localReservations.filter((r) => r.status === 'checked_out').length})` },
+                  {
+                    id: 'cancelled',
+                    label: `Cancellations & Refunds (${localReservations.filter((r) => r.status === 'cancelled' || r.refundStatus === 'pending' || r.refundStatus === 'initiated').length})`,
+                  },
+                  {
+                    id: 'date_changed',
+                    label: `Rescheduled Dates (${localReservations.filter((r) => r.status === 'date_changed' || !!r.originalDates).length})`,
+                  },
+                  {
+                    id: 'upgraded',
+                    label: `Room Upgrades (${localReservations.filter((r) => r.status === 'upgraded' || !!r.upgradeDetails).length})`,
+                  },
                   { id: 'rejected', label: `Rejected (${localReservations.filter((r) => r.status === 'rejected').length})` },
                 ].map((f) => (
                   <button
                     key={f.id}
                     onClick={() => setResFilter(f.id as any)}
-                    className={`px-3 py-1 rounded-full font-semibold transition-colors whitespace-nowrap text-[11px] ${
+                    className={`px-3 py-1 rounded-full font-semibold transition-colors whitespace-nowrap text-[11px] cursor-pointer ${
                       resFilter === f.id
                         ? 'bg-black text-white shadow-2xs'
                         : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
@@ -1463,20 +1697,29 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                   <tr>
                     <th className="py-3 px-4">Ref</th>
                     <th className="py-3 px-4">Guest</th>
-                    <th className="py-3 px-4">Room</th>
+                    <th className="py-3 px-4">Room & Tier</th>
                     <th className="py-3 px-4">Check-in</th>
                     <th className="py-3 px-4">Check-out</th>
                     <th className="py-3 px-4">Total</th>
-                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4">Status & Action</th>
                     <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
                   {filteredReservations.length > 0 ? (
                     filteredReservations.map((res) => {
+                      const isCancelled = res.status === 'cancelled';
+                      const isDateChanged = res.status === 'date_changed' || !!res.originalDates;
+                      const isUpgraded = res.status === 'upgraded' || !!res.upgradeDetails;
+                      const isPendingAllocation = isUpgraded && (!res.upgradeDetails?.roomAllocated || res.roomNumber === 'Pending Allocation');
+
                       const badgeClass =
                         res.status === 'confirmed'
                           ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : res.status === 'upgraded'
+                          ? 'bg-purple-50 text-purple-800 border-purple-200'
+                          : res.status === 'date_changed'
+                          ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
                           : res.status === 'checked_in'
                           ? 'bg-blue-50 text-blue-800 border-blue-200'
                           : res.status === 'checked_out'
@@ -1497,24 +1740,79 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                             )}
                           </td>
                           <td className="py-3 px-4">
-                            <span className="font-semibold text-neutral-700">Room {res.roomNumber}</span>
-                            <div className="text-[10px] text-neutral-400 truncate max-w-[120px]">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-semibold text-neutral-700">
+                                {isPendingAllocation ? (
+                                  <span className="text-amber-800 font-bold bg-amber-50 border border-amber-300 px-1.5 py-0.5 rounded text-[10px] animate-pulse">
+                                    Allocation Needed
+                                  </span>
+                                ) : (
+                                  `Room ${res.roomNumber}`
+                                )}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-neutral-500 truncate max-w-[150px]">
                               {res.roomType}
+                              {isUpgraded && res.upgradeDetails && (
+                                <span className="text-purple-700 font-bold ml-1">
+                                  (+₦{res.upgradeDetails.upgradeBalancePaid.toLocaleString()})
+                                </span>
+                              )}
                             </div>
                           </td>
-                          <td className="py-3 px-4 text-neutral-600">{res.checkIn}</td>
-                          <td className="py-3 px-4 text-neutral-600">{res.checkOut}</td>
+                          <td className="py-3 px-4 text-neutral-600">
+                            <div>{res.checkIn}</div>
+                            {isDateChanged && res.originalDates && (
+                              <div className="text-[9px] text-neutral-400 line-through">
+                                Was: {res.originalDates.checkIn}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-neutral-600">
+                            <div>{res.checkOut}</div>
+                            {isDateChanged && res.originalDates && (
+                              <div className="text-[9px] text-neutral-400 line-through">
+                                Was: {res.originalDates.checkOut}
+                              </div>
+                            )}
+                          </td>
                           <td className="py-3 px-4 font-bold text-black">₦{res.total.toLocaleString()}</td>
                           <td className="py-3 px-4">
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full capitalize border ${badgeClass}`}>
-                              {res.status.replace('_', ' ')}
-                            </span>
+                            <div className="space-y-1">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full capitalize border ${badgeClass}`}>
+                                {res.status.replace('_', ' ')}
+                              </span>
+                              {isCancelled && (
+                                <div>
+                                  {res.refundStatus === 'initiated' ? (
+                                    <span className="text-[9px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded inline-block">
+                                      Refund Initiated ({res.refundRef || 'Pending'})
+                                    </span>
+                                  ) : res.refundStatus === 'completed' ? (
+                                    <span className="text-[9px] font-bold text-emerald-900 bg-emerald-100 border border-emerald-300 px-1.5 py-0.5 rounded inline-block">
+                                      Refund Completed
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded inline-block">
+                                      Refund Due: ₦{(res.refundAmount || res.total).toLocaleString()}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              {isPendingAllocation && (
+                                <div>
+                                  <span className="text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded inline-block">
+                                    Assign Room Number
+                                  </span>
+                                </div>
+                              )}
+                            </div>
                           </td>
                           <td className="py-3 px-4 text-right">
                             <div className="flex items-center justify-end gap-1.5">
                               <button
                                 onClick={() => setSelectedReservationForReceipt(res)}
-                                className="px-3 py-1 rounded-full bg-neutral-100 hover:bg-neutral-200 text-xs font-bold text-neutral-800 flex items-center gap-1 transition-colors shadow-2xs"
+                                className="px-3 py-1 rounded-full bg-neutral-100 hover:bg-neutral-200 text-xs font-bold text-neutral-800 flex items-center gap-1 transition-colors shadow-2xs cursor-pointer"
                                 title="View Guest Payment Receipt"
                               >
                                 <FileText className="w-3.5 h-3.5 text-neutral-600" />
@@ -1522,9 +1820,19 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                               </button>
                               <button
                                 onClick={() => setManagingReservation(res)}
-                                className="px-3 py-1 rounded-full bg-black hover:bg-neutral-800 text-xs font-bold text-white transition-colors shadow-2xs"
+                                className={`px-3 py-1 rounded-full text-xs font-bold text-white transition-colors shadow-2xs cursor-pointer ${
+                                  isCancelled && res.refundStatus === 'pending'
+                                    ? 'bg-rose-600 hover:bg-rose-700 animate-pulse'
+                                    : isPendingAllocation
+                                    ? 'bg-purple-600 hover:bg-purple-700 animate-pulse'
+                                    : 'bg-black hover:bg-neutral-800'
+                                }`}
                               >
-                                Manage
+                                {isCancelled && res.refundStatus === 'pending'
+                                  ? 'Refund'
+                                  : isPendingAllocation
+                                  ? 'Allocate'
+                                  : 'Manage'}
                               </button>
                             </div>
                           </td>
@@ -2861,164 +3169,650 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
         </div>
       )}
 
-      {/* MODAL: MANAGE RESERVATION (Requirement 21, 26) */}
+      {/* MODAL: MANAGE RESERVATION (Requirement 21, 26, Cancellation Refunds, Date Changes & Room Allocation) */}
       {managingReservation && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white rounded-2xl p-6 shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
+          <div className="w-full max-w-xl bg-white rounded-2xl p-6 shadow-2xl space-y-4 max-h-[92vh] overflow-y-auto animate-in zoom-in-95 duration-150">
+            {/* Header */}
             <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
               <div>
-                <h3 className="font-bold text-base text-black">Reservation {managingReservation.reference}</h3>
-                <p className="text-xs text-neutral-500">Guest: {managingReservation.guestName}</p>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-black text-base text-black">Reservation {managingReservation.reference}</h3>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full capitalize bg-neutral-100 border border-neutral-200 text-neutral-800">
+                    {managingReservation.status.replace('_', ' ')}
+                  </span>
+                </div>
+                <p className="text-xs text-neutral-500">
+                  Guest: <strong>{managingReservation.guestName}</strong> ({managingReservation.guestEmail || 'No email'})
+                  {managingReservation.guestPhone && ` · ${managingReservation.guestPhone}`}
+                </p>
               </div>
               <button
+                type="button"
                 onClick={() => setManagingReservation(null)}
-                className="text-neutral-400 hover:text-black"
+                className="text-neutral-400 hover:text-black cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-2 p-3 rounded-xl bg-neutral-50 border border-neutral-200">
-                <div>
-                  <span className="text-neutral-500">Room</span>
-                  <div className="font-bold text-black">Room {managingReservation.roomNumber}</div>
-                </div>
-                <div>
-                  <span className="text-neutral-500">Status</span>
-                  <div className="font-bold text-black capitalize">{managingReservation.status.replace('_', ' ')}</div>
-                </div>
-                <div>
-                  <span className="text-neutral-500">Check-in</span>
-                  <div className="font-semibold text-neutral-800">{managingReservation.checkIn}</div>
-                </div>
-                <div>
-                  <span className="text-neutral-500">Check-out</span>
-                  <div className="font-semibold text-neutral-800">{managingReservation.checkOut}</div>
-                </div>
-                <div className="col-span-2">
-                  <span className="text-neutral-500">Total Amount</span>
-                  <div className="font-mono font-bold text-black">₦{managingReservation.total.toLocaleString()}</div>
-                </div>
+            {/* Quick Summary Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 rounded-xl bg-neutral-50 border border-neutral-200 text-xs">
+              <div>
+                <span className="text-[11px] text-neutral-400 block">Room</span>
+                <span className="font-bold text-black">
+                  {managingReservation.roomNumber === 'Pending Allocation' ? (
+                    <span className="text-amber-700 bg-amber-50 px-1 rounded">Pending Allocation</span>
+                  ) : (
+                    `Room ${managingReservation.roomNumber}`
+                  )}
+                </span>
+                <span className="text-[10px] text-neutral-500 block truncate">{managingReservation.roomType}</span>
               </div>
+              <div>
+                <span className="text-[11px] text-neutral-400 block">Check-in</span>
+                <span className="font-semibold text-neutral-800">{managingReservation.checkIn}</span>
+              </div>
+              <div>
+                <span className="text-[11px] text-neutral-400 block">Check-out</span>
+                <span className="font-semibold text-neutral-800">{managingReservation.checkOut}</span>
+                <span className="text-[10px] text-neutral-500 block">({managingReservation.nights} night{managingReservation.nights > 1 ? 's' : ''})</span>
+              </div>
+              <div>
+                <span className="text-[11px] text-neutral-400 block">Total Amount</span>
+                <span className="font-mono font-bold text-black">₦{managingReservation.total.toLocaleString()}</span>
+              </div>
+            </div>
 
-              {/* View Attached Receipt Action */}
-              <div className="pt-1">
+            {/* SECTION 1: CANCELLATION & REFUND INITIATION */}
+            {(managingReservation.status === 'cancelled' || managingReservation.refundStatus) && (
+              <div className="p-4 rounded-xl border border-rose-200 bg-rose-50/50 space-y-3 text-xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-bold text-rose-950">
+                    <Ban className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>Cancellation & Refund Management</span>
+                  </div>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    managingReservation.refundStatus === 'completed'
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                      : managingReservation.refundStatus === 'initiated'
+                      ? 'bg-blue-100 text-blue-800 border-blue-300'
+                      : 'bg-rose-100 text-rose-800 border-rose-300'
+                  }`}>
+                    Refund Status: {managingReservation.refundStatus ? managingReservation.refundStatus.toUpperCase() : 'PENDING'}
+                  </span>
+                </div>
+
+                <div className="space-y-1 text-neutral-700">
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Cancellation Reason:</span>
+                    <span className="font-medium text-neutral-900">{managingReservation.cancellationReason || 'Guest requested cancellation'}</span>
+                  </div>
+                  {managingReservation.cancellationRequestedAt && (
+                    <div className="flex justify-between">
+                      <span className="text-neutral-500">Requested Date:</span>
+                      <span className="text-neutral-700">{new Date(managingReservation.cancellationRequestedAt).toLocaleString()}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between border-t border-rose-200/60 pt-1.5 font-bold text-rose-950">
+                    <span>Refund Amount Due:</span>
+                    <span className="font-mono text-sm">₦{(managingReservation.refundAmount || managingReservation.total).toLocaleString()}</span>
+                  </div>
+                </div>
+
+                {/* Refund Action Flow */}
+                {(!managingReservation.refundStatus || managingReservation.refundStatus === 'pending') && (
+                  <div className="p-3 bg-white border border-rose-200 rounded-xl space-y-2.5">
+                    <div className="font-bold text-neutral-800 text-[11px] uppercase tracking-wider">
+                      Initiate Refund for Guest
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <label className="block text-[11px] font-semibold text-neutral-600">Refund Amount (₦)</label>
+                        <input
+                          type="number"
+                          value={refundAmountInput}
+                          onChange={(e) => setRefundAmountInput(e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-neutral-300 text-xs focus:outline-none focus:border-black font-mono font-bold"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="block text-[11px] font-semibold text-neutral-600">Refund Method</label>
+                        <select
+                          value={refundMethodInput}
+                          onChange={(e) => setRefundMethodInput(e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-neutral-300 text-xs focus:outline-none focus:border-black bg-white"
+                        >
+                          <option value="Paystack Direct Reversal">Paystack Direct Reversal</option>
+                          <option value="Direct Bank Transfer">Direct Bank Transfer</option>
+                          <option value="POS / Front Desk Cash">POS / Front Desk Cash</option>
+                        </select>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const amount = Number(refundAmountInput) || managingReservation.refundAmount || managingReservation.total;
+                        const ref = `REF-${Date.now().toString().slice(-6)}`;
+                        const updated: Reservation = {
+                          ...managingReservation,
+                          status: 'cancelled',
+                          refundStatus: 'initiated',
+                          refundAmount: amount,
+                          refundInitiatedAt: new Date().toISOString(),
+                          refundRef: ref,
+                          refundNotes: `Initiated via ${refundMethodInput} by ${activeStaffMember.name} (${activeStaffMember.role})`,
+                        };
+                        setLocalReservations((prev) =>
+                          prev.map((r) => (r.id === updated.id ? updated : r))
+                        );
+                        if (onUpdateReservation) {
+                          onUpdateReservation(updated);
+                        } else if (onUpdateReservationStatus) {
+                          onUpdateReservationStatus(updated.id, 'cancelled');
+                        }
+                        setManagingReservation(updated);
+                        setManagementToast({
+                          type: 'success',
+                          message: `Refund of ₦${amount.toLocaleString()} initiated (Ref: ${ref}).`,
+                        });
+                        setTimeout(() => setManagementToast(null), 5000);
+                      }}
+                      className="w-full py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Initiate Refund (₦{Number(refundAmountInput || managingReservation.total).toLocaleString()})</span>
+                    </button>
+                  </div>
+                )}
+
+                {managingReservation.refundStatus === 'initiated' && (
+                  <div className="p-3 bg-white border border-blue-200 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-blue-900">Refund in Progress: {managingReservation.refundRef}</span>
+                      <span className="text-[10px] text-neutral-500">
+                        {managingReservation.refundInitiatedAt ? new Date(managingReservation.refundInitiatedAt).toLocaleDateString() : ''}
+                      </span>
+                    </div>
+                    {managingReservation.refundNotes && (
+                      <div className="text-[11px] text-neutral-600 italic">{managingReservation.refundNotes}</div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated: Reservation = {
+                          ...managingReservation,
+                          refundStatus: 'completed',
+                        };
+                        setLocalReservations((prev) =>
+                          prev.map((r) => (r.id === updated.id ? updated : r))
+                        );
+                        if (onUpdateReservation) onUpdateReservation(updated);
+                        setManagingReservation(updated);
+                        setManagementToast({
+                          type: 'success',
+                          message: `Refund ${managingReservation.refundRef} marked as completed.`,
+                        });
+                        setTimeout(() => setManagementToast(null), 5000);
+                      }}
+                      className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Mark Refund as Completed & Reconciled</span>
+                    </button>
+                  </div>
+                )}
+
+                {managingReservation.refundStatus === 'completed' && (
+                  <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-semibold flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Refund of ₦{(managingReservation.refundAmount || managingReservation.total).toLocaleString()} completed and reconciled.</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SECTION 2: ROOM UPGRADE & NEW ROOM ALLOCATION */}
+            {(managingReservation.status === 'upgraded' || !!managingReservation.upgradeDetails) && (
+              <div className="p-4 rounded-xl border border-purple-200 bg-purple-50/50 space-y-3 text-xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-bold text-purple-950">
+                    <Sparkles className="w-4 h-4 text-purple-600 shrink-0" />
+                    <span>Room Upgrade & Allocation</span>
+                  </div>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    managingReservation.upgradeDetails?.roomAllocated && managingReservation.roomNumber !== 'Pending Allocation'
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                      : 'bg-amber-100 text-amber-900 border-amber-300 animate-pulse'
+                  }`}>
+                    {managingReservation.upgradeDetails?.roomAllocated && managingReservation.roomNumber !== 'Pending Allocation'
+                      ? 'ROOM ALLOCATED'
+                      : 'ALLOCATION REQUIRED'}
+                  </span>
+                </div>
+
+                <div className="space-y-1 text-neutral-700">
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Upgraded Tier:</span>
+                    <span className="font-bold text-purple-900">
+                      {managingReservation.upgradeDetails?.upgradedRoomType || managingReservation.roomType}
+                    </span>
+                  </div>
+                  {managingReservation.upgradeDetails?.previousRoomType && (
+                    <div className="flex justify-between">
+                      <span className="text-neutral-500">Previous Room:</span>
+                      <span className="text-neutral-700">
+                        {managingReservation.upgradeDetails.previousRoomType} (Room {managingReservation.upgradeDetails.previousRoomNumber})
+                      </span>
+                    </div>
+                  )}
+                  {managingReservation.upgradeDetails?.upgradeBalancePaid !== undefined && (
+                    <div className="flex justify-between border-t border-purple-200/60 pt-1.5">
+                      <span className="text-neutral-500">Upgrade Balance Paid:</span>
+                      <span className="font-mono font-bold text-purple-900">
+                        ₦{managingReservation.upgradeDetails.upgradeBalancePaid.toLocaleString()}
+                        {managingReservation.upgradeDetails.upgradePaymentRef && (
+                          <span className="text-[10px] text-neutral-500 ml-1">
+                            ({managingReservation.upgradeDetails.upgradePaymentRef})
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Allocate Room Interface */}
+                {(!managingReservation.upgradeDetails?.roomAllocated || managingReservation.roomNumber === 'Pending Allocation') ? (
+                  <div className="p-3 bg-white border border-amber-300 rounded-xl space-y-2.5">
+                    <div className="font-bold text-amber-900 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+                      <DoorOpen className="w-4 h-4 text-amber-600" />
+                      <span>Allocate Room Number to Upgraded Guest</span>
+                    </div>
+                    <p className="text-[11px] text-neutral-600">
+                      Select an available room in the <strong>{managingReservation.upgradeDetails?.upgradedRoomType || managingReservation.roomType}</strong> tier to assign to {managingReservation.guestName}:
+                    </p>
+
+                    <div className="space-y-1">
+                      <select
+                        value={allocationSelectedRoomId}
+                        onChange={(e) => setAllocationSelectedRoomId(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-neutral-300 text-xs focus:outline-none focus:border-black bg-white"
+                      >
+                        {(() => {
+                          const targetType = (managingReservation.upgradeDetails?.upgradedRoomType || managingReservation.roomType).toLowerCase();
+                          const candidateRooms = rooms.filter((r) => r.type.toLowerCase() === targetType);
+                          const listToRender = candidateRooms.length > 0 ? candidateRooms : rooms;
+
+                          return listToRender.map((r) => (
+                            <option key={r.id} value={r.id}>
+                              Room {r.number} — {r.type} (Floor {r.floor}, Status: {r.status})
+                            </option>
+                          ));
+                        })()}
+                      </select>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetRoom = rooms.find((r) => r.id === allocationSelectedRoomId) || rooms[0];
+                        if (!targetRoom) return;
+
+                        const updated: Reservation = {
+                          ...managingReservation,
+                          roomNumber: targetRoom.number,
+                          roomId: targetRoom.id,
+                          roomType: targetRoom.type,
+                          status: 'confirmed',
+                          upgradeDetails: {
+                            ...(managingReservation.upgradeDetails || {
+                              previousRoomType: managingReservation.roomType,
+                              previousRoomNumber: managingReservation.roomNumber,
+                              previousPricePerNight: 0,
+                              upgradedRoomType: targetRoom.type,
+                              newPricePerNight: targetRoom.pricePerNight,
+                              upgradeBalancePaid: 0,
+                              upgradedAt: new Date().toISOString(),
+                            }),
+                            roomAllocated: true,
+                            allocatedRoomNumber: targetRoom.number,
+                          },
+                        };
+
+                        setLocalReservations((prev) =>
+                          prev.map((r) => (r.id === updated.id ? updated : r))
+                        );
+                        if (onUpdateReservation) {
+                          onUpdateReservation(updated);
+                        } else if (onUpdateReservationStatus) {
+                          onUpdateReservationStatus(updated.id, 'confirmed');
+                        }
+                        setManagingReservation(updated);
+                        setManagementToast({
+                          type: 'success',
+                          message: `Room ${targetRoom.number} (${targetRoom.type}) successfully allocated to ${managingReservation.guestName}!`,
+                        });
+                        setTimeout(() => setManagementToast(null), 5000);
+                      }}
+                      className="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Confirm Room Allocation</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-white border border-purple-200 rounded-xl flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] text-neutral-400 block">Allocated Room</span>
+                      <span className="font-bold text-sm text-neutral-900">
+                        Room {managingReservation.roomNumber} ({managingReservation.roomType})
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated: Reservation = {
+                          ...managingReservation,
+                          upgradeDetails: {
+                            ...(managingReservation.upgradeDetails as any),
+                            roomAllocated: false,
+                          },
+                        };
+                        setManagingReservation(updated);
+                      }}
+                      className="text-xs font-semibold text-purple-700 hover:underline cursor-pointer"
+                    >
+                      Re-allocate Room
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SECTION 3: DATE RESCHEDULING & BOOKING STATUS */}
+            <div className="p-4 rounded-xl border border-indigo-200 bg-indigo-50/50 space-y-3 text-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 font-bold text-indigo-950">
+                  <CalendarRange className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span>Stay Dates & Rescheduling</span>
+                </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    setSelectedReservationForReceipt(managingReservation);
-                  }}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-full border border-neutral-300 bg-neutral-50 hover:bg-neutral-100 font-bold text-xs text-neutral-900 transition-colors shadow-2xs"
+                  onClick={() => setShowStaffDateEdit(!showStaffDateEdit)}
+                  className="text-xs text-indigo-700 font-semibold hover:underline cursor-pointer"
                 >
-                  <FileText className="w-4 h-4 text-neutral-600" />
-                  <span>View Attached Guest Payment Receipt</span>
+                  {showStaffDateEdit ? 'Cancel Date Edit' : 'Modify Dates'}
                 </button>
               </div>
 
-              {/* Actions guarded by RBAC permissions */}
-              <div className="space-y-2 pt-2 border-t border-neutral-100">
-                <div className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider">
-                  Allowed Operations (Based on your role: {getRoleDisplayName(activeStaffMember.role)})
-                </div>
+              {/* Notice if guest rescheduled dates */}
+              {managingReservation.originalDates && (
+                <div className="p-2.5 bg-white border border-indigo-200 rounded-xl space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-indigo-900">Guest Rescheduled Stay</span>
+                    <span className="text-[10px] bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-bold">
+                      {managingReservation.dateChangeStatus === 'confirmed' ? 'CONFIRMED' : 'PENDING CONFIRMATION'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-neutral-600">
+                    Originally booked: <span className="line-through">{managingReservation.originalDates.checkIn} to {managingReservation.originalDates.checkOut}</span> ({managingReservation.originalDates.nights} nights).
+                  </div>
+                  <div className="text-[11px] text-neutral-800 font-semibold">
+                    Current stay dates: {managingReservation.checkIn} to {managingReservation.checkOut} ({managingReservation.nights} nights).
+                  </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    disabled={!can('reservations.check_in')}
-                    onClick={() => {
-                      setLocalReservations((prev) =>
-                        prev.map((r) =>
-                          r.id === managingReservation.id ? { ...r, status: 'checked_in' } : r
-                        )
-                      );
-                      if (onUpdateReservationStatus) {
-                        onUpdateReservationStatus(managingReservation.id, 'checked_in');
-                      }
-                      setManagingReservation(null);
-                    }}
-                    className={`px-3 py-2 rounded-full text-xs font-bold border transition-colors ${
-                      can('reservations.check_in')
-                        ? 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700'
-                        : 'bg-neutral-100 text-neutral-400 border-neutral-200 cursor-not-allowed opacity-60'
-                    }`}
-                    title={can('reservations.check_in') ? 'Check-in guest' : 'Requires reservations.check_in permission'}
-                  >
-                    Check In
-                  </button>
-
-                  <button
-                    disabled={!can('reservations.check_out')}
-                    onClick={() => {
-                      setLocalReservations((prev) =>
-                        prev.map((r) =>
-                          r.id === managingReservation.id ? { ...r, status: 'checked_out' } : r
-                        )
-                      );
-                      if (onUpdateReservationStatus) {
-                        onUpdateReservationStatus(managingReservation.id, 'checked_out');
-                      }
-                      setManagingReservation(null);
-                    }}
-                    className={`px-3 py-2 rounded-full text-xs font-bold border transition-colors ${
-                      can('reservations.check_out')
-                        ? 'bg-blue-600 text-white border-blue-700 hover:bg-blue-700'
-                        : 'bg-neutral-100 text-neutral-400 border-neutral-200 cursor-not-allowed opacity-60'
-                    }`}
-                    title={can('reservations.check_out') ? 'Check-out guest' : 'Requires reservations.check_out permission'}
-                  >
-                    Check Out
-                  </button>
-
-                  <button
-                    disabled={!can('reservations.edit')}
-                    onClick={() => {
-                      setLocalReservations((prev) =>
-                        prev.map((r) =>
-                          r.id === managingReservation.id ? { ...r, status: 'confirmed' } : r
-                        )
-                      );
-                      if (onUpdateReservationStatus) {
-                        onUpdateReservationStatus(managingReservation.id, 'confirmed');
-                      }
-                      setManagingReservation(null);
-                    }}
-                    className={`px-3 py-2 rounded-full text-xs font-bold border transition-colors ${
-                      can('reservations.edit')
-                        ? 'bg-neutral-900 text-white border-black hover:bg-neutral-800'
-                        : 'bg-neutral-100 text-neutral-400 border-neutral-200 cursor-not-allowed opacity-60'
-                    }`}
-                    title={can('reservations.edit') ? 'Verify payment & confirm' : 'Requires reservations.edit permission'}
-                  >
-                    Confirm Payment
-                  </button>
-
-                  <button
-                    disabled={!can('reservations.cancel')}
-                    onClick={() => {
-                      if (confirm('Are you sure you want to cancel this reservation?')) {
+                  {managingReservation.dateChangeStatus !== 'confirmed' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated: Reservation = {
+                          ...managingReservation,
+                          dateChangeStatus: 'confirmed',
+                          status: 'confirmed',
+                        };
                         setLocalReservations((prev) =>
-                          prev.map((r) =>
-                            r.id === managingReservation.id ? { ...r, status: 'rejected' } : r
-                          )
+                          prev.map((r) => (r.id === updated.id ? updated : r))
                         );
-                        if (onUpdateReservationStatus) {
-                          onUpdateReservationStatus(managingReservation.id, 'rejected');
-                        }
-                        setManagingReservation(null);
-                      }
+                        if (onUpdateReservation) onUpdateReservation(updated);
+                        setManagingReservation(updated);
+                        setManagementToast({
+                          type: 'success',
+                          message: `Rescheduled dates confirmed for ${managingReservation.guestName}.`,
+                        });
+                        setTimeout(() => setManagementToast(null), 5000);
+                      }}
+                      className="mt-2 w-full py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Confirm & Acknowledge Rescheduled Dates</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Staff Date Edit Form */}
+              {showStaffDateEdit && (
+                <div className="p-3 bg-white border border-neutral-300 rounded-xl space-y-2.5">
+                  <div className="font-bold text-neutral-800 text-[11px]">Set New Stay Dates</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-semibold text-neutral-600">Check-in</label>
+                      <input
+                        type="date"
+                        value={staffDateCheckIn}
+                        onChange={(e) => setStaffDateCheckIn(e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-neutral-300 text-xs focus:outline-none focus:border-black"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-semibold text-neutral-600">Check-out</label>
+                      <input
+                        type="date"
+                        value={staffDateCheckOut}
+                        onChange={(e) => setStaffDateCheckOut(e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-neutral-300 text-xs focus:outline-none focus:border-black"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!staffDateCheckIn || !staffDateCheckOut) return;
+                      const diffTime = new Date(staffDateCheckOut).getTime() - new Date(staffDateCheckIn).getTime();
+                      const nights = Math.max(1, Math.round(diffTime / (1000 * 3600 * 24)));
+                      const updated: Reservation = {
+                        ...managingReservation,
+                        originalDates: managingReservation.originalDates || {
+                          checkIn: managingReservation.checkIn,
+                          checkOut: managingReservation.checkOut,
+                          nights: managingReservation.nights,
+                        },
+                        checkIn: staffDateCheckIn,
+                        checkOut: staffDateCheckOut,
+                        nights,
+                        status: 'date_changed',
+                        dateChangedAt: new Date().toISOString(),
+                        dateChangeStatus: 'confirmed',
+                      };
+                      setLocalReservations((prev) =>
+                        prev.map((r) => (r.id === updated.id ? updated : r))
+                      );
+                      if (onUpdateReservation) onUpdateReservation(updated);
+                      setManagingReservation(updated);
+                      setShowStaffDateEdit(false);
+                      setManagementToast({
+                        type: 'success',
+                        message: `Stay dates updated to ${staffDateCheckIn} → ${staffDateCheckOut} (${nights} nights).`,
+                      });
+                      setTimeout(() => setManagementToast(null), 5000);
                     }}
-                    className={`px-3 py-2 rounded-full text-xs font-bold border transition-colors ${
-                      can('reservations.cancel')
-                        ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
-                        : 'bg-neutral-100 text-neutral-400 border-neutral-200 cursor-not-allowed opacity-60'
-                    }`}
-                    title={can('reservations.cancel') ? 'Cancel reservation' : 'Requires reservations.cancel permission'}
+                    className="w-full py-1.5 bg-black hover:bg-neutral-800 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer"
                   >
-                    Cancel Booking
+                    Save & Update Dates
                   </button>
                 </div>
+              )}
+            </div>
+
+            {/* View Receipt Button */}
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={() => setSelectedReservationForReceipt(managingReservation)}
+                className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-xl border border-neutral-300 bg-neutral-50 hover:bg-neutral-100 font-bold text-xs text-neutral-900 transition-colors cursor-pointer shadow-2xs"
+              >
+                <FileText className="w-4 h-4 text-neutral-600" />
+                <span>View Attached Guest Payment Receipt</span>
+              </button>
+            </div>
+
+            {/* Standard Front Desk Operation Buttons */}
+            <div className="space-y-2 pt-2 border-t border-neutral-100 text-xs">
+              <div className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider">
+                Front Desk Operations (Role: {getRoleDisplayName(activeStaffMember.role)})
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={!can('reservations.check_in') || managingReservation.status === 'checked_in'}
+                  onClick={() => {
+                    const updated: Reservation = { ...managingReservation, status: 'checked_in' };
+                    setLocalReservations((prev) =>
+                      prev.map((r) => (r.id === updated.id ? updated : r))
+                    );
+                    if (onUpdateReservation) {
+                      onUpdateReservation(updated);
+                    } else if (onUpdateReservationStatus) {
+                      onUpdateReservationStatus(updated.id, 'checked_in');
+                    }
+                    setManagingReservation(null);
+                    setManagementToast({ type: 'success', message: `${managingReservation.guestName} checked in.` });
+                    setTimeout(() => setManagementToast(null), 5000);
+                  }}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                    can('reservations.check_in') && managingReservation.status !== 'checked_in'
+                      ? 'bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700 shadow-2xs'
+                      : 'bg-neutral-100 text-neutral-400 border-neutral-200 cursor-not-allowed opacity-60'
+                  }`}
+                >
+                  Check In Guest
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!can('reservations.check_out') || managingReservation.status === 'checked_out'}
+                  onClick={() => {
+                    const updated: Reservation = { ...managingReservation, status: 'checked_out' };
+                    setLocalReservations((prev) =>
+                      prev.map((r) => (r.id === updated.id ? updated : r))
+                    );
+                    if (onUpdateReservation) {
+                      onUpdateReservation(updated);
+                    } else if (onUpdateReservationStatus) {
+                      onUpdateReservationStatus(updated.id, 'checked_out');
+                    }
+                    setManagingReservation(null);
+                    setManagementToast({ type: 'success', message: `${managingReservation.guestName} checked out.` });
+                    setTimeout(() => setManagementToast(null), 5000);
+                  }}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                    can('reservations.check_out') && managingReservation.status !== 'checked_out'
+                      ? 'bg-blue-600 text-white border-blue-700 hover:bg-blue-700 shadow-2xs'
+                      : 'bg-neutral-100 text-neutral-400 border-neutral-200 cursor-not-allowed opacity-60'
+                  }`}
+                >
+                  Check Out Guest
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!can('reservations.edit')}
+                  onClick={() => {
+                    const updated: Reservation = { ...managingReservation, status: 'confirmed' };
+                    setLocalReservations((prev) =>
+                      prev.map((r) => (r.id === updated.id ? updated : r))
+                    );
+                    if (onUpdateReservation) {
+                      onUpdateReservation(updated);
+                    } else if (onUpdateReservationStatus) {
+                      onUpdateReservationStatus(updated.id, 'confirmed');
+                    }
+                    setManagingReservation(null);
+                    setManagementToast({ type: 'success', message: `Payment verified & booking confirmed.` });
+                    setTimeout(() => setManagementToast(null), 5000);
+                  }}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                    can('reservations.edit')
+                      ? 'bg-neutral-900 text-white border-black hover:bg-neutral-800 shadow-2xs'
+                      : 'bg-neutral-100 text-neutral-400 border-neutral-200 cursor-not-allowed opacity-60'
+                  }`}
+                >
+                  Confirm Status
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!can('reservations.cancel')}
+                  onClick={() => {
+                    if (confirm('Cancel this reservation? This will make the booking eligible for refund.')) {
+                      const updated: Reservation = {
+                        ...managingReservation,
+                        status: 'cancelled',
+                        cancellationReason: 'Cancelled by front desk staff',
+                        cancellationRequestedAt: new Date().toISOString(),
+                        refundStatus: 'pending',
+                        refundAmount: managingReservation.total,
+                      };
+                      setLocalReservations((prev) =>
+                        prev.map((r) => (r.id === updated.id ? updated : r))
+                      );
+                      if (onUpdateReservation) {
+                        onUpdateReservation(updated);
+                      } else if (onUpdateReservationStatus) {
+                        onUpdateReservationStatus(updated.id, 'cancelled');
+                      }
+                      setManagingReservation(updated);
+                      setManagementToast({ type: 'success', message: `Reservation cancelled and queued for refund.` });
+                      setTimeout(() => setManagementToast(null), 5000);
+                    }
+                  }}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                    can('reservations.cancel')
+                      ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                      : 'bg-neutral-100 text-neutral-400 border-neutral-200 cursor-not-allowed opacity-60'
+                  }`}
+                >
+                  Cancel Booking
+                </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Management Toast Notification in StaffPortal */}
+      {managementToast && (
+        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 duration-200">
+          <div
+            className={`px-4 py-3 rounded-2xl shadow-xl flex items-center gap-3 border text-xs font-semibold ${
+              managementToast.type === 'success'
+                ? 'bg-neutral-950 text-white border-neutral-800'
+                : 'bg-rose-900 text-white border-rose-800'
+            }`}
+          >
+            {managementToast.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            )}
+            <span>{managementToast.message}</span>
+            <button
+              onClick={() => setManagementToast(null)}
+              className="text-neutral-400 hover:text-white ml-2 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       )}
@@ -3074,22 +3868,57 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               </div>
             </div>
 
-            <div className="p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200 text-xs space-y-1.5 text-neutral-600">
-              <div className="flex justify-between">
-                <span className="text-neutral-500">Nightly Rate:</span>
-                <span className="font-bold text-black">₦{selectedRoomForStatus.pricePerNight.toLocaleString()}</span>
+            <div className="p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200 text-xs space-y-2 text-neutral-600">
+              <div className="flex items-center justify-between">
+                <span className="text-neutral-500 font-semibold">Nightly Rate (₦):</span>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    defaultValue={selectedRoomForStatus.pricePerNight}
+                    id={`rate-input-${selectedRoomForStatus.id}`}
+                    className="w-28 px-3 py-1 bg-white border border-neutral-300 rounded-lg text-xs font-bold text-black focus:outline-none focus:border-black"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const el = document.getElementById(`rate-input-${selectedRoomForStatus.id}`) as HTMLInputElement;
+                      const newPrice = el ? parseInt(el.value, 10) : NaN;
+                      if (!isNaN(newPrice) && newPrice > 0) {
+                        onUpdateRoom({ ...selectedRoomForStatus, pricePerNight: newPrice });
+                        setSelectedRoomForStatus({ ...selectedRoomForStatus, pricePerNight: newPrice });
+                      }
+                    }}
+                    className="px-2.5 py-1 bg-black text-white text-[11px] font-bold rounded-lg hover:bg-neutral-800 transition-colors cursor-pointer"
+                  >
+                    Save
+                  </button>
+                </div>
               </div>
               <div className="flex justify-between">
-                <span className="text-neutral-500">Floor Level:</span>
+                <span className="text-neutral-500 font-semibold">Floor Level:</span>
                 <span className="font-bold text-black">{selectedRoomForStatus.floor || '01'}</span>
               </div>
             </div>
 
-            <div className="flex justify-end pt-1">
+            <div className="flex items-center justify-between pt-1">
+              {onDeleteRoom && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const toDelete = selectedRoomForStatus;
+                    setSelectedRoomForStatus(null);
+                    onDeleteRoom(toDelete.id);
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold hover:bg-rose-100 flex items-center gap-1 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Remove Room</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setSelectedRoomForStatus(null)}
-                className="px-4 py-2 rounded-xl bg-neutral-100 text-neutral-700 text-xs font-bold hover:bg-neutral-200"
+                className="px-4 py-2 rounded-xl bg-neutral-100 text-neutral-700 text-xs font-bold hover:bg-neutral-200 ml-auto cursor-pointer"
               >
                 Close
               </button>

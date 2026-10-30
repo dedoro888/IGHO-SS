@@ -12,6 +12,7 @@ import { Hotel, Room, ActiveScreen, CustomerProfile } from '../types';
 import { BackButton } from './BackButton';
 import { GuestAccountNavMenu } from './GuestAccountNavMenu';
 import { resolveUserAccount } from '../utils/auth';
+import { getRoomCategories, RoomCategory } from '../utils/roomCategories';
 
 interface HotelGuestPortalProps {
   hotel: Hotel;
@@ -36,11 +37,12 @@ export const HotelGuestPortal: React.FC<HotelGuestPortalProps> = ({
 }) => {
   const [selectedType, setSelectedType] = useState<string>('all');
 
+  const categories = getRoomCategories(rooms);
   const roomTypes = ['all', 'Standard', 'Deluxe', 'Suite', 'Presidential'];
 
-  const filteredRooms = rooms.filter((r) => {
+  const filteredCategories = categories.filter((c) => {
     if (selectedType === 'all') return true;
-    return r.type.toLowerCase().includes(selectedType.toLowerCase());
+    return c.name.toLowerCase().includes(selectedType.toLowerCase()) || c.tier.toLowerCase().includes(selectedType.toLowerCase());
   });
 
   // Resolve user role to allow quick return to Console / Staff Portal
@@ -194,8 +196,16 @@ export const HotelGuestPortal: React.FC<HotelGuestPortalProps> = ({
         <div className="space-y-4 pt-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h2 className="text-xl sm:text-2xl font-extrabold text-black tracking-tight">Rooms & Suites</h2>
-              <p className="text-xs text-neutral-500">Filter availability by category or explore all layouts</p>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl sm:text-2xl font-extrabold text-black tracking-tight">Rooms & Suites</h2>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[10px] font-bold border border-emerald-200 shadow-3xs">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Real-Time Live
+                </span>
+              </div>
+              <p className="text-xs text-neutral-500">
+                {categories.length} room categor{categories.length !== 1 ? 'ies' : 'y'} · Live rates synchronized with hotel front desk
+              </p>
             </div>
 
             {/* Type filters */}
@@ -210,75 +220,143 @@ export const HotelGuestPortal: React.FC<HotelGuestPortalProps> = ({
                       : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200/80'
                   }`}
                 >
-                  {t === 'all' ? 'All' : t}
+                  {t === 'all' ? 'All Categories' : t}
                 </button>
               ))}
             </div>
           </div>
         </div>
 
-        {/* Room Cards Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-          {filteredRooms.map((room) => (
-            <div
-              key={room.id}
-              className="bg-white border border-neutral-200 rounded-2xl overflow-hidden shadow-2xs hover:shadow-md transition-all flex flex-col justify-between group"
-            >
-              <div>
-                {/* Room Image */}
-                <div className="relative h-48 sm:h-52 w-full bg-neutral-100 overflow-hidden flex items-center justify-center">
-                  {room.images && room.images.length > 0 && room.images[0] ? (
-                    <img
-                      src={room.images[0]}
-                      alt={`Room ${room.number}`}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                  ) : (
-                    <div className="text-center p-4">
-                      <p className="text-[10px] font-semibold text-neutral-400">No Image Available</p>
-                    </div>
-                  )}
-                  <div className="absolute top-3 right-3 bg-white/95 text-neutral-900 text-xs font-bold px-2 py-0.5 rounded-md shadow-2xs">
-                    Room {room.number}
-                  </div>
-                  <div className="absolute top-3 left-3 bg-black/80 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider backdrop-blur-xs">
-                    {room.type}
-                  </div>
-                </div>
+        {/* Room Categories Grid */}
+        {filteredCategories.length === 0 ? (
+          <div className="text-center py-12 bg-neutral-50 rounded-2xl border border-neutral-200/80 p-8 space-y-2">
+            <p className="font-bold text-sm text-neutral-800">No room categories matching this filter</p>
+            <p className="text-xs text-neutral-500">Rooms added, updated, or removed by hotel management sync immediately in real-time.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+            {filteredCategories.map((category) => {
+              const categoryImg =
+                (category.images && category.images.length > 0 && category.images[0]) ||
+                'https://images.unsplash.com/photo-1590490360182-c33d57733427?auto=format&fit=crop&w=800&q=80';
 
-                {/* Details */}
-                <div className="p-4 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <h3 className="font-bold text-base text-black">{room.type}</h3>
-                      <p className="text-xs text-neutral-500 line-clamp-1">{room.typeName}</p>
-                    </div>
-                  </div>
+              const isAvailable = category.isAvailable;
 
-                  <div className="pt-2">
-                    <span className="text-lg font-extrabold text-black">
-                      ₦{room.pricePerNight.toLocaleString()}
-                    </span>
-                    <span className="text-xs text-neutral-500"> per night</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Action Button */}
-              <div className="p-4 pt-0">
-                <button
+              return (
+                <div
+                  key={category.id}
                   onClick={() => {
-                    onSelectRoom(room);
-                    onNavigate('room_detail');
+                    if (isAvailable) {
+                      onSelectRoom(category.representativeRoom);
+                      onNavigate('room_detail');
+                    }
                   }}
-                  className="w-full bg-black text-white py-2.5 px-4 rounded-xl text-xs font-bold hover:bg-neutral-800 transition-all flex items-center justify-center active:scale-95 shadow-2xs"
+                  className={`border rounded-2xl overflow-hidden shadow-2xs transition-all flex flex-col justify-between group ${
+                    isAvailable
+                      ? 'bg-white border-neutral-200 hover:shadow-md cursor-pointer hover:border-black'
+                      : 'bg-neutral-100/90 border-neutral-300 opacity-65 grayscale-[35%] cursor-not-allowed'
+                  }`}
                 >
-                  <span>View details</span>
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+                  <div>
+                    {/* Category Image */}
+                    <div className="relative h-48 sm:h-52 w-full bg-neutral-100 overflow-hidden flex items-center justify-center">
+                      <img
+                        src={categoryImg}
+                        alt={category.name}
+                        className={`w-full h-full object-cover transition-transform duration-300 ${
+                          isAvailable ? 'group-hover:scale-105' : ''
+                        }`}
+                      />
+                      <div className="absolute top-3 right-3 bg-white/95 text-neutral-900 text-xs font-black px-2.5 py-0.5 rounded-md shadow-2xs">
+                        {category.levelLabel}
+                      </div>
+                      <div className="absolute top-3 left-3 bg-black/80 text-white text-[10px] font-semibold px-2.5 py-0.5 rounded-full uppercase tracking-wider backdrop-blur-xs">
+                        {category.tier}
+                      </div>
+
+                      {!isAvailable && (
+                        <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[2px] flex items-center justify-center p-4">
+                          <span className="bg-white/95 text-neutral-800 text-xs font-extrabold px-3 py-1.5 rounded-xl shadow-md border border-neutral-200">
+                            Not available for your dates
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Details */}
+                    <div className="p-4 space-y-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-base text-black group-hover:text-neutral-900">
+                              {category.name}
+                            </h3>
+                            <span className="text-[10px] font-bold text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded-full">
+                              {category.levelLabel}
+                            </span>
+                          </div>
+                          <p className="text-xs text-neutral-500 line-clamp-1 mt-0.5">
+                            {category.description}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-[11px] text-neutral-500 font-medium flex items-center gap-2">
+                        <span>{category.bed}</span>
+                        <span>•</span>
+                        <span>Up to {category.maxGuests} {category.maxGuests === 1 ? 'guest' : 'guests'}</span>
+                      </div>
+
+                      <div className="pt-2 flex items-baseline justify-between border-t border-neutral-100">
+                        <div>
+                          <span className="text-lg font-extrabold text-black">
+                            ₦{category.pricePerNight.toLocaleString()}
+                          </span>
+                          <span className="text-xs text-neutral-500"> per night</span>
+                        </div>
+                        {isAvailable ? (
+                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                            Available
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-neutral-500 bg-neutral-200 border border-neutral-300 px-2 py-0.5 rounded-full">
+                            Not available
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Action Button */}
+                  <div className="p-4 pt-0">
+                    {isAvailable ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectRoom(category.representativeRoom);
+                          onNavigate('room_detail');
+                        }}
+                        className="w-full bg-black text-white py-2.5 px-4 rounded-xl text-xs font-bold hover:bg-neutral-800 transition-all flex items-center justify-center active:scale-95 shadow-2xs cursor-pointer"
+                      >
+                        <span>View details & Book</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled
+                        className="w-full bg-neutral-200 text-neutral-400 py-2.5 px-4 rounded-xl text-xs font-bold cursor-not-allowed flex items-center justify-center"
+                      >
+                        <span>Not available for your dates</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </main>
 
       {/* Footer */}

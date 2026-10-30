@@ -11,6 +11,7 @@ export type ActiveScreen =
   | 'guest_login'
   | 'staff_login'
   | 'staff_portal'
+  | 'hotel_subscription_plan'
   | 'staff_invitation_accept'
   | 'super_admin_console'
   | 'classroom_waitlist'
@@ -76,7 +77,7 @@ export interface Room {
   id: string;
   number: string;
   type: string; // e.g. 'Luxury Suite', 'Presidential Suite', 'Standard Double', etc.
-  typeName: string; // e.g. 'Cozy luxury suite with modern amenities'
+  typeName?: string; // e.g. 'Cozy luxury suite with modern amenities'
   pricePerNight: number; // in Naira (₦)
   status:
     | 'Vacant / Clean'
@@ -91,13 +92,20 @@ export interface Room {
     | 'reserved'
     | 'cleaning'
     | 'maintenance';
-  floor: number;
-  maxGuests: number;
-  roomSize: number; // sqm
-  bed: string;
+  floor?: number;
+  maxGuests?: number;
+  roomSize?: number; // sqm
+  bed?: string;
   description: string;
-  amenities: string[];
-  images: string[];
+  amenities?: string[];
+  images?: string[];
+  hotelId?: string;
+  tier?: string;
+  capacity?: number;
+  beds?: string;
+  view?: string;
+  features?: string[];
+  image?: string;
   branchId?: string;
   branchName?: string;
 }
@@ -145,6 +153,15 @@ export interface Hotel {
   paymentStatus?: 'pending' | 'paid';
   status?: 'active' | 'pending' | 'suspended';
   description?: string;
+  subscriptionPlanId?: string;
+  subscriptionPlanName?: string;
+  subscriptionStatus?: 'trial' | 'active' | 'pending' | 'expired' | 'none';
+  billingCycle?: 'monthly' | 'annual';
+  trialCode?: string;
+  trialStartDate?: string;
+  trialEndDate?: string;
+  subscriptionStartDate?: string;
+  subscriptionEndDate?: string;
 }
 
 export interface Reservation {
@@ -168,13 +185,49 @@ export interface Reservation {
   nights: number;
   guests: number;
   total: number;
-  status: 'pending_verification' | 'pending_payment' | 'confirmed' | 'rejected' | 'checked_in' | 'checked_out' | 'cancelled';
+  status:
+    | 'pending_verification'
+    | 'pending_payment'
+    | 'confirmed'
+    | 'rejected'
+    | 'checked_in'
+    | 'checked_out'
+    | 'cancelled'
+    | 'date_changed'
+    | 'upgraded';
   createdAt: string;
   paymentRef?: string;
   receiptUrl?: string;
   specialRequests?: string;
   source?: string;
   verifiedAt?: string;
+  cancellationReason?: string;
+  cancellationRequestedAt?: string;
+  refundStatus?: 'none' | 'pending' | 'initiated' | 'completed';
+  refundAmount?: number;
+  refundInitiatedAt?: string;
+  refundRef?: string;
+  refundNotes?: string;
+  originalDates?: {
+    checkIn: string;
+    checkOut: string;
+    nights: number;
+  };
+  dateChangedAt?: string;
+  dateChangeStatus?: 'pending_review' | 'confirmed';
+  upgradeDetails?: {
+    previousRoomType: string;
+    previousRoomNumber: string;
+    previousPricePerNight: number;
+    upgradedRoomType: string;
+    upgradedRoomNumber?: string;
+    newPricePerNight: number;
+    upgradeBalancePaid: number;
+    upgradePaymentRef?: string;
+    upgradedAt: string;
+    roomAllocated?: boolean;
+    allocatedRoomNumber?: string;
+  };
 }
 
 export interface StaffAccount {
@@ -269,6 +322,7 @@ export interface HousekeepingTask {
   roomId?: string;
   roomNumber?: string;
   room?: string;
+  roomType?: string;
   type?: string;
   task?: string;
   taskType?: string;
@@ -279,6 +333,7 @@ export interface HousekeepingTask {
   notes?: string;
   status: 'pending' | 'in_progress' | 'completed';
   completedDate?: string;
+  requestedAt?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -445,5 +500,20 @@ export interface DemoRequest {
   message?: string;
   status: 'pending' | 'scheduled' | 'completed' | 'cancelled';
   createdAt: string;
+}
+
+export interface TrialToken {
+  id: string;
+  code: string;
+  durationDays: number; // 30 days default for 1 month
+  assignedHotelId?: string;
+  assignedHotelName?: string;
+  status: 'active' | 'used' | 'revoked';
+  createdAt: string;
+  createdBy: string;
+  claimedByHotelId?: string;
+  claimedByHotelName?: string;
+  claimedAt?: string;
+  notes?: string;
 }
 

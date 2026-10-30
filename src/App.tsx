@@ -23,6 +23,7 @@ import {
 } from './data/mockData';
 import { INITIAL_PLANS, INITIAL_PLATFORM_SETTINGS } from './data/platformData';
 import { resolveUserAccount, SUPER_ADMIN_EMAIL, getSavedCustomerProfile, saveCustomerProfile } from './utils/auth';
+import { broadcastLiveRoomAction, subscribeToLiveEvents } from './utils/realtime';
 
 // Core Components
 import { LandingPage } from './components/LandingPage';
@@ -40,6 +41,7 @@ import { DemoRequestModal } from './components/DemoRequestModal';
 import { WaitlistView } from './components/WaitlistViews';
 import { SuperAdminConsole } from './components/SuperAdminConsole';
 import { StaffInvitationAccept } from './components/StaffInvitationAccept';
+import { HotelSubscriptionPlanScreen } from './components/HotelSubscriptionPlanScreen';
 import { INITIAL_INVITATIONS } from './data/mockData';
 
 // Local persistence helper utilities
@@ -250,33 +252,98 @@ export default function App() {
     const account = resolveUserAccount(cleanEmail, profile);
     if (account.role === 'super_admin') {
       navigateTo('super_admin_console', cleanEmail);
-    } else if (account.role === 'customer') {
-      setGuestDashboardTab('overview');
-      navigateTo('guest_dashboard', cleanEmail);
-    } else {
+    } else if (
+      account.targetScreen === 'staff_portal' ||
+      account.role === 'hotel_owner' ||
+      account.role === 'hotel_manager' ||
+      account.role === 'receptionist'
+    ) {
+      // Hotel owner or staff logging into their hotel dashboard!
+      const matchingHotel = hotels.find(
+        (h) =>
+          h.id === account.organizationId ||
+          h.email?.toLowerCase() === cleanEmail ||
+          h.ownerEmail?.toLowerCase() === cleanEmail ||
+          h.name.toLowerCase().includes('lava')
+      );
+      if (matchingHotel) {
+        setSelectedHotel(matchingHotel);
+      }
       setCurrentStaffEmail(cleanEmail);
       navigateTo('staff_portal', cleanEmail);
+    } else {
+      // User request: when regular users sign in or create an account, take them back to the home page (landing)
+      // where they can view live hotels or explore whatever they want, rather than dumping them into an empty dashboard.
+      navigateTo('landing', cleanEmail);
     }
   };
 
   // Application Data States (Persisted across refreshes in localStorage)
-  const [hotels, setHotels] = useState<Hotel[]>(() =>
-    loadFromStorage<Hotel[]>('igho_db_hotels', INITIAL_HOTELS)
-  );
+  const [hotels, setHotels] = useState<Hotel[]>(() => {
+    const saved = loadFromStorage<Hotel[]>('igho_db_hotels', INITIAL_HOTELS);
+    // Filter out legacy mock hotels from earlier prototypes
+    const legacyMockIds = [
+      'hotel-radisson',
+      'hotel-eko',
+      'hotel-george',
+      'hotel-transcorp',
+      'hotel-ibom',
+      'hotel-golden',
+      'hotel-dedge',
+      'hotel-cubana',
+    ];
+    let cleaned = (saved || []).filter((h) => !legacyMockIds.includes(h.id));
+    
+    // Ensure Lava Hotel & Suites is registered, approved, and live with 6 rooms as requested
+    const hasLava = cleaned.some(
+      (h) => h.id === 'hotel-lava' || h.name.toLowerCase().includes('lava')
+    );
+    if (!hasLava && INITIAL_HOTELS[0]) {
+      cleaned = [INITIAL_HOTELS[0], ...cleaned];
+    } else {
+      // Ensure Lava Hotel & Suites has proper live and approved status, 6 rooms, and canonical name
+      cleaned = cleaned.map((h) => {
+        if (h.id === 'hotel-cold-lava' || h.id === 'hotel-lava' || h.name.toLowerCase().includes('lava')) {
+          return {
+            ...h,
+            id: 'hotel-lava',
+            name: 'Lava Hotel & Suites',
+            roomCount: 6,
+            isLive: true,
+            approvalStatus: 'approved',
+            paymentStatus: 'paid',
+            subscriptionStatus: 'active',
+          };
+        }
+        return h;
+      });
+    }
+    return cleaned;
+  });
   useEffect(() => {
     saveToStorage('igho_db_hotels', hotels);
   }, [hotels]);
 
   const [selectedHotel, setSelectedHotel] = useState<Hotel>(() => {
-    const savedHotels = loadFromStorage<Hotel[]>('igho_db_hotels', INITIAL_HOTELS);
+    const legacyMockIds = [
+      'hotel-radisson',
+      'hotel-eko',
+      'hotel-george',
+      'hotel-transcorp',
+      'hotel-ibom',
+      'hotel-golden',
+      'hotel-dedge',
+      'hotel-cubana',
+    ];
     try {
       const savedHotelId = localStorage.getItem('igho_db_selected_hotel_id');
-      if (savedHotelId) {
-        const found = savedHotels.find((h) => h.id === savedHotelId);
+      if (savedHotelId && !legacyMockIds.includes(savedHotelId)) {
+        const found = hotels.find((h) => h.id === savedHotelId);
         if (found) return found;
       }
     } catch {}
-    return savedHotels[0] || DEFAULT_FALLBACK_HOTEL;
+    const lava = hotels.find((h) => h.id === 'hotel-lava' || h.name.toLowerCase().includes('lava'));
+    return lava || hotels[0] || INITIAL_HOTELS[0] || DEFAULT_FALLBACK_HOTEL;
   });
   useEffect(() => {
     try {
@@ -286,9 +353,14 @@ export default function App() {
     } catch {}
   }, [selectedHotel]);
 
-  const [rooms, setRooms] = useState<Room[]>(() =>
-    loadFromStorage<Room[]>('igho_db_rooms', INITIAL_ROOMS)
-  );
+  const [rooms, setRooms] = useState<Room[]>(() => {
+    const saved = loadFromStorage<Room[]>('igho_db_rooms', INITIAL_ROOMS);
+    // Ensure Lava Hotel & Suites has exactly the 6 rooms configured in INITIAL_ROOMS
+    const nonLavaRooms = (saved || []).filter(
+      (r) => r.hotelId && r.hotelId !== 'hotel-cold-lava' && r.hotelId !== 'hotel-lava'
+    );
+    return [...INITIAL_ROOMS, ...nonLavaRooms];
+  });
   useEffect(() => {
     saveToStorage('igho_db_rooms', rooms);
   }, [rooms]);
@@ -298,16 +370,24 @@ export default function App() {
     return currentRooms[0] || DEFAULT_FALLBACK_ROOM;
   });
 
-  const [reservations, setReservations] = useState<Reservation[]>(() =>
-    loadFromStorage<Reservation[]>('igho_db_reservations', INITIAL_RESERVATIONS)
-  );
+  const [reservations, setReservations] = useState<Reservation[]>(() => {
+    const saved = loadFromStorage<Reservation[]>('igho_db_reservations', INITIAL_RESERVATIONS);
+    const nonLavaRes = (saved || []).filter(
+      (r) => r.hotelId && r.hotelId !== 'hotel-cold-lava' && r.hotelId !== 'hotel-lava'
+    );
+    return [...INITIAL_RESERVATIONS, ...nonLavaRes];
+  });
   useEffect(() => {
     saveToStorage('igho_db_reservations', reservations);
   }, [reservations]);
 
-  const [staff, setStaff] = useState<StaffAccount[]>(() =>
-    loadFromStorage<StaffAccount[]>('igho_db_staff', INITIAL_STAFF)
-  );
+  const [staff, setStaff] = useState<StaffAccount[]>(() => {
+    const saved = loadFromStorage<StaffAccount[]>('igho_db_staff', INITIAL_STAFF);
+    const nonLavaStaff = (saved || []).filter(
+      (s) => s.hotelId && s.hotelId !== 'hotel-cold-lava' && s.hotelId !== 'hotel-lava'
+    );
+    return [...INITIAL_STAFF, ...nonLavaStaff];
+  });
   useEffect(() => {
     saveToStorage('igho_db_staff', staff);
   }, [staff]);
@@ -397,6 +477,7 @@ export default function App() {
   // Prevent race conditions and infinite write-back loops on load / sync
   const [initialStateLoaded, setInitialStateLoaded] = React.useState(false);
   const isSyncingFromServer = React.useRef(false);
+  const lastFetchedStateJson = React.useRef<string>('');
 
   // 1. Polling interval to retrieve database state from backend (Real-Time Sync)
   useEffect(() => {
@@ -409,6 +490,23 @@ export default function App() {
         const data = await res.json();
         if (data.success && data.state && active) {
           const s = data.state;
+          
+          // Compute stringified version of server state to prevent redundant postbacks
+          const serverStateStr = JSON.stringify({
+            hotels: s.hotels || [],
+            rooms: s.rooms || [],
+            reservations: s.reservations || [],
+            staff: s.staff || [],
+            housekeeping: s.housekeeping || [],
+            invitations: s.invitations || [],
+            guestReports: s.guestReports || [],
+            plans: s.plans || [],
+            platformSettings: s.platformSettings || null,
+            customRoles: s.customRoles || [],
+            demoRequests: s.demoRequests || [],
+          });
+
+          lastFetchedStateJson.current = serverStateStr;
           
           // Mark that we are applying server state so write-back does not trigger a POST
           isSyncingFromServer.current = true;
@@ -468,30 +566,53 @@ export default function App() {
       return;
     }
 
+    const currentProfiles = JSON.parse(localStorage.getItem('igho_db_customer_profiles') || '[]');
+    
+    const currentPayload = {
+      hotels,
+      rooms,
+      reservations,
+      staff,
+      housekeeping,
+      invitations,
+      guestReports,
+      plans,
+      platformSettings,
+      customRoles,
+      customerProfiles: currentProfiles,
+      demoRequests,
+    };
+
+    const currentLocalStateStr = JSON.stringify({
+      hotels: hotels || [],
+      rooms: rooms || [],
+      reservations: reservations || [],
+      staff: staff || [],
+      housekeeping: housekeeping || [],
+      invitations: invitations || [],
+      guestReports: guestReports || [],
+      plans: plans || [],
+      platformSettings: platformSettings || null,
+      customRoles: customRoles || [],
+      demoRequests: demoRequests || [],
+    });
+
+    // Skip posting back if local state exactly matches the last fetched server state
+    if (currentLocalStateStr === lastFetchedStateJson.current) {
+      return;
+    }
+
     const saveState = async () => {
       try {
-        const currentProfiles = JSON.parse(localStorage.getItem('igho_db_customer_profiles') || '[]');
-        const payload = {
-          hotels,
-          rooms,
-          reservations,
-          staff,
-          housekeeping,
-          invitations,
-          guestReports,
-          plans,
-          platformSettings,
-          customRoles,
-          customerProfiles: currentProfiles,
-          demoRequests,
-        };
-
         const res = await fetch('/api/state', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(currentPayload),
         });
         if (!res.ok) throw new Error('Network response not ok');
+        
+        // Track the successfully persisted state as our base
+        lastFetchedStateJson.current = currentLocalStateStr;
       } catch (err) {
         console.warn('Backend state persist write-back error:', err);
       }
@@ -569,23 +690,178 @@ export default function App() {
     setActiveScreen('staff_portal');
   };
 
+  // Real-Time Live Sync Notification Toast State
+  const [liveToast, setLiveToast] = useState<{ message: string; type: 'add' | 'update' | 'delete' } | null>(null);
+
+  const triggerLiveToast = (message: string, type: 'add' | 'update' | 'delete' = 'update') => {
+    setLiveToast({ message, type });
+    setTimeout(() => {
+      setLiveToast((prev) => (prev?.message === message ? null : prev));
+    }, 4500);
+  };
+
+  // Instant Real-Time Synchronization Listener (SSE + BroadcastChannel across tabs/devices)
+  useEffect(() => {
+    const unsubscribe = subscribeToLiveEvents((event) => {
+      const { action, room, roomId } = event;
+
+      if (action === 'add' && room) {
+        setRooms((prev) => {
+          if (prev.some((r) => r.id === room.id)) return prev;
+          return [room, ...prev];
+        });
+        setHotels((prev) =>
+          prev.map((h) => {
+            if (h.id === room.hotelId) {
+              const newMinPrice = h.startingPrice ? Math.min(h.startingPrice, room.pricePerNight) : room.pricePerNight;
+              return {
+                ...h,
+                roomCount: (h.roomCount || 0) + 1,
+                startingPrice: newMinPrice,
+              };
+            }
+            return h;
+          })
+        );
+        triggerLiveToast(`⚡ Live Update: Room ${room.number} (${room.type} · ₦${room.pricePerNight.toLocaleString()}) added by hotel`, 'add');
+      } else if (action === 'update' && room) {
+        setRooms((prev) => prev.map((r) => (r.id === room.id ? room : r)));
+        setSelectedRoom((prev) => (prev.id === room.id ? room : prev));
+        setBookingDraft((prev) =>
+          prev.room?.id === room.id
+            ? { ...prev, room, total: room.pricePerNight * prev.nights }
+            : prev
+        );
+        triggerLiveToast(`⚡ Live Update: Room ${room.number} rate updated to ₦${room.pricePerNight.toLocaleString()}/night`, 'update');
+      } else if (action === 'delete' && roomId) {
+        let deletedRoomNumber = '';
+        setRooms((prev) => {
+          const target = prev.find((r) => r.id === roomId);
+          if (target) deletedRoomNumber = target.number;
+          const remaining = prev.filter((r) => r.id !== roomId);
+
+          // If guest was looking at this exact room in RoomDetailView, safely navigate them back to portal
+          if (selectedRoom.id === roomId) {
+            if (remaining.length > 0) {
+              setSelectedRoom(remaining[0]);
+            }
+            if (activeScreen === 'room_detail') {
+              setActiveScreen('hotel_guest_portal');
+            }
+          }
+
+          if (bookingDraft.room?.id === roomId && remaining.length > 0) {
+            setBookingDraft((b) => ({
+              ...b,
+              room: remaining[0],
+              total: remaining[0].pricePerNight * b.nights,
+            }));
+          }
+
+          return remaining;
+        });
+
+        setHotels((prev) =>
+          prev.map((h) => ({
+            ...h,
+            roomCount: Math.max(0, (h.roomCount || 1) - 1),
+          }))
+        );
+
+        triggerLiveToast(`⚡ Live Update: Room ${deletedRoomNumber || ''} removed by hotel`, 'delete');
+      }
+    });
+
+    return () => unsubscribe();
+  }, [selectedRoom.id, activeScreen, bookingDraft.room?.id]);
+
   const handleAddRoom = (newRoom: Room) => {
-    setRooms((prev) => [newRoom, ...prev]);
+    setRooms((prev) => {
+      if (prev.some((r) => r.id === newRoom.id)) return prev;
+      return [newRoom, ...prev];
+    });
+
+    setHotels((prev) =>
+      prev.map((h) => {
+        if (h.id === newRoom.hotelId) {
+          const newMinPrice = h.startingPrice ? Math.min(h.startingPrice, newRoom.pricePerNight) : newRoom.pricePerNight;
+          return {
+            ...h,
+            roomCount: (h.roomCount || 0) + 1,
+            startingPrice: newMinPrice,
+          };
+        }
+        return h;
+      })
+    );
+
+    // Broadcast in real-time across tabs and SSE
+    broadcastLiveRoomAction('add', newRoom);
+    triggerLiveToast(`Room ${newRoom.number} added (${newRoom.type} · ₦${newRoom.pricePerNight.toLocaleString()})`, 'add');
   };
 
   const handleUpdateRoom = (updatedRoom: Room) => {
     setRooms((prev) => prev.map((r) => (r.id === updatedRoom.id ? updatedRoom : r)));
+
     if (selectedRoom.id === updatedRoom.id) {
       setSelectedRoom(updatedRoom);
     }
+
+    if (bookingDraft.room?.id === updatedRoom.id) {
+      setBookingDraft((prev) => ({
+        ...prev,
+        room: updatedRoom,
+        total: updatedRoom.pricePerNight * prev.nights,
+      }));
+    }
+
+    // Broadcast in real-time across tabs and SSE
+    broadcastLiveRoomAction('update', updatedRoom);
+    triggerLiveToast(`Room ${updatedRoom.number} rate updated to ₦${updatedRoom.pricePerNight.toLocaleString()}/night`, 'update');
   };
 
   const handleDeleteRoom = (roomId: string) => {
-    setRooms((prev) => prev.filter((r) => r.id !== roomId));
+    let deletedRoomNumber = '';
+    setRooms((prev) => {
+      const target = prev.find((r) => r.id === roomId);
+      if (target) deletedRoomNumber = target.number;
+      const remaining = prev.filter((r) => r.id !== roomId);
+
+      if (selectedRoom.id === roomId && remaining.length > 0) {
+        setSelectedRoom(remaining[0]);
+      }
+
+      if (bookingDraft.room?.id === roomId && remaining.length > 0) {
+        setBookingDraft((b) => ({
+          ...b,
+          room: remaining[0],
+          total: remaining[0].pricePerNight * b.nights,
+        }));
+      }
+
+      return remaining;
+    });
+
+    setHotels((prev) =>
+      prev.map((h) => ({
+        ...h,
+        roomCount: Math.max(0, (h.roomCount || 1) - 1),
+      }))
+    );
+
+    // Broadcast in real-time across tabs and SSE
+    broadcastLiveRoomAction('delete', null, roomId, selectedHotel.id);
+    triggerLiveToast(`Room ${deletedRoomNumber || ''} removed immediately from all guest views`, 'delete');
   };
 
   const handleAddReservation = (newRes: Reservation) => {
     setReservations((prev) => [newRes, ...prev]);
+  };
+
+  const handleUpdateReservation = (updatedRes: Reservation) => {
+    setReservations((prev) =>
+      prev.map((r) => (r.id === updatedRes.id ? updatedRes : r))
+    );
   };
 
   const handleUpdateReservationStatus = (resId: string, status: Reservation['status']) => {
@@ -598,6 +874,51 @@ export default function App() {
     setStaff((prev) =>
       prev.map((s) => (s.id === staffId ? { ...s, permissions } : s))
     );
+  };
+
+  // Resolve current active hotel for PMS & subscription views:
+  // Prefer the logged in user's hotel if they are an owner/staff, otherwise selectedHotel
+  const userStaffMatch = currentUserEmail
+    ? staff.find((s) => s.email?.toLowerCase() === currentUserEmail.trim().toLowerCase())
+    : null;
+  const userAccountMatch = currentUserEmail ? resolveUserAccount(currentUserEmail) : null;
+  const currentUserHotel = currentUserEmail
+    ? hotels.find(
+        (h) =>
+          h.email?.toLowerCase() === currentUserEmail.trim().toLowerCase() ||
+          h.ownerEmail?.toLowerCase() === currentUserEmail.trim().toLowerCase() ||
+          (userStaffMatch && h.id === userStaffMatch.hotelId) ||
+          (userAccountMatch?.organizationId && h.id === userAccountMatch.organizationId) ||
+          (userAccountMatch?.targetScreen === 'staff_portal' && h.name.toLowerCase().includes('lava'))
+      )
+    : null;
+  const activeHotelForPMS = currentUserHotel || selectedHotel;
+
+  // Check if an approved hotel has unlocked their subscription:
+  // Approved hotels MUST show subscription plans first, UNLESS they paid OR activated 1-month free trial with special code
+  const isHotelSubscriptionUnlocked = (hotel: Hotel | null | undefined): boolean => {
+    if (!hotel || !hotel.id) return true;
+    if (hotel.approvalStatus !== 'approved') return true; // Only approved hotels are gated by subscription plan selection
+
+    // 1. Paid active subscription
+    if (hotel.paymentStatus === 'paid' && hotel.subscriptionStatus === 'active') {
+      return true;
+    }
+
+    // 2. 1-Month Free trial with valid special code and trialEndDate in the future
+    if (hotel.subscriptionStatus === 'trial' && hotel.trialEndDate) {
+      const expires = new Date(hotel.trialEndDate).getTime();
+      if (expires > Date.now()) {
+        return true;
+      }
+    }
+
+    // 3. Paid flag with non-pending subscription status
+    if (hotel.paymentStatus === 'paid' && hotel.subscriptionStatus !== 'pending' && hotel.subscriptionStatus !== 'none') {
+      return true;
+    }
+
+    return false;
   };
 
   return (
@@ -677,7 +998,7 @@ export default function App() {
       {activeScreen === 'hotel_guest_portal' && (
         <HotelGuestPortal
           hotel={selectedHotel}
-          rooms={rooms}
+          rooms={rooms.filter((r) => !r.hotelId || r.hotelId === selectedHotel.id)}
           currentUserEmail={currentUserEmail}
           currentGuestProfile={currentGuestProfile}
           onSignOut={handleGuestSignOut}
@@ -739,9 +1060,14 @@ export default function App() {
             setCurrentGuestProfile(updated);
             saveCustomerProfile(updated);
           }}
+          onUpdateReservation={handleUpdateReservation}
           onSignOut={handleGuestSignOut}
           onNavigate={navigateTo}
           onSelectRoom={(r) => {
+            const matchingHotel = hotels.find((h) => h.id === r.hotelId) || selectedHotel;
+            if (matchingHotel) {
+              setSelectedHotel(matchingHotel);
+            }
             setSelectedRoom(r);
             navigateTo('room_detail');
           }}
@@ -760,66 +1086,103 @@ export default function App() {
         />
       )}
 
-      {/* SCREEN 11: STAFF PORTAL (DASHBOARD, ROOM INVENTORY, RESERVATIONS, SETTINGS) */}
-      {activeScreen === 'staff_portal' && (
-        <StaffPortal
-          hotel={selectedHotel}
-          rooms={rooms}
-          reservations={reservations}
-          staff={staff}
-          invitations={invitations}
-          housekeeping={housekeeping}
+      {/* SCREEN 10.5: HOTEL SUBSCRIPTION PLAN SELECTION SCREEN */}
+      {activeScreen === 'hotel_subscription_plan' && (
+        <HotelSubscriptionPlanScreen
+          hotel={activeHotelForPMS}
           plans={plans}
-          customRoles={customRoles}
-          guestReports={guestReports}
-          payoutSettings={platformSettings.subscriptionPayout}
-          onAddRoom={handleAddRoom}
-          onUpdateRoom={handleUpdateRoom}
-          onDeleteRoom={handleDeleteRoom}
-          onInviteStaff={(invite) => {
-            setInvitations((prev) => [invite, ...prev]);
-          }}
-          onAddStaffMember={(newStaff) => {
-            setStaff((prev) => [newStaff, ...prev]);
-          }}
-          onDeactivateStaff={(staffId) => {
-            setStaff((prev) =>
-              prev.map((s) => (s.id === staffId ? { ...s, status: 'inactive', active: false } : s))
-            );
-          }}
-          onReactivateStaff={(staffId) => {
-            setStaff((prev) =>
-              prev.map((s) => (s.id === staffId ? { ...s, status: 'active', active: true } : s))
-            );
-          }}
-          onUpdateHotel={(updatedHotel) => {
+          currentUserEmail={currentUserEmail}
+          onSubscriptionActivated={(updatedHotel) => {
             setHotels((prev) =>
               prev.map((h) => (h.id === updatedHotel.id ? updatedHotel : h))
             );
             setSelectedHotel(updatedHotel);
-          }}
-          onAddReservation={handleAddReservation}
-          onUpdateReservationStatus={handleUpdateReservationStatus}
-          onUpdateStaffPermissions={handleUpdateStaffPermissions}
-          onUpdateBankInfo={(bankInfo) => {
-            setHotels((prev) =>
-              prev.map((h) => (h.id === selectedHotel.id ? { ...h, ...bankInfo } : h))
-            );
-            setSelectedHotel((prev) => ({ ...prev, ...bankInfo }));
-          }}
-          onUpgradeSubscription={(planId, billingCycle, proof) => {
-            alert(`Payment proof uploaded for ${planId} (${billingCycle}). Pending verification by IGHO Super Admin.`);
-          }}
-          onAddCustomRole={(newRole) => {
-            setCustomRoles((prev) => [...prev, newRole]);
-          }}
-          onUpdateReportStatus={(reportId, status, notes) => {
-            setGuestReports((prev) =>
-              prev.map((r) => (r.id === reportId ? { ...r, status, resolutionNotes: notes } : r))
-            );
+            setActiveScreen('staff_portal');
           }}
           onNavigate={navigateTo}
+          onSignOut={handleGuestSignOut}
         />
+      )}
+
+      {/* SCREEN 11: STAFF PORTAL (DASHBOARD, ROOM INVENTORY, RESERVATIONS, SETTINGS) */}
+      {/* Requirement: Subscription plan after being approved should be the FIRST thing to show before hotel dashboard, unless 1-month free trial with special code */}
+      {activeScreen === 'staff_portal' && (
+        !isHotelSubscriptionUnlocked(activeHotelForPMS) ? (
+          <HotelSubscriptionPlanScreen
+            hotel={activeHotelForPMS}
+            plans={plans}
+            currentUserEmail={currentUserEmail}
+            onSubscriptionActivated={(updatedHotel) => {
+              setHotels((prev) =>
+                prev.map((h) => (h.id === updatedHotel.id ? updatedHotel : h))
+              );
+              setSelectedHotel(updatedHotel);
+              setActiveScreen('staff_portal');
+            }}
+            onNavigate={navigateTo}
+            onSignOut={handleGuestSignOut}
+          />
+        ) : (
+          <StaffPortal
+            hotel={activeHotelForPMS}
+            rooms={rooms.filter((r) => !r.hotelId || r.hotelId === activeHotelForPMS.id)}
+            reservations={reservations.filter((r) => !r.hotelId || r.hotelId === activeHotelForPMS.id)}
+            staff={staff.filter((s) => !s.hotelId || s.hotelId === activeHotelForPMS.id)}
+            invitations={invitations}
+            housekeeping={housekeeping}
+            plans={plans}
+            customRoles={customRoles}
+            guestReports={guestReports}
+            payoutSettings={platformSettings.subscriptionPayout}
+            onAddRoom={handleAddRoom}
+            onUpdateRoom={handleUpdateRoom}
+            onDeleteRoom={handleDeleteRoom}
+            onInviteStaff={(invite) => {
+              setInvitations((prev) => [invite, ...prev]);
+            }}
+            onAddStaffMember={(newStaff) => {
+              setStaff((prev) => [newStaff, ...prev]);
+            }}
+            onDeactivateStaff={(staffId) => {
+              setStaff((prev) =>
+                prev.map((s) => (s.id === staffId ? { ...s, status: 'inactive', active: false } : s))
+              );
+            }}
+            onReactivateStaff={(staffId) => {
+              setStaff((prev) =>
+                prev.map((s) => (s.id === staffId ? { ...s, status: 'active', active: true } : s))
+              );
+            }}
+            onUpdateHotel={(updatedHotel) => {
+              setHotels((prev) =>
+                prev.map((h) => (h.id === updatedHotel.id ? updatedHotel : h))
+              );
+              setSelectedHotel(updatedHotel);
+            }}
+            onAddReservation={handleAddReservation}
+            onUpdateReservation={handleUpdateReservation}
+            onUpdateReservationStatus={handleUpdateReservationStatus}
+            onUpdateStaffPermissions={handleUpdateStaffPermissions}
+            onUpdateBankInfo={(bankInfo) => {
+              setHotels((prev) =>
+                prev.map((h) => (h.id === activeHotelForPMS.id ? { ...h, ...bankInfo } : h))
+              );
+              setSelectedHotel((prev) => ({ ...prev, ...bankInfo }));
+            }}
+            onUpgradeSubscription={(planId, billingCycle, proof) => {
+              navigateTo('hotel_subscription_plan');
+            }}
+            onAddCustomRole={(newRole) => {
+              setCustomRoles((prev) => [...prev, newRole]);
+            }}
+            onUpdateReportStatus={(reportId, status, notes) => {
+              setGuestReports((prev) =>
+                prev.map((r) => (r.id === reportId ? { ...r, status, resolutionNotes: notes } : r))
+              );
+            }}
+            onNavigate={navigateTo}
+          />
+        )
       )}
 
       {/* SCREEN 12: DEMO REQUEST */}
@@ -879,6 +1242,26 @@ export default function App() {
           }}
           onNavigate={navigateTo}
         />
+      )}
+
+      {/* FLOATING REAL-TIME LIVE ACTIVITY NOTIFICATION TOAST */}
+      {liveToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4 fade-in duration-200 pointer-events-none max-w-[90vw]">
+          <div className="bg-neutral-950/95 backdrop-blur-md text-white border border-neutral-800 px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-3 text-xs font-semibold">
+            <span className="relative flex h-2.5 w-2.5 shrink-0">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                liveToast.type === 'delete' ? 'bg-rose-400' : 'bg-emerald-400'
+              }`}></span>
+              <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                liveToast.type === 'delete' ? 'bg-rose-500' : 'bg-emerald-500'
+              }`}></span>
+            </span>
+            <span className="text-neutral-100 font-medium truncate">{liveToast.message}</span>
+            <span className="text-[10px] text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded-full font-bold border border-emerald-800 shrink-0">
+              LIVE SYNC
+            </span>
+          </div>
+        </div>
       )}
     </div>
   );
