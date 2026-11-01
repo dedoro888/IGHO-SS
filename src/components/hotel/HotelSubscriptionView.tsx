@@ -222,6 +222,26 @@ export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
         </div>
       </div>
 
+      {/* Paystack Automated Payout & Settlement Clearance Notice */}
+      <div className="p-4 rounded-2xl bg-white border border-neutral-200 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+            <CreditCard className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-extrabold text-neutral-900">Paystack Subaccount & Settlement Clearance</span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                ACTIVE
+              </span>
+            </div>
+            <p className="text-neutral-600 text-[11px] mt-0.5">
+              Subscription billing and guest payouts process directly through your Paystack Subaccount (<span className="font-mono font-bold text-neutral-900">{hotel.paystackSubaccountId || 'ACCT_lava_ng_9384'}</span>). Settlements credit to your linked bank account via Paystack automated clearance rather than manual transfers.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Available Plans Section (Dynamic from IGHO Console) */}
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">

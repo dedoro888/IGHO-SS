@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { ActiveScreen, CustomerProfile } from '../types';
 import { resolveUserAccount, SUPER_ADMIN_EMAIL, getSavedCustomerProfile, saveCustomerProfile } from '../utils/auth';
+import { authService } from '../lib/authService';
 import { IghoLogo, IghoOfficialEmblem } from './IghoLogo';
 import { IghoLoadingScreen } from './IghoLoadingScreen';
 import { BackButton } from './BackButton';
@@ -100,7 +101,7 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
     } catch {}
   };
 
-  const executeLoginWithEmail = (targetEmail: string) => {
+  const executeLoginWithEmail = async (targetEmail: string, explicitPassword?: string) => {
     const cleanEmail = targetEmail.trim().toLowerCase();
     if (!cleanEmail) {
       setError('Please enter your email address.');
@@ -110,7 +111,53 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
     setLoading(true);
     setLoadingMessage('Authenticating with IGHO Software Systems...');
 
-    // Look up or synthesize profile for this exact email
+    // Attempt real Supabase authentication if password is provided
+    if (explicitPassword || password) {
+      const pwd = explicitPassword || password;
+      try {
+        const { data, error: signInErr } = await authService.signIn(cleanEmail, pwd);
+        if (signInErr) {
+          setLoading(false);
+          setError(signInErr.message || 'Invalid login credentials.');
+          return;
+        }
+
+        if (data?.user) {
+          // Resolve authenticated user against real PostgreSQL database
+          const resolved = await authService.resolveAuthenticatedUser(data.user.id, cleanEmail);
+
+          if (!resolved.accessGranted) {
+            setLoading(false);
+            setError(resolved.denialReason || 'Access denied for this account.');
+            return;
+          }
+
+          let userProfile = getSavedCustomerProfile(cleanEmail);
+          if (!userProfile) {
+            const parts = (resolved.profile?.full_name || cleanEmail.split('@')[0]).split(/\s+/);
+            userProfile = {
+              id: resolved.profile?.id || `cust-${Date.now()}`,
+              email: cleanEmail,
+              firstName: parts[0] || 'Guest',
+              lastName: parts.slice(1).join(' ') || '',
+              phone: resolved.profile?.phone || '',
+              address: '',
+              createdAt: resolved.profile?.created_at || new Date().toISOString(),
+            };
+            saveCustomerProfile(userProfile);
+          }
+
+          setLoading(false);
+          onLoginSuccess(cleanEmail, userProfile);
+          onNavigate(resolved.targetScreen);
+          return;
+        }
+      } catch (err: any) {
+        console.warn('[GuestAuth] Supabase authentication exception:', err);
+      }
+    }
+
+    // Look up or synthesize profile for this exact email (fallback)
     let userProfile = getSavedCustomerProfile(cleanEmail);
     if (!userProfile) {
       const parts = cleanEmail.split('@')[0].replace(/[._]/g, ' ').split(/\s+/);
@@ -150,7 +197,7 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
     }, 150);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -202,22 +249,48 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
         createdAt: new Date().toISOString(),
       };
 
-      // Persist to local customer profiles registry
-      try {
-        const raw = localStorage.getItem('igho_db_customer_profiles');
-        const existing: CustomerProfile[] = raw ? JSON.parse(raw) : [];
-        const filtered = existing.filter((p) => p.email.toLowerCase() !== cleanEmail);
-        localStorage.setItem('igho_db_customer_profiles', JSON.stringify([newAccountProfile, ...filtered]));
-      } catch {}
-
       setLoading(true);
       setLoadingMessage(`Creating IGHO account for ${fullName.trim()}...`);
 
+      // Attempt real Supabase signUp
+      try {
+        const { data, error: signUpErr } = await authService.signUp(
+          cleanEmail,
+          password,
+          fullName.trim(),
+          phone.trim()
+        );
+
+        if (signUpErr) {
+          setLoading(false);
+          setError(signUpErr.message || 'Registration failed. Please check your details.');
+          return;
+        }
+
+        // Persist to local customer profiles registry
+        try {
+          const raw = localStorage.getItem('igho_db_customer_profiles');
+          const existing: CustomerProfile[] = raw ? JSON.parse(raw) : [];
+          const filtered = existing.filter((p) => p.email.toLowerCase() !== cleanEmail);
+          localStorage.setItem('igho_db_customer_profiles', JSON.stringify([newAccountProfile, ...filtered]));
+        } catch {}
+
+        if (data?.user) {
+          const resolved = await authService.resolveAuthenticatedUser(data.user.id, cleanEmail);
+          setLoading(false);
+          onLoginSuccess(cleanEmail, newAccountProfile);
+          onNavigate(resolved.targetScreen || 'landing');
+          return;
+        }
+      } catch (err: any) {
+        console.warn('[GuestAuth] Supabase signUp failed:', err);
+      }
+
+      // Fallback local flow if offline
       setTimeout(() => {
         onLoginSuccess(cleanEmail, newAccountProfile);
         const resolved = resolveUserAccount(cleanEmail, newAccountProfile);
         setLoading(false);
-        // User request: when creating account, take user back to landing page (home)
         if (resolved.role === 'super_admin') {
           onNavigate('super_admin_console');
         } else {
@@ -227,7 +300,7 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
       return;
     }
 
-    executeLoginWithEmail(cleanEmail);
+    await executeLoginWithEmail(cleanEmail, password);
   };
 
   const handleSocialSelect = (provider: 'google' | 'apple', selectedEmail: string, customName?: string) => {

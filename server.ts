@@ -79,6 +79,25 @@ async function createServer() {
     });
   });
 
+  // Public Supabase configuration endpoint for frontend client initialization
+  app.get('/api/config', (req, res) => {
+    const rawUrl = process.env.SUPABASE_URL || '';
+    let supabaseUrl = '';
+    if (rawUrl) {
+      try {
+        supabaseUrl = new URL(rawUrl).origin;
+      } catch {
+        supabaseUrl = rawUrl.replace(/\/+$/, '');
+      }
+    }
+    const supabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || '';
+
+    res.json({
+      supabaseUrl,
+      supabasePublishableKey,
+    });
+  });
+
   // API Endpoints
   app.get('/api/state', (req, res) => {
     const state = getDbState();

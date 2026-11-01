@@ -534,9 +534,14 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
             {/* Section 1: Make Bank Transfer */}
             <div className="space-y-3 bg-neutral-50 border border-neutral-200 rounded-2xl p-5">
               <div>
-                <h3 className="text-sm font-bold text-black">1. Make the bank transfer</h3>
-                <p className="text-xs text-neutral-500">
-                  Pay the total amount to the hotel's account. Use your booking reference as the narration.
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-black">1. Make the bank transfer</h3>
+                  <span className="text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full">
+                    Paystack Verified Settlement
+                  </span>
+                </div>
+                <p className="text-xs text-neutral-600 mt-0.5">
+                  Transfer directly to the hotel's linked settlement account. Monies clear automatically through Paystack's clearing engine. Use your booking reference as the transfer narration.
                 </p>
               </div>
 
@@ -544,12 +549,12 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
                 {/* Bank */}
                 <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-neutral-200">
                   <div>
-                    <div className="text-[10px] font-bold text-neutral-400 uppercase">BANK</div>
-                    <div className="font-semibold text-black">{hotel.bankName || 'Zenith Bank'}</div>
+                    <div className="text-[10px] font-bold text-neutral-500 uppercase font-mono">LINKED SETTLEMENT BANK</div>
+                    <div className="font-semibold text-black">{hotel.bankName || 'Providus Bank'} <span className="text-[11px] font-medium text-emerald-700">(Paystack Linked)</span></div>
                   </div>
                   <button
-                    onClick={() => copyToClipboard(hotel.bankName || 'Zenith Bank', 'bank')}
-                    className="p-1.5 hover:bg-neutral-100 rounded-lg text-neutral-500 hover:text-black"
+                    onClick={() => copyToClipboard(hotel.bankName || 'Providus Bank', 'bank')}
+                    className="p-1.5 hover:bg-neutral-100 rounded-lg text-neutral-500 hover:text-black cursor-pointer"
                   >
                     {copiedKey === 'bank' ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
                   </button>

@@ -80,12 +80,22 @@ export const INITIAL_TRANSACTIONS: PlatformTransaction[] = [];
 
 export const INITIAL_AUDIT_LOGS: PlatformAuditLog[] = [];
 
-// Keep only the official Platform Super Admin identity
+// Official Platform Super Admin identities
 export const INITIAL_PLATFORM_USERS: PlatformUser[] = [
   {
     id: 'user-001',
     name: 'Rume Obire',
     email: 'rumeobire@gmail.com',
+    role: 'super_admin',
+    organizationName: 'IGHO Software Systems',
+    status: 'active',
+    createdAt: '2026-01-01',
+    lastActivity: 'Active Now',
+  },
+  {
+    id: 'user-002',
+    name: 'dedoro888',
+    email: 'dedoro888@gmail.com',
     role: 'super_admin',
     organizationName: 'IGHO Software Systems',
     status: 'active',
@@ -140,11 +150,14 @@ export const INITIAL_PLATFORM_SETTINGS: PlatformSettings = {
     companyInfo: 'IGHO Systems Technology Nig. Ltd · RC 1892041 · Asaba, Delta State',
   },
   subscriptionPayout: {
-    walletOrAccount: 'Corporate Bank Account & USDT TRC20',
-    networkOrBank: 'Providus Bank PLC / USDT (TRC-20)',
-    recipientName: 'IGHO PLATFORMS NIGERIA LTD',
-    accountNumber: '0938475811',
-    notes: 'Please quote your registered Hotel Name or Hotel ID in the payment narration.',
+    walletOrAccount: 'Paystack Subaccount (Split Settlement)',
+    networkOrBank: 'Paystack Automated Settlement Engine',
+    recipientName: 'IGHO SOFTWARE SYSTEMS (PAYSTACK SETTLEMENT)',
+    accountNumber: 'ACCT_igho_sub_98475811',
+    paystackSubaccountId: 'ACCT_igho_sub_98475811',
+    linkedBankName: 'Providus Bank PLC (Paystack Linked)',
+    linkedAccountNumber: '0938475811',
+    notes: 'Subscription dues and hotel transaction payouts process through Paystack Subaccounts. Commercial bank accounts are linked to Paystack for automated next-day clearing, rather than direct manual bank deposits.',
   },
   subscription: {
     defaultTrialDays: 14,

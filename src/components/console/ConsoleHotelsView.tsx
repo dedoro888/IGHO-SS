@@ -46,37 +46,6 @@ interface DemoRequestEntry {
   createdAt: string;
 }
 
-const INITIAL_DEMO_REQUESTS: DemoRequestEntry[] = [
-  {
-    id: "demo-stay-1",
-    fullName: "Alhaji Bello",
-    email: "bello@grandpalace.ng",
-    phone: "+234 802 222 3333",
-    orgName: "The Grand Palace Hotel",
-    orgType: "Hotel & Hospitality",
-    productInterested: "stay",
-    demoDate: "2026-09-24",
-    demoTime: "14:00",
-    message: "We have 85 luxury rooms in Victoria Island and want to inspect Paystack split settlements and guest portal walkthrough.",
-    status: "pending",
-    createdAt: "2026-09-16"
-  },
-  {
-    id: "demo-stay-2",
-    fullName: "Engr. Victoria Adebayo",
-    email: "v.adebayo@hilton-annex.com.ng",
-    phone: "+234 815 444 5555",
-    orgName: "Transcorp Hilton Annex",
-    orgType: "Hotel & Hospitality",
-    productInterested: "stay",
-    demoDate: "2026-09-22",
-    demoTime: "11:00",
-    message: "Requires deep PMS APIs and automated housekeeping scheduling demonstration.",
-    status: "scheduled",
-    createdAt: "2026-09-18"
-  }
-];
-
 interface ConsoleHotelsViewProps {
   hotels: Hotel[];
   rooms: Room[];
@@ -88,7 +57,6 @@ interface ConsoleHotelsViewProps {
   onReactivateHotel: (hotelId: string) => void;
   onDeleteHotel: (hotelId: string) => void;
   onNavigateBreadcrumb?: () => void;
-  onSelectHotel?: (hotel: Hotel) => void;
 }
 
 export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
@@ -102,7 +70,6 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
   onReactivateHotel,
   onDeleteHotel,
   onNavigateBreadcrumb,
-  onSelectHotel,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -123,21 +90,18 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
   const [demoCurrentPage, setDemoCurrentPage] = useState(1);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem('igho_demo_requests');
-      let parsed = stored ? JSON.parse(stored) : [];
-      const stayDemos = parsed.filter((item: any) => item.productInterested === 'stay' || item.productInterested === 'hotel' || !item.productInterested);
-      if (stayDemos.length === 0) {
-        const otherDemos = parsed.filter((item: any) => item.productInterested !== 'stay');
-        const merged = [...otherDemos, ...INITIAL_DEMO_REQUESTS];
-        localStorage.setItem('igho_demo_requests', JSON.stringify(merged));
-        setDemoRequests(INITIAL_DEMO_REQUESTS);
-      } else {
+    const loadDemos = () => {
+      try {
+        const stored = localStorage.getItem('igho_demo_requests');
+        const parsed = stored ? JSON.parse(stored) : [];
         setDemoRequests(parsed);
+      } catch (e) {
+        console.error(e);
       }
-    } catch (e) {
-      console.error(e);
-    }
+    };
+    loadDemos();
+    window.addEventListener('igho_demo_requests_updated', loadDemos);
+    return () => window.removeEventListener('igho_demo_requests_updated', loadDemos);
   }, []);
 
   const handleUpdateDemoStatus = (id: string, newStatus: 'pending' | 'scheduled' | 'completed' | 'cancelled') => {
@@ -463,12 +427,9 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
                     </td>
                     <td className="p-4">
                       <button
-                        onClick={() => {
-                          if (onSelectHotel) onSelectHotel(hotel);
-                          else setInspectingHotel(hotel);
-                        }}
+                        onClick={() => setInspectingHotel(hotel)}
                         className="font-bold text-neutral-900 hover:text-black hover:underline text-left block cursor-pointer"
-                        title="Click to view hotel dashboard"
+                        title="Click to inspect hotel details & compliance"
                       >
                         {hotel.name}
                       </button>
@@ -501,16 +462,6 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
                     </td>
                     <td className="p-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        {onSelectHotel && (
-                          <button
-                            onClick={() => onSelectHotel(hotel)}
-                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-black text-white hover:bg-neutral-800 text-[11px] font-bold shadow-xs cursor-pointer transition-all active:scale-95"
-                            title="Open Hotel PMS Dashboard"
-                          >
-                            <ExternalLink className="w-3 h-3" />
-                            <span>Dashboard</span>
-                          </button>
-                        )}
                         <button
                           onClick={() => setInspectingHotel(hotel)}
                           className="p-1.5 rounded-lg hover:bg-neutral-100 text-neutral-600 hover:text-black transition-colors"
@@ -909,7 +860,6 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
             onDeleteHotel(inspectingHotel.id);
             setInspectingHotel(null);
           }}
-          onOpenDashboard={onSelectHotel}
         />
       )}
     </div>

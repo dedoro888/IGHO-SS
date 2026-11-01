@@ -52,6 +52,66 @@ export type PermissionId =
   | 'settings.view'
   | 'settings.edit';
 
+// ==========================================
+// Supabase PostgreSQL Database Schema Types
+// ==========================================
+
+export type DbOrganizationRole =
+  | 'owner'
+  | 'manager'
+  | 'receptionist'
+  | 'finance'
+  | 'housekeeping'
+  | 'customer';
+
+export interface DbProfile {
+  id: string; // references auth.users.id
+  full_name: string | null;
+  phone: string | null;
+  account_status: 'active' | 'suspended' | 'pending' | string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbOrganization {
+  id: string;
+  name: string;
+  status: 'active' | 'pending' | 'suspended' | string;
+  created_at: string;
+  updated_at: string;
+  [key: string]: any;
+}
+
+export interface DbOrganizationMembership {
+  id: string;
+  organization_id: string;
+  user_id: string; // references profiles.id
+  role: DbOrganizationRole;
+  status: 'active' | 'pending' | 'suspended' | string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbPlatformRole {
+  id: string;
+  user_id: string; // references profiles.id
+  role: 'super_admin' | string;
+  granted_at: string;
+}
+
+export interface ResolvedAuthAccount {
+  userId: string;
+  email: string;
+  profile: DbProfile | null;
+  isSuperAdmin: boolean;
+  membership: DbOrganizationMembership | null;
+  organization: DbOrganization | null;
+  effectiveRole: 'super_admin' | DbOrganizationRole;
+  targetScreen: ActiveScreen;
+  accessGranted: boolean;
+  denialReason?: string;
+}
+
 export type StaffRole = 'hotel_owner' | 'manager' | 'receptionist' | 'finance' | 'housekeeping';
 
 export interface HotelBranch {
@@ -134,6 +194,9 @@ export interface Hotel {
   bankName: string;
   accountName: string;
   accountNumber: string;
+  paystackSubaccountId?: string;
+  paystackAccountCode?: string;
+  settlementType?: 'paystack_subaccount' | 'direct_bank';
   website?: string;
   instagram?: string;
   facebook?: string;
@@ -453,6 +516,9 @@ export interface PlatformSettings {
     networkOrBank: string;
     recipientName: string;
     accountNumber: string;
+    paystackSubaccountId?: string;
+    linkedBankName?: string;
+    linkedAccountNumber?: string;
     notes?: string;
   };
   socialHandles?: PlatformSocialHandle[];

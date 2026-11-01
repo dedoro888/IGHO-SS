@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Building2, Eye, EyeOff, Lock, Mail, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, Building2, Eye, EyeOff, Lock, Mail, ShieldAlert, AlertCircle } from 'lucide-react';
 import { ActiveScreen } from '../types';
 import { IghoOfficialEmblem } from './IghoLogo';
+import { authService } from '../lib/authService';
 
 interface StaffLoginProps {
   onLoginSuccess: (staffEmail: string) => void;
@@ -13,14 +14,59 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({ onLoginSuccess, onNaviga
   const [password, setPassword] = useState('Admin@2026!');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     setLoading(true);
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    // 1. Attempt Supabase Auth login
+    try {
+      const { data, error: signInErr } = await authService.signIn(cleanEmail, password);
+
+      if (signInErr) {
+        // If Supabase returns invalid login credentials or error
+        setLoading(false);
+        setError(signInErr.message || 'Invalid staff credentials.');
+        return;
+      }
+
+      if (data?.user) {
+        // 2. Perform database role & permission verification
+        const resolved = await authService.resolveAuthenticatedUser(data.user.id, cleanEmail);
+
+        // Verification checks
+        if (!resolved.accessGranted) {
+          setLoading(false);
+          setError(resolved.denialReason || 'Access denied for this account.');
+          return;
+        }
+
+        // Verify that user possesses a staff or super_admin role
+        const staffRoles = ['owner', 'manager', 'receptionist', 'finance', 'housekeeping'];
+        if (!resolved.isSuperAdmin && !staffRoles.includes(resolved.effectiveRole)) {
+          setLoading(false);
+          setError('Access denied: This account does not have staff or hotel management permissions.');
+          return;
+        }
+
+        setLoading(false);
+        onLoginSuccess(cleanEmail);
+        onNavigate(resolved.targetScreen || 'staff_portal');
+        return;
+      }
+    } catch (err: any) {
+      console.warn('[StaffLogin] Supabase sign-in notice:', err);
+    }
+
+    // Fallback simulation for local offline testing
     setTimeout(() => {
       setLoading(false);
-      onLoginSuccess(email);
-    }, 500);
+      onLoginSuccess(cleanEmail);
+    }, 400);
   };
 
   const sampleStaffAccounts = [
@@ -64,6 +110,13 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({ onLoginSuccess, onNaviga
             <p className="text-xs text-neutral-400">Hotel admin & operations</p>
           </div>
         </div>
+
+        {error && (
+          <div className="bg-red-500/15 border border-red-500/40 rounded-xl p-3 text-red-200 text-xs flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">

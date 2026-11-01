@@ -70,7 +70,6 @@ interface SuperAdminConsoleProps {
   plans?: SubscriptionPlan[];
   settings?: PlatformSettings;
   onNavigate: (screen: ActiveScreen) => void;
-  onSelectHotel?: (hotel: Hotel) => void;
   onUpdateHotels?: (hotels: Hotel[]) => void;
   onUpdatePlans?: (plans: SubscriptionPlan[]) => void;
   onUpdateSettings?: (settings: PlatformSettings) => void;
@@ -87,7 +86,6 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   plans: initialPassedPlans,
   settings: initialPassedSettings,
   onNavigate,
-  onSelectHotel,
   onUpdateHotels,
   onUpdatePlans,
   onUpdateSettings,
@@ -127,6 +125,36 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   const [settings, setSettings] = useState<PlatformSettings>(initialPassedSettings || INITIAL_PLATFORM_SETTINGS);
   const [feedbacks, setFeedbacks] = useState<CustomerFeedback[]>(INITIAL_FEEDBACKS as CustomerFeedback[]);
   const [demoRequests, setDemoRequests] = useState<DemoRequest[]>(initialDemoRequests);
+
+  React.useEffect(() => {
+    setHotels(initialHotels);
+  }, [initialHotels]);
+
+  React.useEffect(() => {
+    if (initialPassedPlans) setPlans(initialPassedPlans);
+  }, [initialPassedPlans]);
+
+  React.useEffect(() => {
+    if (initialPassedSettings) setSettings(initialPassedSettings);
+  }, [initialPassedSettings]);
+
+  React.useEffect(() => {
+    const handleStorageHotels = () => {
+      try {
+        const stored = localStorage.getItem('igho_db_hotels');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          setHotels(parsed);
+        }
+      } catch {}
+    };
+    window.addEventListener('igho_hotels_updated', handleStorageHotels);
+    window.addEventListener('storage', handleStorageHotels);
+    return () => {
+      window.removeEventListener('igho_hotels_updated', handleStorageHotels);
+      window.removeEventListener('storage', handleStorageHotels);
+    };
+  }, []);
 
   React.useEffect(() => {
     setDemoRequests(initialDemoRequests);
@@ -575,13 +603,6 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
             </button>
 
             <button
-              onClick={() => onNavigate('staff_portal')}
-              className="w-full py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-semibold text-xs transition-colors"
-            >
-              Return to Hotel Staff PMS
-            </button>
-
-            <button
               onClick={() => onNavigate('landing')}
               className="w-full py-2 text-neutral-400 hover:text-white text-xs transition-colors"
             >
@@ -796,8 +817,8 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
               users={platformUsers}
               products={products}
               onSelectTab={(tab) => setCurrentTab(tab)}
-              onInspectHotel={(hotel) => {
-                if (onSelectHotel) onSelectHotel(hotel);
+              onInspectHotel={(_hotel) => {
+                setCurrentTab('hotels');
               }}
             />
           )}
@@ -814,7 +835,6 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
               onReactivateHotel={handleReactivateHotel}
               onDeleteHotel={handleDeleteHotel}
               onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
-              onSelectHotel={onSelectHotel}
             />
           )}
 

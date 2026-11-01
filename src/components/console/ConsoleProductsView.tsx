@@ -8,6 +8,7 @@ import {
   Clock,
   ArrowLeft,
   ExternalLink,
+  Lock,
 } from 'lucide-react';
 import { PlatformProduct, ActiveScreen } from '../../types';
 
@@ -119,13 +120,13 @@ export const ConsoleProductsView: React.FC<ConsoleProductsViewProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={() => onNavigate('staff_portal')}
-            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-black hover:bg-neutral-800 text-white font-bold text-xs transition-colors shadow-xs"
-          >
-            <span>Launch Hotel Operations</span>
-            <ExternalLink className="w-3.5 h-3.5" />
-          </button>
+          <div className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-neutral-100 border border-neutral-200 text-neutral-600 text-xs font-medium">
+            <span className="flex items-center gap-1.5 font-bold text-neutral-800">
+              <Lock className="w-3.5 h-3.5 text-neutral-500" />
+              Private Hotel Operations
+            </span>
+            <span className="text-[10px] text-neutral-500 font-mono">Hotel Staff Only</span>
+          </div>
         </div>
 
         {/* 2. IGHO CLASSROOM */}

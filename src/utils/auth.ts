@@ -1,7 +1,9 @@
-import { ActiveScreen, CustomerProfile } from '../types';
+import { ActiveScreen, CustomerProfile, ResolvedAuthAccount, DbOrganizationRole } from '../types';
 
 export type IghoRole =
   | 'super_admin'
+  | 'owner'
+  | 'manager'
   | 'hotel_owner'
   | 'hotel_manager'
   | 'receptionist'
@@ -18,6 +20,64 @@ export interface UserAuthProfile {
   organizationId?: string;
   organizationName?: string;
   description: string;
+}
+
+/**
+ * Maps a verified Supabase database resolved account into a UserAuthProfile.
+ * Role resolution strictly reflects:
+ * - public.profiles (active account_status)
+ * - public.platform_roles (super_admin)
+ * - public.organization_memberships (active membership status)
+ * - public.organizations (active organization)
+ */
+export function mapResolvedAuthAccount(resolved: ResolvedAuthAccount): UserAuthProfile {
+  const profileName = resolved.profile?.full_name || resolved.email.split('@')[0];
+
+  if (resolved.isSuperAdmin) {
+    return {
+      email: resolved.email,
+      name: profileName,
+      role: 'super_admin',
+      roleLabel: 'Super Admin (Platform Owner)',
+      targetScreen: 'super_admin_console',
+      organizationName: 'IGHO Software Systems (Global)',
+      description: 'Platform owner with full governance over organizations, finance, subscriptions & products.',
+    };
+  }
+
+  if (resolved.membership) {
+    const roleLabels: Record<DbOrganizationRole, string> = {
+      owner: 'Hotel Owner',
+      manager: 'Hotel Manager',
+      receptionist: 'Front Desk Receptionist',
+      finance: 'Hotel Finance Officer',
+      housekeeping: 'Housekeeping Staff',
+      customer: 'Customer / Guest',
+    };
+
+    const roleName = resolved.membership.role;
+    const isStaff = ['owner', 'manager', 'receptionist', 'finance', 'housekeeping'].includes(roleName);
+
+    return {
+      email: resolved.email,
+      name: profileName,
+      role: roleName,
+      roleLabel: roleLabels[roleName] || roleName,
+      targetScreen: isStaff ? 'staff_portal' : 'guest_dashboard',
+      organizationId: resolved.membership.organization_id,
+      organizationName: resolved.organization?.name || 'Hotel Property',
+      description: `${roleLabels[roleName] || roleName} at ${resolved.organization?.name || 'Hotel'}`,
+    };
+  }
+
+  return {
+    email: resolved.email,
+    name: profileName,
+    role: 'customer',
+    roleLabel: 'Customer / Guest',
+    targetScreen: 'guest_dashboard',
+    description: 'Personal guest account for tracking bookings, hotel stays, invoices and receipts.',
+  };
 }
 
 export const SUPER_ADMIN_EMAILS = ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'];
@@ -149,7 +209,7 @@ export function resolveUserAccount(email: string, customProfile?: CustomerProfil
   // ensure they are treated as a customer!
   const savedProf = customProfile || getSavedCustomerProfile(normalizedEmail);
 
-  // 2. Hotel Owner & Staff for Lava Hotel & Suites and other partner properties
+  // 2. Hotel Owner & Staff for Lava Hotel & Suites
   if (
     normalizedEmail === 'avendoorcompany@gmail.com' ||
     normalizedEmail === 'info@lavahotel.ng' ||
@@ -159,80 +219,68 @@ export function resolveUserAccount(email: string, customProfile?: CustomerProfil
     normalizedEmail === 'lavahotel@info.com' ||
     normalizedEmail === 'manager@lavahotel.ng' ||
     normalizedEmail === 'manager@lavahotel.com' ||
-    normalizedEmail === 'owner@palmviewgrand.com' ||
-    normalizedEmail === 'owner@grandkuba.com' ||
     (normalizedEmail.includes('lava') && (normalizedEmail.includes('hotel') || normalizedEmail.includes('admin') || normalizedEmail.includes('owner')))
   ) {
-    const isLava =
-      normalizedEmail.includes('lava') ||
-      normalizedEmail === 'avendoorcompany@gmail.com';
     const isManager = normalizedEmail.includes('manager');
-    const isKuba = normalizedEmail.includes('kuba');
     return {
       email: normalizedEmail,
-      name: isLava ? (isManager ? 'Adaeze Okafor' : 'Obi Chidi') : isKuba ? 'Kuba Obasi' : 'Avendoor Management',
+      name: isManager ? 'Adaeze Okafor' : 'Obi Chidi',
       role: isManager ? 'hotel_manager' : 'hotel_owner',
       roleLabel: isManager ? 'Hotel Manager' : 'Hotel Owner',
       targetScreen: 'staff_portal',
-      organizationId: isLava ? 'hotel-lava' : isKuba ? 'hotel-5' : 'hotel-6',
-      organizationName: isLava ? 'Lava Hotel & Suites' : isKuba ? 'Grand Kuba Hotel' : 'Palmview Grand Hotel',
+      organizationId: 'hotel-lava',
+      organizationName: 'Lava Hotel & Suites',
       description: 'Hotel dashboard access to room inventory, folios, check-ins and staff management.',
     };
   }
 
   // 4. Receptionist (Exact emails only)
   if (
-    normalizedEmail === 'reception@palmviewgrand.com' ||
     normalizedEmail === 'frontdesk@lavahotel.com' ||
     normalizedEmail === 'frontdesk@lavahotel.ng'
   ) {
-    const isLava = normalizedEmail.includes('lavahotel');
     return {
       email: normalizedEmail,
-      name: isLava ? 'Chiamaka Obi' : 'David Adeleke',
+      name: 'Chiamaka Obi',
       role: 'receptionist',
       roleLabel: 'Front Desk Receptionist',
       targetScreen: 'staff_portal',
-      organizationId: isLava ? 'hotel-lava' : 'hotel-6',
-      organizationName: isLava ? 'Lava Hotel & Suites' : 'Palmview Grand Hotel',
+      organizationId: 'hotel-lava',
+      organizationName: 'Lava Hotel & Suites',
       description: 'Front desk access for checking guests in, managing room keys & creating reservations.',
     };
   }
 
   // 5. Finance (Exact emails only)
   if (
-    normalizedEmail === 'finance@palmviewgrand.com' ||
     normalizedEmail === 'finance@lavahotel.com' ||
     normalizedEmail === 'finance@lavahotel.ng'
   ) {
-    const isLava = normalizedEmail.includes('lavahotel');
     return {
       email: normalizedEmail,
       name: 'Blessing Ade',
       role: 'finance',
       roleLabel: 'Hotel Finance Officer',
       targetScreen: 'staff_portal',
-      organizationId: isLava ? 'hotel-lava' : 'hotel-6',
-      organizationName: isLava ? 'Lava Hotel & Suites' : 'Palmview Grand Hotel',
+      organizationId: 'hotel-lava',
+      organizationName: 'Lava Hotel & Suites',
       description: 'Financial ledger, room billing reconciliation & payment verification.',
     };
   }
 
   // 6. Housekeeping (Exact emails only)
   if (
-    normalizedEmail === 'housekeeping@palmviewgrand.com' ||
     normalizedEmail === 'housekeeping@lavahotel.com' ||
     normalizedEmail === 'housekeeping@lavahotel.ng'
   ) {
-    const isLava = normalizedEmail.includes('lavahotel');
     return {
       email: normalizedEmail,
       name: 'Emeka Nwosu',
       role: 'housekeeping',
       roleLabel: 'Housekeeping Staff',
       targetScreen: 'staff_portal',
-      organizationId: isLava ? 'hotel-lava' : 'hotel-6',
-      organizationName: isLava ? 'Lava Hotel & Suites' : 'Palmview Grand Hotel',
+      organizationId: 'hotel-lava',
+      organizationName: 'Lava Hotel & Suites',
       description: 'Room cleaning, maintenance status & laundry operations.',
     };
   }

@@ -40,6 +40,8 @@ export const INITIAL_HOTELS: Hotel[] = [
     bankName: 'Providus Bank',
     accountName: 'Lava Hotel & Suites Limited',
     accountNumber: '1014529384',
+    paystackSubaccountId: 'ACCT_lava_ng_9384',
+    settlementType: 'paystack_subaccount',
     coordinates: { lat: 6.4281, lng: 3.4219 },
     status: 'active',
     submittedAt: '2026-10-12T10:00:00.000Z',

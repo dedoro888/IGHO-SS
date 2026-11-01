@@ -23,6 +23,7 @@ import {
   HeartPulse,
   Hotel as HotelIcon,
   Sparkles,
+  KeyRound,
 } from 'lucide-react';
 import { Hotel, DemoRequest } from '../../types';
 
@@ -50,6 +51,8 @@ export const ConsoleRegistrationsView: React.FC<ConsoleRegistrationsViewProps> =
   const [approvedHotelModal, setApprovedHotelModal] = useState<Hotel | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
+  const [activeGeneratedToken, setActiveGeneratedToken] = useState('');
+  const [copiedToken, setCopiedToken] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'registrations' | 'demos'>('registrations');
   const [demoSearchQuery, setDemoSearchQuery] = useState('');
@@ -107,20 +110,48 @@ export const ConsoleRegistrationsView: React.FC<ConsoleRegistrationsViewProps> =
   };
 
   const handleApprove = (hotel: Hotel) => {
+    // Generate official 1-Month Free Trial Token
+    const prefix = hotel.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase() || 'STAY';
+    const tokenCode = `IGHO-TRIAL-${prefix}-${Math.floor(100 + Math.random() * 900)}`;
+    setActiveGeneratedToken(tokenCode);
+
+    try {
+      const savedTokens = JSON.parse(localStorage.getItem('igho_trial_tokens') || '[]');
+      const newToken = {
+        id: `tok-${Date.now()}`,
+        code: tokenCode,
+        durationDays: 30,
+        assignedHotelId: hotel.id,
+        assignedHotelName: hotel.name,
+        status: 'active',
+        createdAt: new Date().toISOString(),
+        createdBy: 'Super Admin',
+        notes: `1-Month Free Trial Token issued upon approval for ${hotel.name}`,
+      };
+      savedTokens.unshift(newToken);
+      localStorage.setItem('igho_trial_tokens', JSON.stringify(savedTokens));
+      window.dispatchEvent(new Event('igho_tokens_updated'));
+    } catch (e) {
+      console.warn('Failed saving trial token to storage', e);
+    }
+
     if (onApproveHotel) {
       onApproveHotel(hotel.id);
     }
     setApprovedHotelModal(hotel);
   };
 
-  const handleCopy = (text: string, type: 'link' | 'invite') => {
+  const handleCopy = (text: string, type: 'link' | 'invite' | 'token') => {
     navigator.clipboard.writeText(text);
     if (type === 'link') {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2000);
-    } else {
+    } else if (type === 'invite') {
       setCopiedInvite(true);
       setTimeout(() => setCopiedInvite(false), 2000);
+    } else {
+      setCopiedToken(true);
+      setTimeout(() => setCopiedToken(false), 2000);
     }
   };
 
@@ -641,6 +672,35 @@ export const ConsoleRegistrationsView: React.FC<ConsoleRegistrationsViewProps> =
                   </button>
                 </div>
               </div>
+
+              {activeGeneratedToken && (
+                <div className="space-y-1 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                  <label className="text-[11px] font-bold text-emerald-950 flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>1-Month Free Trial Token</span>
+                    <span className="text-[10px] bg-emerald-200 text-emerald-900 px-1.5 py-0.2 rounded-full font-bold ml-auto">
+                      30 Days Free
+                    </span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      readOnly
+                      value={activeGeneratedToken}
+                      className="flex-1 bg-white border border-emerald-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-emerald-950"
+                    />
+                    <button
+                      onClick={() => handleCopy(activeGeneratedToken, 'token')}
+                      className="px-3 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 flex items-center gap-1"
+                    >
+                      {copiedToken ? <Check className="w-3.5 h-3.5 text-white" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedToken ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-emerald-800">
+                    The hotel can enter this token on the subscription page to activate their 1-month free trial immediately.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Automated Dispatch Notification Status */}

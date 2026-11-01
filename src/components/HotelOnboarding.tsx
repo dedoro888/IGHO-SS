@@ -18,6 +18,7 @@ import {
   FileCheck2,
   Building2,
   Sparkles,
+  KeyRound,
 } from 'lucide-react';
 import { ActiveScreen, SubscriptionPlan, PlatformSettings, Hotel } from '../types';
 import { BackButton } from './BackButton';
@@ -188,46 +189,130 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('monthly');
   const [showPaystackModal, setShowPaystackModal] = useState(false);
 
-  // Form State
+  // Form State - strictly blank by default for all new hotel registrants
   const [formData, setFormData] = useState({
     // Step 1: Account
-    fullName: 'David',
-    email: 'avendoorcompany@gmail.com',
-    phone: '+234 811 223 3445',
-    password: 'password123',
-    confirmPassword: 'password123',
+    fullName: '',
+    email: '',
+    phone: '',
+    password: '',
+    confirmPassword: '',
 
     // Step 2: Hotel
-    hotelName: 'Lava Hotel & Suites',
-    hotelEmail: 'lavahotel@info.com',
-    hotelPhone: '+234 811 223 3445',
-    address: 'Plot 14 Admiralty Way, Lekki Phase 1',
-    city: 'Lagos',
-    state: 'Lagos',
+    hotelName: '',
+    hotelEmail: '',
+    hotelPhone: '',
+    address: '',
+    city: '',
+    state: '',
     country: 'Nigeria',
-    roomCount: '35',
+    roomCount: '',
     logoImage: '',
     coverImage: '',
-    isRegisteredBusiness: true,
-    cacNumber: 'RC-1849204',
-    mapsLink: 'https://maps.google.com/?q=6.4474,3.4735',
-    lat: '6.4474',
-    lng: '3.4735',
-    website: 'https://lavahotels.ng',
-    instagram: '@lavahotel',
-    facebook: 'lavahotelng',
-    bankName: 'Providus Bank',
-    accountName: 'Lava Hospitality Operations Ltd',
-    accountNumber: '5401829471',
+    isRegisteredBusiness: false,
+    cacNumber: '',
+    mapsLink: '',
+    lat: '',
+    lng: '',
+    website: '',
+    instagram: '',
+    facebook: '',
+    bankName: '',
+    accountName: '',
+    accountNumber: '',
 
     // Step 4: Package selection
     selectedPlanId: plans[1]?.id || plans[0]?.id || 'stay_complete',
     selectedPlanName: plans[1]?.name || plans[0]?.name || 'IGHO Stay — Complete',
 
     // Step 5: Paystack settlement reference
-    payerName: 'David Avendoor',
+    payerName: '',
     paystackReference: '',
   });
+
+  // 1-Month Free Trial Token redemption
+  const [trialTokenInput, setTrialTokenInput] = useState('');
+  const [trialTokenError, setTrialTokenError] = useState<string | null>(null);
+  const [trialTokenSuccess, setTrialTokenSuccess] = useState<string | null>(null);
+
+  const handleRedeemTrialToken = (e: React.FormEvent) => {
+    e.preventDefault();
+    setTrialTokenError(null);
+    const clean = trialTokenInput.trim().toUpperCase();
+    if (!clean) {
+      setTrialTokenError('Please enter your 1-month free trial token.');
+      return;
+    }
+
+    let dynamicTokens: any[] = [];
+    try {
+      const saved = localStorage.getItem('igho_trial_tokens');
+      if (saved) dynamicTokens = JSON.parse(saved);
+    } catch {}
+
+    const VALID_FALLBACK_CODES = [
+      'IGHO-TRIAL-30',
+      'IGHOFREE',
+      'TRIAL2026',
+      'IGHO2026',
+      'FREETRIAL30',
+      '1MONTHFREE',
+    ];
+    const matchedToken = dynamicTokens.find((t) => t.code.toUpperCase() === clean);
+
+    if (matchedToken) {
+      if (matchedToken.status === 'revoked') {
+        setTrialTokenError('This trial token has been revoked by the IGHO Platform administrator.');
+        return;
+      }
+      if (matchedToken.status === 'used') {
+        setTrialTokenError(`This trial token has already been claimed.`);
+        return;
+      }
+    } else if (!VALID_FALLBACK_CODES.includes(clean)) {
+      setTrialTokenError('Invalid trial token. Please check your token or request one from IGHO Super Admin.');
+      return;
+    }
+
+    setIsLoading(true);
+    setTimeout(() => {
+      if (matchedToken) {
+        try {
+          const updatedTokens = dynamicTokens.map((t) =>
+            t.id === matchedToken.id
+              ? {
+                  ...t,
+                  status: 'used',
+                  claimedByHotelName: formData.hotelName || 'Verified Hotel',
+                  claimedAt: new Date().toISOString(),
+                }
+              : t
+          );
+          localStorage.setItem('igho_trial_tokens', JSON.stringify(updatedTokens));
+          window.dispatchEvent(new Event('igho_tokens_updated'));
+        } catch {}
+      }
+
+      const trialEndDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      setTrialTokenSuccess(`Trial token "${clean}" verified! 1-Month Free Trial activated.`);
+      setIsLoading(false);
+
+      setTimeout(() => {
+        onHotelCreated({
+          ...formData,
+          packageType: 'complete',
+          approvalStatus: 'approved',
+          paymentStatus: 'paid',
+          subscriptionStatus: 'trial',
+          trialCode: clean,
+          trialStartDate: new Date().toISOString(),
+          trialEndDate: trialEndDate,
+          isLive: true,
+        });
+        setStep(6);
+      }, 600);
+    }, 400);
+  };
 
   const updateField = (field: string, val: any) => {
     setFormData((prev) => ({ ...prev, [field]: val }));
@@ -418,7 +503,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                 required
                 value={formData.fullName}
                 onChange={(e) => updateField('fullName', e.target.value)}
-                placeholder="e.g. David Avendoor"
+                placeholder="e.g. John Doe"
                 className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black focus:ring-1 focus:ring-black"
               />
             </div>
@@ -430,7 +515,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                 required
                 value={formData.email}
                 onChange={(e) => updateField('email', e.target.value)}
-                placeholder="name@company.com"
+                placeholder="name@yourhotel.com"
                 className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black focus:ring-1 focus:ring-black"
               />
             </div>
@@ -530,6 +615,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                   required
                   value={formData.hotelName}
                   onChange={(e) => updateField('hotelName', e.target.value)}
+                  placeholder="e.g. Grand Horizon Hotel"
                   className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black"
                 />
               </div>
@@ -541,6 +627,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                   required
                   value={formData.roomCount}
                   onChange={(e) => updateField('roomCount', e.target.value)}
+                  placeholder="e.g. 25"
                   className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black"
                 />
               </div>
@@ -554,6 +641,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                   required
                   value={formData.hotelEmail}
                   onChange={(e) => updateField('hotelEmail', e.target.value)}
+                  placeholder="info@yourhotel.com"
                   className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black"
                 />
               </div>
@@ -565,6 +653,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                   required
                   value={formData.hotelPhone}
                   onChange={(e) => updateField('hotelPhone', e.target.value)}
+                  placeholder="+234 800 000 0000"
                   className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black"
                 />
               </div>
@@ -577,6 +666,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                 required
                 value={formData.address}
                 onChange={(e) => updateField('address', e.target.value)}
+                placeholder="e.g. 14 Marina Road"
                 className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black"
               />
             </div>
@@ -589,6 +679,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                   required
                   value={formData.city}
                   onChange={(e) => updateField('city', e.target.value)}
+                  placeholder="e.g. Ikeja"
                   className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black"
                 />
               </div>
@@ -599,6 +690,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                   required
                   value={formData.state}
                   onChange={(e) => updateField('state', e.target.value)}
+                  placeholder="e.g. Lagos"
                   className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black"
                 />
               </div>
@@ -609,6 +701,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                   required
                   value={formData.country}
                   onChange={(e) => updateField('country', e.target.value)}
+                  placeholder="Nigeria"
                   className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black"
                 />
               </div>
@@ -653,7 +746,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                     required
                     value={formData.cacNumber}
                     onChange={(e) => updateField('cacNumber', e.target.value)}
-                    placeholder="e.g. RC-1849204"
+                    placeholder="e.g. RC-1000000"
                     className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black"
                   />
                 </div>
@@ -667,7 +760,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                     required
                     value={formData.bankName}
                     onChange={(e) => updateField('bankName', e.target.value)}
-                    placeholder="e.g. Providus Bank / Zenith Bank"
+                    placeholder="e.g. Zenith Bank / Access Bank"
                     className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black"
                   />
                 </div>
@@ -683,7 +776,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                     required
                     value={formData.accountName}
                     onChange={(e) => updateField('accountName', e.target.value)}
-                    placeholder="e.g. Lava Hospitality Operations Ltd"
+                    placeholder="e.g. Grand Horizon Hospitality Ltd"
                     className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black"
                   />
                 </div>
@@ -698,7 +791,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                     maxLength={10}
                     value={formData.accountNumber}
                     onChange={(e) => updateField('accountNumber', e.target.value)}
-                    placeholder="e.g. 5401829471"
+                    placeholder="e.g. 1012345678"
                     className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black font-mono"
                   />
                 </div>
@@ -976,6 +1069,55 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
             })}
           </div>
 
+          {/* 1-MONTH FREE TRIAL TOKEN REDEMPTION BOX */}
+          <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center">
+                <KeyRound className="w-4 h-4" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-emerald-950">Have a 1-Month Free Trial Token?</h4>
+                <p className="text-[11px] text-emerald-800">
+                  Enter your special promo token issued by IGHO Console to activate full access immediately without payment.
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleRedeemTrialToken} className="flex flex-col sm:flex-row gap-2 pt-1">
+              <input
+                type="text"
+                value={trialTokenInput}
+                onChange={(e) => {
+                  setTrialTokenInput(e.target.value.toUpperCase());
+                  setTrialTokenError(null);
+                }}
+                placeholder="e.g. IGHO-TRIAL-30"
+                className="flex-1 bg-white border border-emerald-300 rounded-xl px-3.5 py-2 text-xs font-mono font-bold text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-emerald-600 uppercase"
+              />
+              <button
+                type="submit"
+                disabled={isLoading || !trialTokenInput.trim()}
+                className="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-xs"
+              >
+                {isLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                <span>Activate 30-Day Free Trial</span>
+              </button>
+            </form>
+
+            {trialTokenError && (
+              <div className="text-[11px] font-semibold text-rose-700 flex items-center gap-1.5 pt-1">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{trialTokenError}</span>
+              </div>
+            )}
+            {trialTokenSuccess && (
+              <div className="text-[11px] font-semibold text-emerald-800 flex items-center gap-1.5 pt-1">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
+                <span>{trialTokenSuccess}</span>
+              </div>
+            )}
+          </div>
+
           <div className="flex items-center justify-between pt-6 border-t border-neutral-100">
             <button
               onClick={() => setStep(3)}
@@ -1077,6 +1219,21 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
             <p className="text-[11px] text-neutral-400 leading-relaxed">
               Upon clicking "Pay via Paystack", you can select your preferred payment channel. Instant verification will automatically activate your hotel workspace.
             </p>
+          </div>
+
+          {/* Quick Trial Token Redeem Alternative */}
+          <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2">
+              <KeyRound className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span className="text-neutral-750 font-medium">Have a Free Trial Token from IGHO Console?</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStep(4)}
+              className="px-3.5 py-1.5 rounded-lg border border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 font-bold text-xs transition-colors shrink-0"
+            >
+              Enter Trial Token
+            </button>
           </div>
 
           <div className="flex items-center justify-between pt-4 border-t border-neutral-100">

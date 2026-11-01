@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ShieldAlert } from 'lucide-react';
 import {
   ActiveScreen,
   Hotel,
@@ -24,6 +25,7 @@ import {
 import { INITIAL_PLANS, INITIAL_PLATFORM_SETTINGS } from './data/platformData';
 import { resolveUserAccount, SUPER_ADMIN_EMAIL, getSavedCustomerProfile, saveCustomerProfile } from './utils/auth';
 import { broadcastLiveRoomAction, subscribeToLiveEvents } from './utils/realtime';
+import { authService } from './lib/authService';
 
 // Core Components
 import { LandingPage } from './components/LandingPage';
@@ -136,6 +138,39 @@ export default function App() {
     saveToStorage('igho_currentStaffEmail', currentStaffEmail);
   }, [currentStaffEmail]);
 
+  // Monotonic sequence counter to protect against stale asynchronous auth updates
+  const authSeqRef = useRef<number>(0);
+
+  // Synchronize active Supabase Auth sessions across reloads and state changes
+  // Handles Supabase INITIAL_SESSION natively without competing initial getSession calls
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+
+    authService.onAuthStateChange((event, session) => {
+      const currentSeq = ++authSeqRef.current;
+
+      if (event === 'SIGNED_OUT' || !session?.user) {
+        if (authSeqRef.current === currentSeq) {
+          setCurrentUserEmail('');
+          setCurrentGuestProfile(null);
+        }
+      } else if (session?.user?.email) {
+        const authEmail = session.user.email.toLowerCase();
+        if (authSeqRef.current === currentSeq) {
+          setCurrentUserEmail(authEmail);
+        }
+      }
+    }).then((sub) => {
+      if (sub && (sub as any).data?.subscription) {
+        unsub = () => (sub as any).data.subscription.unsubscribe();
+      }
+    });
+
+    return () => {
+      unsub?.();
+    };
+  }, []);
+
   // Active Screen (persisted so refresh does not log the user out or return to landing)
   const [activeScreen, setActiveScreen] = useState<ActiveScreen>(() => {
     if (typeof window !== 'undefined') {
@@ -190,6 +225,10 @@ export default function App() {
       }
       window.location.hash = 'console';
     } else if (screen === 'staff_portal') {
+      if (superAdminEmails.includes(emailToCheck)) {
+        alert('Access Restricted: Hotel management dashboards are private to hotel staff. The IGHO Console cannot access or impersonate individual hotel operational portals.');
+        return;
+      }
       const userHotel = hotels.find((h) => h.email?.toLowerCase() === emailToCheck);
       if (userHotel) {
         if (userHotel.approvalStatus !== 'approved') {
@@ -208,6 +247,14 @@ export default function App() {
   };
 
   const handleGuestSignOut = () => {
+    // Invalidate any in-flight asynchronous auth callbacks immediately
+    authSeqRef.current++;
+
+    // Clear Supabase session
+    authService.signOut().catch((err) => {
+      console.warn('[App] Supabase signOut notice:', err);
+    });
+
     setCurrentUserEmail('');
     setCurrentGuestProfile(null);
     try {
@@ -474,6 +521,17 @@ export default function App() {
     return () => window.removeEventListener('igho_demo_requests_updated', handleDemoRequestsUpdate);
   }, []);
 
+  useEffect(() => {
+    const handleHotelsUpdate = () => {
+      const stored = loadFromStorage<Hotel[]>('igho_db_hotels', []);
+      if (stored.length > 0) {
+        setHotels(stored);
+      }
+    };
+    window.addEventListener('igho_hotels_updated', handleHotelsUpdate);
+    return () => window.removeEventListener('igho_hotels_updated', handleHotelsUpdate);
+  }, []);
+
   // Prevent race conditions and infinite write-back loops on load / sync
   const [initialStateLoaded, setInitialStateLoaded] = React.useState(false);
   const isSyncingFromServer = React.useRef(false);
@@ -512,7 +570,17 @@ export default function App() {
           isSyncingFromServer.current = true;
 
           // Only update states if they exist in response to avoid overriding with empty
-          if (Array.isArray(s.hotels)) setHotels(s.hotels);
+          if (Array.isArray(s.hotels)) {
+            setHotels((prev) => {
+              // Retain any pending or freshly registered local hotels not yet committed to backend
+              const localUnsynced = (prev || []).filter(
+                (lh) => !s.hotels.some((sh: any) => sh.id === lh.id)
+              );
+              const merged = [...localUnsynced, ...s.hotels];
+              saveToStorage('igho_db_hotels', merged);
+              return merged;
+            });
+          }
           if (Array.isArray(s.rooms)) setRooms(s.rooms);
           if (Array.isArray(s.reservations)) setReservations(s.reservations);
           if (Array.isArray(s.staff)) setStaff(s.staff);
@@ -524,8 +592,14 @@ export default function App() {
           if (Array.isArray(s.customRoles)) setCustomRoles(s.customRoles);
           
           if (Array.isArray(s.demoRequests)) {
-            setDemoRequests(s.demoRequests);
-            saveToStorage('igho_demo_requests', s.demoRequests);
+            setDemoRequests((prev) => {
+              const localUnsynced = (prev || []).filter(
+                (ld: any) => !s.demoRequests.some((sd: any) => sd.id === ld.id)
+              );
+              const merged = [...localUnsynced, ...s.demoRequests];
+              saveToStorage('igho_demo_requests', merged);
+              return merged;
+            });
           }
 
           if (Array.isArray(s.customerProfiles)) {
@@ -954,26 +1028,60 @@ export default function App() {
               location: `${hotelData.city || 'Lagos'}, ${hotelData.state || 'Lagos'}`,
               city: hotelData.city || 'Lagos',
               state: hotelData.state || 'Lagos',
+              country: hotelData.country || 'Nigeria',
               rating: 5.0,
               isLive: false,
+              status: 'pending',
               approvalStatus: 'pending',
+              paymentStatus: 'pending',
+              subscriptionStatus: 'pending',
               roomCount: parseInt(hotelData.roomCount, 10) || 20,
               startingPrice: 35000,
               coverImage:
                 hotelData.coverImage ||
                 'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80',
-              logoImage: hotelData.logoImage,
+              logoImage: hotelData.logoImage || '',
               address: hotelData.address || '',
-              email: hotelData.email || '',
-              phone: hotelData.phone || '',
-              registeredBusiness: hotelData.registeredBusiness,
-              cacNumber: hotelData.cacNumber,
+              email: hotelData.hotelEmail || hotelData.email || '',
+              phone: hotelData.hotelPhone || hotelData.phone || '',
+              ownerName: hotelData.fullName || '',
+              ownerEmail: hotelData.email || '',
+              registeredBusiness: !!hotelData.isRegisteredBusiness || !!hotelData.registeredBusiness,
+              cacNumber: hotelData.cacNumber || '',
               bankName: hotelData.bankName || '',
               accountName: hotelData.accountName || '',
               accountNumber: hotelData.accountNumber || '',
               coordinates: { lat: 6.5244, lng: 3.3792 },
+              submittedAt: new Date().toISOString(),
             };
-            setHotels((prev) => [pendingHotel, ...prev]);
+
+            setHotels((prev) => {
+              const updated = [pendingHotel, ...prev];
+              saveToStorage('igho_db_hotels', updated);
+              return updated;
+            });
+            window.dispatchEvent(new Event('igho_hotels_updated'));
+
+            // Immediately persist to backend server
+            try {
+              fetch('/api/state', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  hotels: [pendingHotel, ...hotels],
+                  rooms,
+                  reservations,
+                  staff,
+                  housekeeping,
+                  invitations,
+                  guestReports,
+                  plans,
+                  platformSettings,
+                  customRoles,
+                  demoRequests,
+                }),
+              }).catch(() => {});
+            } catch {}
           }}
         />
       )}
@@ -1107,7 +1215,30 @@ export default function App() {
       {/* SCREEN 11: STAFF PORTAL (DASHBOARD, ROOM INVENTORY, RESERVATIONS, SETTINGS) */}
       {/* Requirement: Subscription plan after being approved should be the FIRST thing to show before hotel dashboard, unless 1-month free trial with special code */}
       {activeScreen === 'staff_portal' && (
-        !isHotelSubscriptionUnlocked(activeHotelForPMS) ? (
+        ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'].includes((currentUserEmail || '').toLowerCase()) ? (
+          <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center p-6 font-sans">
+            <div className="max-w-md w-full bg-neutral-900 border border-neutral-800 rounded-3xl p-8 text-center space-y-6 shadow-2xl">
+              <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-500 flex items-center justify-center mx-auto">
+                <ShieldAlert className="w-8 h-8" />
+              </div>
+              <div className="space-y-2">
+                <span className="text-[10px] font-mono font-bold tracking-widest uppercase text-rose-400 bg-rose-500/10 px-3 py-1 rounded-full border border-rose-500/20">
+                  Strict Tenant Privacy Barrier
+                </span>
+                <h2 className="text-xl font-black text-white">Hotel PMS Dashboard Restricted</h2>
+                <p className="text-xs text-neutral-400 leading-relaxed">
+                  Hotel operational dashboards contain proprietary tenant operations and guest private records. By strict platform policy, the IGHO Console cannot access or view private hotel dashboards.
+                </p>
+              </div>
+              <button
+                onClick={() => navigateTo('super_admin_console')}
+                className="w-full py-3 rounded-xl bg-white text-black font-extrabold text-xs hover:bg-neutral-200 transition-colors cursor-pointer shadow-sm"
+              >
+                Return to IGHO Console
+              </button>
+            </div>
+          </div>
+        ) : !isHotelSubscriptionUnlocked(activeHotelForPMS) ? (
           <HotelSubscriptionPlanScreen
             hotel={activeHotelForPMS}
             plans={plans}
@@ -1125,6 +1256,7 @@ export default function App() {
         ) : (
           <StaffPortal
             hotel={activeHotelForPMS}
+            currentUserEmail={currentUserEmail}
             rooms={rooms.filter((r) => !r.hotelId || r.hotelId === activeHotelForPMS.id)}
             reservations={reservations.filter((r) => !r.hotelId || r.hotelId === activeHotelForPMS.id)}
             staff={staff.filter((s) => !s.hotelId || s.hotelId === activeHotelForPMS.id)}
@@ -1225,10 +1357,6 @@ export default function App() {
           onUpdateHotels={(updatedHotels) => setHotels(updatedHotels)}
           demoRequests={demoRequests}
           onUpdateDemoRequests={setDemoRequests}
-          onSelectHotel={(h) => {
-            setSelectedHotel(h);
-            navigateTo('staff_portal');
-          }}
         />
       )}
 

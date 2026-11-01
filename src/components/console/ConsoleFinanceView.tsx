@@ -113,6 +113,26 @@ export const ConsoleFinanceView: React.FC<ConsoleFinanceViewProps> = ({
         </button>
       </div>
 
+      {/* Paystack Automated Settlement Engine Notice */}
+      <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+            <CreditCard className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-neutral-900">Paystack Automated Clearing & Subaccount Engine</span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                T+1 SETTLEMENT
+              </span>
+            </div>
+            <p className="text-neutral-600 text-[11px] mt-0.5">
+              All hotel subscription payouts and room transaction revenues are cleared directly through Paystack Subaccounts. Commercial bank accounts are linked via Paystack rather than direct manual bank deposits.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Financial KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
         <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs">

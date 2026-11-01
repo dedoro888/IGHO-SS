@@ -104,11 +104,22 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
       <motion.aside
         animate={{ width: isCollapsed ? 80 : 272 }}
         transition={{ duration: 0.3, ease: 'easeInOut' }}
+        onWheel={(e) => {
+          if (!isCollapsed) {
+            e.stopPropagation();
+          }
+        }}
         className={`${
           isMobile
             ? 'fixed top-0 bottom-0 left-0 h-full w-[272px] z-50 rounded-r-[2rem] border-r shadow-2xl bg-white/95 flex flex-col justify-start pb-6 px-5 pt-4 gap-4'
-            : 'hidden md:flex sticky top-4 h-[calc(100vh-2rem)] ml-4 my-4 flex-col justify-start gap-4 shrink-0 bg-transparent shadow-none border-none px-0'
+            : `hidden md:flex sticky top-4 max-h-[calc(100vh-2rem)] ml-4 my-4 flex-col justify-start gap-4 shrink-0 bg-transparent shadow-none border-none px-0 ${
+                isCollapsed ? 'overflow-visible' : 'overflow-y-auto overscroll-contain pr-1 scrollbar-none'
+              }`
         }`}
+        style={{
+          overscrollBehavior: 'contain',
+          scrollbarWidth: 'none',
+        }}
       >
         {/* SECTION 1: HEADER BRANDING PILL */}
         <div
@@ -188,8 +199,8 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                   isCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px] pr-4'
                 } ${
                   isOrgTab
-                    ? 'bg-black border-white text-white font-bold shadow-md'
-                    : 'bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700'
+                    ? 'bg-black border-white text-white font-bold shadow-md ring-1 ring-white/20'
+                    : 'bg-neutral-900 border-neutral-700 text-neutral-100 hover:text-white hover:bg-black hover:border-neutral-500'
                 }`}
               >
                 <div className="flex items-center justify-start">
@@ -291,11 +302,11 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                     onClick={() => onSelectTab('hotels')}
                     className={`flex items-center h-8 rounded-full border transition-all duration-300 pl-2 pr-4 cursor-pointer w-full ${
                       currentTab === 'hotels'
-                        ? 'bg-black border-white text-white font-bold shadow-md'
-                        : 'bg-black border-neutral-850 text-neutral-400 hover:text-white'
+                        ? 'bg-black border-white text-white font-bold shadow-md ring-1 ring-white/20'
+                        : 'bg-neutral-900 border-neutral-700 text-neutral-100 hover:text-white hover:bg-black'
                     }`}
                   >
-                    <div className="w-5 h-5 rounded-full bg-black border border-neutral-800 flex items-center justify-center shrink-0">
+                    <div className="w-5 h-5 rounded-full bg-black border border-neutral-700 flex items-center justify-center shrink-0">
                       <Building2 className="w-3 h-3 text-white" />
                     </div>
                     <span className="text-[10px] font-bold whitespace-nowrap ml-2">Hotels & Stay</span>
@@ -305,8 +316,8 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                     onClick={() => onSelectTab('schools')}
                     className={`flex items-center h-8 rounded-full border transition-all duration-300 pl-2 pr-4 cursor-pointer w-full ${
                       currentTab === 'schools'
-                        ? 'bg-neutral-900 border-white text-white font-bold shadow-md'
-                        : 'bg-black border-neutral-850 text-neutral-400 hover:text-white'
+                        ? 'bg-black border-white text-white font-bold shadow-md ring-1 ring-white/20'
+                        : 'bg-neutral-900 border-neutral-700 text-neutral-100 hover:text-white hover:bg-black'
                     }`}
                   >
                     <div className="w-5 h-5 rounded-full bg-white border border-black flex items-center justify-center shrink-0">
@@ -319,8 +330,8 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                     onClick={() => onSelectTab('hospitals')}
                     className={`flex items-center h-8 rounded-full border transition-all duration-300 pl-2 pr-4 cursor-pointer w-full ${
                       currentTab === 'hospitals'
-                        ? 'bg-neutral-900 border-white text-white font-bold shadow-md'
-                        : 'bg-black border-neutral-850 text-neutral-400 hover:text-white'
+                        ? 'bg-black border-white text-white font-bold shadow-md ring-1 ring-white/20'
+                        : 'bg-neutral-900 border-neutral-700 text-neutral-100 hover:text-white hover:bg-black'
                     }`}
                   >
                     <div className="w-5 h-5 rounded-full bg-white border border-black flex items-center justify-center shrink-0">
@@ -353,8 +364,8 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                         isCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px] pr-4'
                       } ${
                         isActive
-                          ? 'bg-black border-white text-white font-bold shadow-md'
-                          : 'bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700'
+                          ? 'bg-black border-white text-white font-bold shadow-md ring-1 ring-white/20'
+                          : 'bg-neutral-900 border-neutral-700 text-neutral-100 hover:text-white hover:bg-black hover:border-neutral-500'
                       }`}
                     >
                       {/* Locked Anchor Icon container */}

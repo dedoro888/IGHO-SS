@@ -122,6 +122,7 @@ interface StaffPortalProps {
   onUpdateReportStatus?: (reportId: string, status: GuestReport['status'], feedback?: string) => void;
   onUpgradeSubscription?: (planId: string, billingCycle: 'monthly' | 'annual') => void;
   onAddBranch?: (branch: HotelBranch) => void;
+  currentUserEmail?: string;
   onUpdateHotel?: (updatedHotel: Hotel) => void;
   onNavigate: (screen: ActiveScreen) => void;
 }
@@ -139,6 +140,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   plans,
   payoutSettings,
   currentStaff,
+  currentUserEmail,
   onAddRoom,
   onUpdateRoom,
   onDeleteRoom,
@@ -158,6 +160,39 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   onUpdateHotel,
   onNavigate,
 }) => {
+  // STRICT TENANT PRIVACY BARRIER:
+  // IGHO Platform Super Admins must not access or view a private hotel tenant's operational PMS dashboard
+  const isSuperAdmin = ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'].includes(
+    (currentUserEmail || '').toLowerCase()
+  );
+
+  if (isSuperAdmin) {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center p-6 font-sans">
+        <div className="max-w-md w-full bg-neutral-900 border border-neutral-800 rounded-3xl p-8 text-center space-y-6 shadow-2xl">
+          <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-500 flex items-center justify-center mx-auto">
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+          <div className="space-y-2">
+            <span className="text-[10px] font-mono font-bold tracking-widest uppercase text-rose-400 bg-rose-500/10 px-3 py-1 rounded-full border border-rose-500/20">
+              Strict Tenant Privacy Barrier
+            </span>
+            <h2 className="text-xl font-black text-white">Hotel PMS Dashboard Restricted</h2>
+            <p className="text-xs text-neutral-400 leading-relaxed">
+              Hotel operational dashboards contain proprietary tenant operations, guest privacy records, and front-desk accounts. By strict platform policy, the IGHO Console cannot access or view private hotel dashboards.
+            </p>
+          </div>
+          <button
+            onClick={() => onNavigate('super_admin_console')}
+            className="w-full py-3 rounded-xl bg-white text-black font-extrabold text-xs hover:bg-neutral-200 transition-colors cursor-pointer shadow-sm"
+          >
+            Return to IGHO Console
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Navigation tabs (persisted so page refresh doesn't reset active tab)
   const [activeTab, setActiveTab] = useState<
     'dashboard' | 'reservations' | 'rooms' | 'guests' | 'billing' | 'subscriptions' | 'housekeeping' | 'inquiries' | 'reports' | 'users' | 'settings'
@@ -863,7 +898,20 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
       <motion.aside
         animate={{ width: sidebarCollapsed ? 80 : 272 }}
         transition={{ duration: 0.3, ease: 'easeInOut' }}
-        className="hidden md:flex sticky top-4 h-[calc(100vh-2rem)] ml-4 my-4 flex-col justify-start gap-3 shrink-0 bg-transparent shadow-none border-none px-0 z-30"
+        onWheel={(e) => {
+          if (!sidebarCollapsed) {
+            e.stopPropagation();
+          }
+        }}
+        className={`hidden md:flex ml-4 my-4 flex-col justify-start gap-3 shrink-0 bg-transparent shadow-none border-none px-0 z-30 self-start ${
+          sidebarCollapsed
+            ? 'sticky top-4 h-fit overflow-visible'
+            : 'sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto overscroll-contain pr-1 scrollbar-none'
+        }`}
+        style={{
+          overscrollBehavior: 'contain',
+          scrollbarWidth: 'none',
+        }}
       >
         {/* SECTION 1: HEADER BRANDING PILL */}
         <div className="flex flex-row items-center justify-between w-full shrink-0 relative bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-4 h-16">
@@ -905,8 +953,8 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
           )}
         </div>
 
-        {/* SECTION 2: NAVIGATION & SCROLLABLE OPERATIONS LIST (All 11 items visible & scrollable) */}
-        <div className="flex flex-col flex-1 min-h-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-3 overflow-y-auto space-y-1 scrollbar-thin scrollbar-thumb-neutral-300">
+        {/* SECTION 2: NAVIGATION OPERATIONS LIST (All 11 items visible naturally without inner scroll wheel) */}
+        <div className="flex flex-col w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-3 space-y-1">
           <div className={`text-[10px] font-bold text-neutral-400 uppercase tracking-widest font-mono flex items-center justify-center shrink-0 h-4 mb-0.5 ${sidebarCollapsed ? 'px-2' : 'pl-3'}`}>
             {sidebarCollapsed ? (
               <div className="w-4 h-[1px] bg-neutral-200/60" />
@@ -927,10 +975,10 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                     sidebarCollapsed ? 'w-8.5 justify-center p-0' : 'w-full justify-start pl-[4px] pr-3'
                   } ${
                     isActive
-                      ? 'bg-black border-white text-white font-bold shadow-md'
+                      ? 'bg-black border-white text-white font-bold shadow-md ring-1 ring-white/20'
                       : hasAccess
-                      ? 'bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700'
-                      : 'border-neutral-900/40 bg-neutral-950/40 text-neutral-600 cursor-not-allowed'
+                      ? 'bg-neutral-900 border-neutral-700 text-neutral-100 hover:text-white hover:bg-black hover:border-neutral-500'
+                      : 'border-neutral-800 bg-neutral-900/80 text-neutral-400 cursor-not-allowed'
                   }`}
                 >
                   <div className="w-8.5 h-8.5 flex items-center justify-center shrink-0">
