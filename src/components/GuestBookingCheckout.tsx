@@ -14,12 +14,14 @@ import {
   BookmarkCheck,
   Save,
   FileCode,
+  Shield,
 } from 'lucide-react';
 import { Room, Hotel, Reservation, ActiveScreen, CustomerProfile } from '../types';
 import { BackButton } from './BackButton';
 import { GuestAccountNavMenu } from './GuestAccountNavMenu';
 import { saveCustomerProfile } from '../utils/auth';
 import { getRoomLevelInfo } from '../utils/roomCategories';
+import { IghoLoadingEmblem } from './IghoLogo';
 
 interface GuestBookingCheckoutProps {
   room: Room;
@@ -37,6 +39,7 @@ interface GuestBookingCheckoutProps {
   currentGuestProfile?: CustomerProfile | null;
   onSignOut?: () => void;
   onEditProfile?: () => void;
+  isSuperAdmin?: boolean;
 }
 
 export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
@@ -49,6 +52,7 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
   currentGuestProfile,
   onSignOut,
   onEditProfile,
+  isSuperAdmin = false,
 }) => {
   const [subStep, setSubStep] = useState<'details' | 'payment'>('details');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -310,6 +314,17 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {isSuperAdmin && (
+            <button
+              onClick={() => onNavigate('super_admin_console')}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+              title="Access IGHO Platform Super Admin Console"
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>IGHO Console</span>
+            </button>
+          )}
+
           <GuestAccountNavMenu
             currentUserEmail={currentUserEmail}
             currentGuestProfile={currentGuestProfile}
@@ -317,6 +332,7 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
             onSignOut={onSignOut}
             onEditProfile={onEditProfile}
             signInLabel="Sign in"
+            isSuperAdmin={isSuperAdmin}
           />
         </div>
       </header>
@@ -460,9 +476,7 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
                   className="w-full bg-black text-white py-3 rounded-full font-bold text-xs hover:bg-neutral-800 transition-all flex items-center justify-center gap-2 active:scale-95 shadow-sm"
                 >
                   {isProcessing ? (
-                    <span className="flex items-center gap-2">
-                      <RefreshCw className="w-4 h-4 animate-spin" /> Creating booking...
-                    </span>
+                    <IghoLoadingEmblem size="xs" speed="fast" />
                   ) : (
                     'Continue to payment'
                   )}
@@ -769,9 +783,7 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
               className="w-full bg-black text-white py-3.5 rounded-full font-bold text-xs sm:text-sm hover:bg-neutral-800 transition-all flex items-center justify-center gap-2 active:scale-95 shadow-md"
             >
               {isProcessing ? (
-                <span className="flex items-center gap-2">
-                  <RefreshCw className="w-4 h-4 animate-spin" /> Uploading...
-                </span>
+                <IghoLoadingEmblem size="xs" speed="fast" />
               ) : (
                 'Submit for verification'
               )}

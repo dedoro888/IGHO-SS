@@ -18,6 +18,7 @@ import {
 import { Hotel, SubscriptionPlan, ActiveScreen, TrialToken } from '../types';
 import { BackButton } from './BackButton';
 import { PaystackSubscriptionModal } from './PaystackSubscriptionModal';
+import { IghoLoadingEmblem } from './IghoLogo';
 
 interface HotelSubscriptionPlanScreenProps {
   hotel: Hotel;
@@ -387,10 +388,7 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
                 className="w-full py-3 px-4 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-extrabold text-xs sm:text-sm rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer active:scale-98"
               >
                 {isActivatingTrial ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-                    <span>Verifying Code & Activating...</span>
-                  </>
+                  <IghoLoadingEmblem size="xs" inverted={true} speed="fast" />
                 ) : trialSuccessMessage ? (
                   <>
                     <Check className="w-4 h-4 text-black" />

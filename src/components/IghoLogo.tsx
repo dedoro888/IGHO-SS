@@ -126,3 +126,6 @@ export const IghoLogo: React.FC<IghoLogoProps> = ({
   );
 };
 
+export { IghoLoadingEmblem, IghoLoadingSpinner } from './IghoLoadingEmblem';
+export type { IghoLoadingEmblemProps, IghoLoadingSpinnerProps } from './IghoLoadingEmblem';
+

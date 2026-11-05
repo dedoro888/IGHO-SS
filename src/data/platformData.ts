@@ -92,16 +92,6 @@ export const INITIAL_PLATFORM_USERS: PlatformUser[] = [
     createdAt: '2026-01-01',
     lastActivity: 'Active Now',
   },
-  {
-    id: 'user-002',
-    name: 'dedoro888',
-    email: 'dedoro888@gmail.com',
-    role: 'super_admin',
-    organizationName: 'IGHO Software Systems',
-    status: 'active',
-    createdAt: '2026-01-01',
-    lastActivity: 'Active Now',
-  },
 ];
 
 export const INITIAL_PRODUCTS: PlatformProduct[] = [

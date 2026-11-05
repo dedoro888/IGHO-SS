@@ -20,6 +20,7 @@ import {
   Info,
 } from 'lucide-react';
 import { Hotel, Room, Reservation, StaffAccount } from '../../types';
+import { IghoLoadingEmblem } from '../IghoLogo';
 
 interface ConsoleStorageViewProps {
   hotels: Hotel[];
@@ -233,9 +234,14 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
 
         <button
           onClick={handleRefresh}
-          className="flex items-center gap-2 px-4 py-2 rounded-full border border-neutral-250 bg-white hover:bg-neutral-50 text-xs font-bold text-neutral-700 transition-all cursor-pointer active:scale-95 shadow-3xs"
+          disabled={loading}
+          className="flex items-center gap-2 px-4 py-2 rounded-full border border-neutral-250 bg-white hover:bg-neutral-50 text-xs font-bold text-neutral-700 transition-all cursor-pointer active:scale-95 shadow-3xs disabled:opacity-75"
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          {loading ? (
+            <IghoLoadingEmblem size="xs" speed="fast" />
+          ) : (
+            <RefreshCw className="w-3.5 h-3.5" />
+          )}
           <span>Sync Real-Time Metrics</span>
         </button>
       </div>
@@ -245,16 +251,12 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
           /* LOADING SIMULATION PANEL */
           <motion.div
             key="loading"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="bg-white border border-neutral-200 rounded-3xl p-12 flex flex-col items-center justify-center text-center shadow-3xs h-[380px]"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="flex items-center justify-center h-[380px]"
           >
-            <Server className="w-10 h-10 text-neutral-300 animate-pulse mb-3" />
-            <h3 className="text-sm font-extrabold text-neutral-900">Fetching Storage Allocations</h3>
-            <p className="text-xs text-neutral-400 max-w-[280px] mt-1.5">
-              Reconciling cloud metadata bucket and parsing transaction volumes from database schemas...
-            </p>
+            <IghoLoadingEmblem size="xl" className="w-16 h-16" />
           </motion.div>
         ) : (
           <motion.div

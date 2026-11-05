@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { User, LogOut, Calendar, ChevronDown, Shield, Check } from 'lucide-react';
 import { CustomerProfile, ActiveScreen } from '../types';
-import { SUPER_ADMIN_EMAIL } from '../utils/auth';
 
 interface GuestAccountNavMenuProps {
   currentUserEmail?: string;
@@ -11,6 +10,7 @@ interface GuestAccountNavMenuProps {
   onEditProfile?: () => void;
   signInLabel?: string;
   className?: string;
+  isSuperAdmin?: boolean;
 }
 
 export const GuestAccountNavMenu: React.FC<GuestAccountNavMenuProps> = ({
@@ -21,12 +21,12 @@ export const GuestAccountNavMenu: React.FC<GuestAccountNavMenuProps> = ({
   onEditProfile,
   signInLabel = 'Sign in',
   className = '',
+  isSuperAdmin = false,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const isLoggedIn = Boolean(currentUserEmail && currentUserEmail.trim() !== '');
-  const isSuperAdmin = currentUserEmail?.trim().toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
 
   // Close when clicking outside
   useEffect(() => {
@@ -142,7 +142,20 @@ export const GuestAccountNavMenu: React.FC<GuestAccountNavMenuProps> = ({
           </div>
 
           {/* Menu Actions */}
-          <div className="space-y-0.5">
+          <div className="space-y-1">
+            {isSuperAdmin && (
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  onNavigate('super_admin_console');
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors text-left cursor-pointer border border-emerald-200"
+              >
+                <Shield className="w-3.5 h-3.5 text-emerald-600" />
+                <span>IGHO Super Admin Console</span>
+              </button>
+            )}
+
             <button
               onClick={handleEditProfileClick}
               className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-neutral-700 hover:text-black hover:bg-neutral-100 rounded-xl transition-colors text-left cursor-pointer"
@@ -158,19 +171,6 @@ export const GuestAccountNavMenu: React.FC<GuestAccountNavMenuProps> = ({
               <Calendar className="w-3.5 h-3.5 text-neutral-500" />
               <span>My bookings & stays</span>
             </button>
-
-            {isSuperAdmin && (
-              <button
-                onClick={() => {
-                  setMenuOpen(false);
-                  onNavigate('super_admin_console');
-                }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-50 rounded-xl transition-colors text-left cursor-pointer"
-              >
-                <Shield className="w-3.5 h-3.5 text-blue-600" />
-                <span>IGHO Super Admin Console</span>
-              </button>
-            )}
 
             <div className="border-t border-neutral-100 my-1 pt-1" />
 

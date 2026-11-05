@@ -23,6 +23,7 @@ interface HotelGuestPortalProps {
   currentGuestProfile?: CustomerProfile | null;
   onSignOut?: () => void;
   onEditProfile?: () => void;
+  isSuperAdmin?: boolean;
 }
 
 export const HotelGuestPortal: React.FC<HotelGuestPortalProps> = ({
@@ -34,6 +35,7 @@ export const HotelGuestPortal: React.FC<HotelGuestPortalProps> = ({
   currentGuestProfile,
   onSignOut,
   onEditProfile,
+  isSuperAdmin = false,
 }) => {
   const [selectedType, setSelectedType] = useState<string>('all');
 
@@ -48,7 +50,7 @@ export const HotelGuestPortal: React.FC<HotelGuestPortalProps> = ({
   // Resolve user role to allow quick return to Console / Staff Portal
   const effectiveEmail = currentUserEmail || (typeof window !== 'undefined' ? localStorage.getItem('igho_currentStaffEmail') : '') || '';
   const account = effectiveEmail ? resolveUserAccount(effectiveEmail) : null;
-  const showReturnButton = account && account.role !== 'customer';
+  const showReturnButton = isSuperAdmin || (account && account.role !== 'customer');
 
   return (
     <div className="min-h-screen bg-white text-neutral-900 flex flex-col justify-between">
@@ -71,7 +73,7 @@ export const HotelGuestPortal: React.FC<HotelGuestPortalProps> = ({
           {showReturnButton && (
             <button
               onClick={() => {
-                if (account.role === 'super_admin') {
+                if (isSuperAdmin) {
                   onNavigate('super_admin_console');
                 } else {
                   onNavigate('staff_portal');
@@ -79,7 +81,7 @@ export const HotelGuestPortal: React.FC<HotelGuestPortalProps> = ({
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-[#10b981]/10 hover:bg-[#10b981]/20 border border-[#10b981]/25 text-[#10b981] rounded-lg text-xs font-bold transition-all shadow-3xs cursor-pointer"
             >
-              <span>← Return to {account.role === 'super_admin' ? 'Console' : 'Dashboard'}</span>
+              <span>← Return to {isSuperAdmin ? 'Console' : 'Dashboard'}</span>
             </button>
           )}
 
@@ -105,6 +107,7 @@ export const HotelGuestPortal: React.FC<HotelGuestPortalProps> = ({
             onSignOut={onSignOut}
             onEditProfile={onEditProfile}
             signInLabel="Login / Register"
+            isSuperAdmin={isSuperAdmin}
           />
         </div>
       </header>

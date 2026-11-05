@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert, Lock, Eye, EyeOff, CheckCircle2, X, AlertCircle } from 'lucide-react';
 import {
   ActiveScreen,
   Hotel,
@@ -23,9 +23,11 @@ import {
   INITIAL_HOUSEKEEPING,
 } from './data/mockData';
 import { INITIAL_PLANS, INITIAL_PLATFORM_SETTINGS } from './data/platformData';
-import { resolveUserAccount, SUPER_ADMIN_EMAIL, getSavedCustomerProfile, saveCustomerProfile } from './utils/auth';
+import { resolveUserAccount, getSavedCustomerProfile, saveCustomerProfile } from './utils/auth';
 import { broadcastLiveRoomAction, subscribeToLiveEvents } from './utils/realtime';
-import { authService } from './lib/authService';
+import { authService, HardenedResolvedAuthAccount } from './lib/authService';
+import { ResolvedAuthAccount } from './types';
+
 
 // Core Components
 import { LandingPage } from './components/LandingPage';
@@ -124,6 +126,24 @@ export default function App() {
     return loadFromStorage('igho_currentStaffEmail', 'admin@lavahotels.ng');
   });
 
+  // Sole authority for Platform Super Admin status: verified against public.platform_roles
+  const [isSuperAdmin, setIsSuperAdmin] = useState<boolean>(false);
+  const [isVerifyingSuperAdmin, setIsVerifyingSuperAdmin] = useState<boolean>(true);
+
+  // Password Recovery Modal State (triggered by Supabase password reset link)
+  const [showPasswordRecoveryModal, setShowPasswordRecoveryModal] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.location.hash.includes('type=recovery');
+    }
+    return false;
+  });
+  const [recoveryNewPassword, setRecoveryNewPassword] = useState<string>('');
+  const [recoveryConfirmPassword, setRecoveryConfirmPassword] = useState<string>('');
+  const [recoveryShowPassword, setRecoveryShowPassword] = useState<boolean>(false);
+  const [recoveryLoading, setRecoveryLoading] = useState<boolean>(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [recoverySuccess, setRecoverySuccess] = useState<boolean>(false);
+
   useEffect(() => {
     saveToStorage('igho_currentUserEmail', currentUserEmail);
     if (currentUserEmail) {
@@ -149,16 +169,83 @@ export default function App() {
     authService.onAuthStateChange((event, session) => {
       const currentSeq = ++authSeqRef.current;
 
+      if (event === 'PASSWORD_RECOVERY') {
+        setShowPasswordRecoveryModal(true);
+      }
+
       if (event === 'SIGNED_OUT' || !session?.user) {
+        authService.setActiveUserId(null);
         if (authSeqRef.current === currentSeq) {
           setCurrentUserEmail('');
           setCurrentGuestProfile(null);
+          setIsSuperAdmin(false);
+          setIsVerifyingSuperAdmin(false);
+          setActiveScreen((prev) => (prev === 'super_admin_console' ? 'landing' : prev));
+          if (window.location.hash.toLowerCase() === '#console' || window.location.hash.toLowerCase() === '#/console') {
+            window.location.hash = '';
+          }
         }
       } else if (session?.user?.email) {
         const authEmail = session.user.email.toLowerCase();
+        const userId = session.user.id;
+        authService.setActiveUserId(userId);
+
         if (authSeqRef.current === currentSeq) {
           setCurrentUserEmail(authEmail);
+          setIsVerifyingSuperAdmin(true);
         }
+
+        // Authoritative verification: queries public.profiles (active account_status) and public.platform_roles (super_admin role)
+        authService.resolveAuthenticatedUser(userId, authEmail).then((resolved) => {
+          if (authSeqRef.current === currentSeq) {
+            // Guard against stale user resolution overwriting current session
+            if (resolved.userId !== userId) {
+              return;
+            }
+            const verified = Boolean(resolved.isSuperAdmin && resolved.accessGranted);
+            setIsSuperAdmin(verified);
+            setIsVerifyingSuperAdmin(false);
+
+            const hash = window.location.hash.toLowerCase();
+            const wantsConsole = hash === '#console' || hash === '#/console';
+
+            if (verified) {
+              window.location.hash = 'console';
+              setActiveScreen((prev) => {
+                // When Super Admin authenticates, immediately route to IGHO console if on landing, login or directory
+                if (
+                  prev === 'landing' ||
+                  prev === 'guest_login' ||
+                  prev === 'staff_login' ||
+                  prev === 'hotel_guest_portal' ||
+                  wantsConsole
+                ) {
+                  return 'super_admin_console';
+                }
+                return prev;
+              });
+            } else {
+              // Denied: clear console hash and redirect if on console
+              if (wantsConsole) {
+                window.location.hash = '';
+              }
+              setActiveScreen((prev) => {
+                if (prev === 'super_admin_console') return 'landing';
+                if (prev === 'guest_login' || prev === 'staff_login') return 'landing';
+                return prev;
+              });
+            }
+          }
+        }).catch(() => {
+          if (authSeqRef.current === currentSeq) {
+            setIsSuperAdmin(false);
+            setIsVerifyingSuperAdmin(false);
+            if (window.location.hash.toLowerCase() === '#console' || window.location.hash.toLowerCase() === '#/console') {
+              window.location.hash = '';
+            }
+            setActiveScreen((prev) => (prev === 'super_admin_console' ? 'landing' : prev));
+          }
+        });
       }
     }).then((sub) => {
       if (sub && (sub as any).data?.subscription) {
@@ -172,10 +259,11 @@ export default function App() {
   }, []);
 
   // Active Screen (persisted so refresh does not log the user out or return to landing)
+  // Super Admin Console verifies database role during verification state
   const [activeScreen, setActiveScreen] = useState<ActiveScreen>(() => {
     if (typeof window !== 'undefined') {
       const hash = window.location.hash.toLowerCase();
-      if (hash === '#console' || hash === '#/console' || window.location.pathname === '/console') {
+      if (hash === '#console' || hash === '#/console') {
         return 'super_admin_console';
       }
       try {
@@ -198,34 +286,47 @@ export default function App() {
   useEffect(() => {
     const handleHashRouting = () => {
       const hash = window.location.hash.toLowerCase();
-      const superAdminEmails = ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'];
       if (hash === '#console' || hash === '#/console' || window.location.pathname === '/console') {
-        if (superAdminEmails.includes(currentUserEmail.toLowerCase())) {
+        if (isVerifyingSuperAdmin) {
+          // While verifying against Supabase database, mount console so database verification gate runs
+          if (activeScreen !== 'super_admin_console') {
+            setActiveScreen('super_admin_console');
+          }
+          return;
+        }
+        if (isSuperAdmin) {
           setActiveScreen('super_admin_console');
         } else {
-          // Strictly block non-super-admins from /console
+          // Strictly fail closed: block non-super-admins from /console
           window.location.hash = '';
-          setActiveScreen('landing');
+          if (activeScreen === 'super_admin_console') {
+            setActiveScreen('landing');
+          }
         }
       }
     };
     handleHashRouting();
     window.addEventListener('hashchange', handleHashRouting);
     return () => window.removeEventListener('hashchange', handleHashRouting);
-  }, [currentUserEmail]);
+  }, [isSuperAdmin, isVerifyingSuperAdmin, activeScreen]);
 
   const navigateTo = (screen: ActiveScreen, authEmail?: string) => {
     const emailToCheck = (authEmail || currentUserEmail || '').trim().toLowerCase();
-    const superAdminEmails = ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'];
 
     if (screen === 'super_admin_console') {
-      if (!superAdminEmails.includes(emailToCheck)) {
-        alert('Access Denied: IGHO Console is strictly restricted to authorized IGHO Platform Super Admins.');
+      if (isVerifyingSuperAdmin) {
+        // Authoritative verification is in progress: transition to console and let the database verification gate resolve
+        window.location.hash = 'console';
+        setActiveScreen('super_admin_console');
+        return;
+      }
+      if (!isSuperAdmin) {
+        alert('Access Denied: IGHO Console is strictly restricted to authorized IGHO Platform Super Admins verified in the database.');
         return;
       }
       window.location.hash = 'console';
     } else if (screen === 'staff_portal') {
-      if (superAdminEmails.includes(emailToCheck)) {
+      if (isSuperAdmin) {
         alert('Access Restricted: Hotel management dashboards are private to hotel staff. The IGHO Console cannot access or impersonate individual hotel operational portals.');
         return;
       }
@@ -250,14 +351,18 @@ export default function App() {
     // Invalidate any in-flight asynchronous auth callbacks immediately
     authSeqRef.current++;
 
-    // Clear Supabase session
+    // Clear Supabase session and reset active user in authService
+    authService.setActiveUserId(null);
     authService.signOut().catch((err) => {
       console.warn('[App] Supabase signOut notice:', err);
     });
 
     setCurrentUserEmail('');
     setCurrentGuestProfile(null);
+    setIsSuperAdmin(false);
+    setIsVerifyingSuperAdmin(false);
     try {
+      window.location.hash = '';
       localStorage.removeItem('igho_currentUserEmail');
       localStorage.setItem('igho_active_screen', 'landing');
     } catch {}
@@ -269,7 +374,11 @@ export default function App() {
     navigateTo('guest_dashboard');
   };
 
-  const handleLoginSuccess = (email: string, profile?: CustomerProfile) => {
+  const handleLoginSuccess = (
+    email: string,
+    profile?: CustomerProfile,
+    resolvedAuth?: HardenedResolvedAuthAccount | ResolvedAuthAccount
+  ) => {
     const cleanEmail = email.trim().toLowerCase();
     setCurrentUserEmail(cleanEmail);
 
@@ -296,10 +405,17 @@ export default function App() {
       }
     }
 
+    // Direct database-verified resolution from Supabase:
+    if (resolvedAuth?.isSuperAdmin || isSuperAdmin) {
+      setIsSuperAdmin(true);
+      setIsVerifyingSuperAdmin(false);
+      window.location.hash = 'console';
+      setActiveScreen('super_admin_console');
+      return;
+    }
+
     const account = resolveUserAccount(cleanEmail, profile);
-    if (account.role === 'super_admin') {
-      navigateTo('super_admin_console', cleanEmail);
-    } else if (
+    if (
       account.targetScreen === 'staff_portal' ||
       account.role === 'hotel_owner' ||
       account.role === 'hotel_manager' ||
@@ -319,8 +435,7 @@ export default function App() {
       setCurrentStaffEmail(cleanEmail);
       navigateTo('staff_portal', cleanEmail);
     } else {
-      // User request: when regular users sign in or create an account, take them back to the home page (landing)
-      // where they can view live hotels or explore whatever they want, rather than dumping them into an empty dashboard.
+      // Default to landing page
       navigateTo('landing', cleanEmail);
     }
   };
@@ -1005,6 +1120,7 @@ export default function App() {
           currentGuestProfile={currentGuestProfile}
           onSignOut={handleGuestSignOut}
           onEditProfile={handleEditProfile}
+          isSuperAdmin={isSuperAdmin}
         />
       )}
 
@@ -1099,6 +1215,7 @@ export default function App() {
             navigateTo('hotel_guest_portal');
           }}
           onNavigate={navigateTo}
+          isSuperAdmin={isSuperAdmin}
         />
       )}
 
@@ -1116,6 +1233,7 @@ export default function App() {
             navigateTo('room_detail');
           }}
           onNavigate={navigateTo}
+          isSuperAdmin={isSuperAdmin}
         />
       )}
 
@@ -1131,6 +1249,7 @@ export default function App() {
           onEditProfile={handleEditProfile}
           onSelectRoom={setSelectedRoom}
           onNavigate={navigateTo}
+          isSuperAdmin={isSuperAdmin}
           onStartBooking={(draft) => {
             setBookingDraft(draft);
             navigateTo('guest_checkout');
@@ -1148,6 +1267,7 @@ export default function App() {
           currentGuestProfile={currentGuestProfile}
           onSignOut={handleGuestSignOut}
           onEditProfile={handleEditProfile}
+          isSuperAdmin={isSuperAdmin}
           onCompleteBooking={(res) => {
             handleAddReservation(res);
           }}
@@ -1164,6 +1284,7 @@ export default function App() {
           currentUserEmail={currentUserEmail}
           guestProfile={currentGuestProfile}
           initialTab={guestDashboardTab}
+          isSuperAdmin={isSuperAdmin}
           onUpdateGuestProfile={(updated) => {
             setCurrentGuestProfile(updated);
             saveCustomerProfile(updated);
@@ -1191,6 +1312,7 @@ export default function App() {
           onEditProfile={handleEditProfile}
           onLoginSuccess={handleLoginSuccess}
           onNavigate={navigateTo}
+          isSuperAdmin={isSuperAdmin}
         />
       )}
 
@@ -1215,7 +1337,7 @@ export default function App() {
       {/* SCREEN 11: STAFF PORTAL (DASHBOARD, ROOM INVENTORY, RESERVATIONS, SETTINGS) */}
       {/* Requirement: Subscription plan after being approved should be the FIRST thing to show before hotel dashboard, unless 1-month free trial with special code */}
       {activeScreen === 'staff_portal' && (
-        ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'].includes((currentUserEmail || '').toLowerCase()) ? (
+        isSuperAdmin ? (
           <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center p-6 font-sans">
             <div className="max-w-md w-full bg-neutral-900 border border-neutral-800 rounded-3xl p-8 text-center space-y-6 shadow-2xl">
               <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-500 flex items-center justify-center mx-auto">
@@ -1313,6 +1435,7 @@ export default function App() {
               );
             }}
             onNavigate={navigateTo}
+            isSuperAdmin={isSuperAdmin}
           />
         )
       )}
@@ -1339,6 +1462,8 @@ export default function App() {
       {activeScreen === 'super_admin_console' && (
         <SuperAdminConsole
           currentUserEmail={currentUserEmail}
+          isSuperAdmin={isSuperAdmin}
+          isVerifying={isVerifyingSuperAdmin}
           hotels={hotels}
           rooms={rooms}
           reservations={reservations}
@@ -1388,6 +1513,152 @@ export default function App() {
             <span className="text-[10px] text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded-full font-bold border border-emerald-800 shrink-0">
               LIVE SYNC
             </span>
+          </div>
+        </div>
+      )}
+      {/* SUPABASE PASSWORD RECOVERY / RESET MODAL */}
+      {showPasswordRecoveryModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white text-black rounded-2xl p-6 sm:p-7 max-w-sm w-full border border-neutral-200 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150 relative">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-black text-white flex items-center justify-center">
+                  <Lock className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-neutral-900">Set New Password</h3>
+                  <p className="text-[11px] text-neutral-500">IGHO Software Systems Security</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPasswordRecoveryModal(false);
+                  setRecoveryError(null);
+                  setRecoverySuccess(false);
+                  if (window.location.hash.includes('type=recovery')) {
+                    window.location.hash = '';
+                  }
+                }}
+                className="p-1 rounded-full text-neutral-400 hover:text-black hover:bg-neutral-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {recoverySuccess ? (
+              <div className="py-4 text-center space-y-3">
+                <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto border border-emerald-200">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-sm font-bold text-neutral-900">Password Updated Successfully!</h4>
+                  <p className="text-xs text-neutral-500">Your account credentials have been updated in Supabase Auth.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPasswordRecoveryModal(false);
+                    setRecoverySuccess(false);
+                    if (isSuperAdmin) {
+                      navigateTo('super_admin_console');
+                    } else {
+                      navigateTo('landing');
+                    }
+                  }}
+                  className="w-full py-2.5 bg-black text-white font-bold text-xs rounded-xl hover:bg-neutral-800 transition-colors cursor-pointer"
+                >
+                  Continue to IGHO
+                </button>
+              </div>
+            ) : (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setRecoveryError(null);
+                  if (recoveryNewPassword.length < 6) {
+                    setRecoveryError('Password must be at least 6 characters.');
+                    return;
+                  }
+                  if (recoveryNewPassword !== recoveryConfirmPassword) {
+                    setRecoveryError('Passwords do not match.');
+                    return;
+                  }
+                  setRecoveryLoading(true);
+                  try {
+                    const { error } = await authService.updateUserPassword(recoveryNewPassword);
+                    setRecoveryLoading(false);
+                    if (error) {
+                      setRecoveryError(error.message || 'Failed to update password.');
+                    } else {
+                      setRecoverySuccess(true);
+                      setRecoveryNewPassword('');
+                      setRecoveryConfirmPassword('');
+                    }
+                  } catch (err: any) {
+                    setRecoveryLoading(false);
+                    setRecoveryError(err?.message || 'Error communicating with Supabase Auth.');
+                  }
+                }}
+                className="space-y-3 text-xs"
+              >
+                <p className="text-xs text-neutral-600 leading-relaxed">
+                  Enter your new password below. This will update your login credentials in Supabase Auth.
+                </p>
+
+                {recoveryError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <span>{recoveryError}</span>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-neutral-700">New Password</label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+                    <input
+                      type={recoveryShowPassword ? 'text' : 'password'}
+                      required
+                      value={recoveryNewPassword}
+                      onChange={(e) => setRecoveryNewPassword(e.target.value)}
+                      placeholder="Minimum 6 characters"
+                      className="w-full pl-9 pr-9 py-2.5 rounded-xl border border-neutral-200 text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setRecoveryShowPassword(!recoveryShowPassword)}
+                      className="absolute right-3 top-2.5 text-neutral-400 hover:text-black cursor-pointer"
+                    >
+                      {recoveryShowPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-neutral-700">Confirm New Password</label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+                    <input
+                      type={recoveryShowPassword ? 'text' : 'password'}
+                      required
+                      value={recoveryConfirmPassword}
+                      onChange={(e) => setRecoveryConfirmPassword(e.target.value)}
+                      placeholder="Re-enter password"
+                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-neutral-200 text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={recoveryLoading}
+                  className="w-full bg-black text-white py-2.5 rounded-full font-bold text-xs hover:bg-neutral-800 transition-all active:scale-[0.99] mt-2 cursor-pointer disabled:opacity-50"
+                >
+                  {recoveryLoading ? 'Updating Password...' : 'Save New Password'}
+                </button>
+              </form>
+            )}
           </div>
         </div>
       )}

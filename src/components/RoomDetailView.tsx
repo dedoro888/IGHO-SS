@@ -55,6 +55,7 @@ interface RoomDetailViewProps {
   currentGuestProfile?: CustomerProfile | null;
   onSignOut?: () => void;
   onEditProfile?: () => void;
+  isSuperAdmin?: boolean;
 }
 
 export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
@@ -68,6 +69,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
   currentGuestProfile,
   onSignOut,
   onEditProfile,
+  isSuperAdmin = false,
 }) => {
   const [checkIn, setCheckIn] = useState('2026-09-08');
   const [checkOut, setCheckOut] = useState('2026-09-09');
@@ -153,7 +155,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
 
         {(() => {
           const account = currentUserEmail ? resolveUserAccount(currentUserEmail) : null;
-          const showReturnButton = account && account.role !== 'customer';
+          const showReturnButton = isSuperAdmin || (account && account.role !== 'customer');
           return (
             <div className="flex items-center gap-2">
               <div className="w-5 h-5 bg-black text-white font-black rounded flex items-center justify-center text-xs">
@@ -163,7 +165,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
               {showReturnButton && (
                 <button
                   onClick={() => {
-                    if (account.role === 'super_admin') {
+                    if (isSuperAdmin) {
                       onNavigate('super_admin_console');
                     } else {
                       onNavigate('staff_portal');
@@ -171,7 +173,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
                   }}
                   className="ml-2 flex items-center gap-1 px-2.5 py-1 bg-[#10b981]/10 hover:bg-[#10b981]/20 border border-[#10b981]/25 text-[#10b981] rounded-lg text-[10px] sm:text-xs font-bold transition-all shadow-3xs cursor-pointer"
                 >
-                  <span>← Return to {account.role === 'super_admin' ? 'Console' : 'Dashboard'}</span>
+                  <span>← Return to {isSuperAdmin ? 'Console' : 'Dashboard'}</span>
                 </button>
               )}
             </div>
@@ -186,6 +188,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
             onSignOut={onSignOut}
             onEditProfile={onEditProfile}
             signInLabel="Sign in"
+            isSuperAdmin={isSuperAdmin}
           />
         </div>
       </header>

@@ -79,7 +79,7 @@ async function createServer() {
     });
   });
 
-  // Public Supabase configuration endpoint for frontend client initialization
+  // Public configuration endpoint for frontend client initialization
   app.get('/api/config', (req, res) => {
     const rawUrl = process.env.SUPABASE_URL || '';
     let supabaseUrl = '';
@@ -91,10 +91,12 @@ async function createServer() {
       }
     }
     const supabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || '';
+    const paystackPublicKey = process.env.PAYSTACK_PUBLIC_KEY || '';
 
     res.json({
       supabaseUrl,
       supabasePublishableKey,
+      paystackPublicKey,
     });
   });
 

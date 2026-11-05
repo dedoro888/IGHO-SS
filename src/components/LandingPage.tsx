@@ -27,6 +27,7 @@ interface LandingPageProps {
   currentGuestProfile?: CustomerProfile | null;
   onSignOut?: () => void;
   onEditProfile?: () => void;
+  isSuperAdmin?: boolean;
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({
@@ -35,6 +36,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   currentGuestProfile,
   onSignOut,
   onEditProfile,
+  isSuperAdmin = false,
 }) => {
   const partners = ['PALMVIEW', 'SOUTHSIDE', 'GRAND KUBA', 'ANGELIS', 'BAHAMAS', 'EAGLE EYE'];
 
@@ -48,6 +50,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         currentGuestProfile={currentGuestProfile}
         onSignOut={onSignOut}
         onEditProfile={onEditProfile}
+        isSuperAdmin={isSuperAdmin}
       />
 
       {/* Hero Section */}

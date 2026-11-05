@@ -23,7 +23,7 @@ import {
 import { ActiveScreen, SubscriptionPlan, PlatformSettings, Hotel } from '../types';
 import { BackButton } from './BackButton';
 import { INITIAL_PLANS } from '../data/platformData';
-import { IghoOfficialEmblem } from './IghoLogo';
+import { IghoOfficialEmblem, IghoLoadingEmblem } from './IghoLogo';
 import { PaystackSubscriptionModal } from './PaystackSubscriptionModal';
 
 interface HotelOnboardingProps {
@@ -151,7 +151,7 @@ const DeviceImageUploader: React.FC<{
               className="flex items-center gap-2 px-4 py-2.5 bg-white border border-neutral-300 rounded-xl text-xs font-bold text-neutral-800 shadow-2xs hover:bg-neutral-50 active:scale-95 transition-all mx-auto"
             >
               {uploading ? (
-                <RefreshCw className="w-4 h-4 animate-spin text-neutral-500" />
+                <IghoLoadingEmblem size="xs" inverted={true} speed="fast" />
               ) : (
                 <Upload className="w-4 h-4 text-neutral-600" />
               )}
@@ -579,9 +579,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
             className="w-full bg-black text-white py-3 rounded-full font-bold text-xs hover:bg-neutral-800 transition-all flex items-center justify-center gap-2 active:scale-95 shadow-sm"
           >
             {isLoading ? (
-              <span className="flex items-center gap-2">
-                <RefreshCw className="w-4 h-4 animate-spin" /> Verifying identity...
-              </span>
+              <IghoLoadingEmblem size="xs" speed="fast" />
             ) : (
               'Next: Hotel Information'
             )}
@@ -813,9 +811,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
               className="bg-black text-white px-7 py-2.5 rounded-full text-xs font-bold hover:bg-neutral-800 transition-all flex items-center gap-2 active:scale-95 shadow-sm"
             >
               {isLoading ? (
-                <span className="flex items-center gap-2">
-                  <RefreshCw className="w-4 h-4 animate-spin" /> Submitting...
-                </span>
+                <IghoLoadingEmblem size="xs" speed="fast" />
               ) : (
                 'Submit for IGHO Approval'
               )}
@@ -1099,7 +1095,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                 disabled={isLoading || !trialTokenInput.trim()}
                 className="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-xs"
               >
-                {isLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                {isLoading ? <IghoLoadingEmblem size="xs" speed="fast" /> : <Sparkles className="w-3.5 h-3.5" />}
                 <span>Activate 30-Day Free Trial</span>
               </button>
             </form>

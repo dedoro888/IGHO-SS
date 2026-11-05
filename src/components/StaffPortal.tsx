@@ -125,6 +125,7 @@ interface StaffPortalProps {
   currentUserEmail?: string;
   onUpdateHotel?: (updatedHotel: Hotel) => void;
   onNavigate: (screen: ActiveScreen) => void;
+  isSuperAdmin?: boolean;
 }
 
 export const StaffPortal: React.FC<StaffPortalProps> = ({
@@ -159,12 +160,10 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   onAddBranch,
   onUpdateHotel,
   onNavigate,
+  isSuperAdmin = false,
 }) => {
   // STRICT TENANT PRIVACY BARRIER:
   // IGHO Platform Super Admins must not access or view a private hotel tenant's operational PMS dashboard
-  const isSuperAdmin = ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'].includes(
-    (currentUserEmail || '').toLowerCase()
-  );
 
   if (isSuperAdmin) {
     return (
@@ -1255,6 +1254,18 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                       </div>
 
                       <div className="py-1">
+                        {isSuperAdmin && (
+                          <button
+                            onClick={() => {
+                              setProfileDropdownOpen(false);
+                              onNavigate('super_admin_console');
+                            }}
+                            className="w-full text-left px-4 py-2 hover:bg-emerald-50 text-emerald-800 font-bold transition-colors flex items-center gap-2.5 cursor-pointer border-b border-neutral-100"
+                          >
+                            <Shield className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>IGHO Super Admin Console</span>
+                          </button>
+                        )}
                         <button
                           onClick={() => {
                             setActiveTab('settings');

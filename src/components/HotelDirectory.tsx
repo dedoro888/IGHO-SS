@@ -9,6 +9,7 @@ import {
   Users,
   Radio,
   Globe,
+  Shield,
 } from 'lucide-react';
 import { Hotel, ActiveScreen, CustomerProfile } from '../types';
 import { BackButton } from './BackButton';
@@ -22,6 +23,7 @@ interface HotelDirectoryProps {
   currentGuestProfile?: CustomerProfile | null;
   onSignOut?: () => void;
   onEditProfile?: () => void;
+  isSuperAdmin?: boolean;
 }
 
 export const HotelDirectory: React.FC<HotelDirectoryProps> = ({
@@ -32,6 +34,7 @@ export const HotelDirectory: React.FC<HotelDirectoryProps> = ({
   currentGuestProfile,
   onSignOut,
   onEditProfile,
+  isSuperAdmin = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedState, setSelectedState] = useState('All States');
@@ -150,14 +153,28 @@ export const HotelDirectory: React.FC<HotelDirectoryProps> = ({
           </div>
         </div>
 
-        <GuestAccountNavMenu
-          currentUserEmail={currentUserEmail}
-          currentGuestProfile={currentGuestProfile}
-          onNavigate={onNavigate}
-          onSignOut={onSignOut}
-          onEditProfile={onEditProfile}
-          signInLabel="Sign in"
-        />
+        <div className="flex items-center gap-2">
+          {isSuperAdmin && (
+            <button
+              onClick={() => onNavigate('super_admin_console')}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+              title="Access IGHO Platform Super Admin Console"
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>IGHO Console</span>
+            </button>
+          )}
+
+          <GuestAccountNavMenu
+            currentUserEmail={currentUserEmail}
+            currentGuestProfile={currentGuestProfile}
+            onNavigate={onNavigate}
+            onSignOut={onSignOut}
+            onEditProfile={onEditProfile}
+            signInLabel="Sign in"
+            isSuperAdmin={isSuperAdmin}
+          />
+        </div>
       </header>
 
       {/* Dark Search & Location Hero */}

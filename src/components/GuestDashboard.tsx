@@ -16,6 +16,7 @@ import {
   Timer,
   CheckCircle2,
   RotateCcw,
+  Shield,
   ShieldAlert,
   ArrowUpCircle,
   CalendarRange,
@@ -31,7 +32,7 @@ import {
 import { Reservation, Room, ActiveScreen, CustomerProfile, Hotel } from '../types';
 import { BackButton } from './BackButton';
 import { getSavedCustomerProfile } from '../utils/auth';
-import { IghoOfficialEmblem } from './IghoLogo';
+import { IghoOfficialEmblem, IghoLoadingEmblem } from './IghoLogo';
 import { getRoomCategories, getRoomLevelInfo, RoomCategory } from '../utils/roomCategories';
 
 interface GuestDashboardProps {
@@ -46,6 +47,7 @@ interface GuestDashboardProps {
   onUpdateReservation?: (updated: Reservation) => void;
   onSignOut?: () => void;
   initialTab?: 'dashboard' | 'bookings' | 'profile';
+  isSuperAdmin?: boolean;
 }
 
 export const GuestDashboard: React.FC<GuestDashboardProps> = ({
@@ -60,6 +62,7 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
   onUpdateReservation,
   onSignOut,
   initialTab = 'dashboard',
+  isSuperAdmin = false,
 }) => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'bookings' | 'profile'>(initialTab);
   const [viewingReceiptRes, setViewingReceiptRes] = useState<Reservation | null>(null);
@@ -281,6 +284,16 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
 
         {/* User Account Controls */}
         <div className="flex items-center gap-2 sm:gap-3 text-xs font-medium text-neutral-800">
+          {isSuperAdmin && (
+            <button
+              onClick={() => onNavigate('super_admin_console')}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>IGHO Console</span>
+            </button>
+          )}
+
           <div className="flex items-center gap-2 px-3 py-1 bg-neutral-100/90 rounded-full border border-neutral-200/80">
             <div className="w-5 h-5 rounded-full bg-black text-white text-[10px] font-bold flex items-center justify-center">
               {(profile.firstName || profile.email || 'G').charAt(0).toUpperCase()}
@@ -322,7 +335,7 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
       {/* Internal Navigation Tabs (Dashboard / My bookings / Profile) */}
       <div className="border-b border-neutral-200 bg-neutral-50/50 px-4 sm:px-6 py-2">
         <div className="max-w-4xl mx-auto flex items-center justify-between gap-3 text-xs font-semibold">
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
             <BackButton onClick={() => onNavigate('hotel_guest_portal')} />
             <button
               onClick={() => setActiveTab('dashboard')}
@@ -354,6 +367,16 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
             >
               Profile & Settings
             </button>
+            {isSuperAdmin && (
+              <button
+                onClick={() => onNavigate('super_admin_console')}
+                className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 transition-colors font-bold flex items-center gap-1.5 cursor-pointer ml-auto"
+                title="Access the IGHO Platform Super Admin Console"
+              >
+                <Shield className="w-3.5 h-3.5 text-emerald-600" />
+                <span>IGHO Console</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -361,6 +384,35 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
       {/* Tab 1: DASHBOARD */}
       {activeTab === 'dashboard' && (
         <main className="max-w-4xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
+          {/* Platform Super Admin Console Access Banner */}
+          {isSuperAdmin && (
+            <div className="bg-neutral-900 text-white p-4 sm:p-5 rounded-2xl border border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-md">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center border border-emerald-500/25 shrink-0">
+                  <Shield className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-white">Platform Super Admin Console</span>
+                    <span className="text-[10px] font-bold bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                      Verified Authority
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-400 mt-0.5">
+                    Your account has global administrative authority over all hotels, subscriptions, finances, and platform settings.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => onNavigate('super_admin_console')}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 shrink-0 cursor-pointer active:scale-95"
+              >
+                <Shield className="w-4 h-4" />
+                <span>Open IGHO Console</span>
+              </button>
+            </div>
+          )}
+
           {/* Status Alert Banners for pending bookings */}
           {userReservations.filter((r) => r.status === 'pending_verification').length > 0 && (
             <div className="space-y-2">
@@ -1798,10 +1850,7 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
                       className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
                     >
                       {isProcessingExtension ? (
-                        <>
-                          <RotateCcw className="w-3.5 h-3.5 animate-spin" />
-                          <span>Processing Payment...</span>
-                        </>
+                        <IghoLoadingEmblem size="xs" speed="fast" />
                       ) : (
                         <>
                           <CreditCard className="w-3.5 h-3.5" />
@@ -2125,10 +2174,7 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
                     className="px-6 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
                   >
                     {isProcessingUpgrade ? (
-                      <>
-                        <RotateCcw className="w-3.5 h-3.5 animate-spin" />
-                        <span>Processing Payment...</span>
-                      </>
+                      <IghoLoadingEmblem size="xs" speed="fast" />
                     ) : (
                       <>
                         <CreditCard className="w-3.5 h-3.5" />

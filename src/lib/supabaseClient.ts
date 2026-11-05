@@ -3,6 +3,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 export interface SupabasePublicConfig {
   supabaseUrl: string;
   supabasePublishableKey: string;
+  paystackPublicKey: string;
 }
 
 let supabaseInstance: SupabaseClient | null = null;
@@ -24,9 +25,19 @@ export async function fetchSupabaseConfig(): Promise<SupabasePublicConfig> {
     } catch {
       cleanUrl = viteUrl.replace(/\/+$/, '');
     }
+    // Retrieve paystackPublicKey from server if available
+    let paystackKey = '';
+    try {
+      const res = await fetch('/api/config');
+      if (res.ok) {
+        const data = await res.json();
+        paystackKey = data.paystackPublicKey || '';
+      }
+    } catch {}
     return {
       supabaseUrl: cleanUrl,
       supabasePublishableKey: viteKey,
+      paystackPublicKey: paystackKey,
     };
   }
 
@@ -38,13 +49,14 @@ export async function fetchSupabaseConfig(): Promise<SupabasePublicConfig> {
       return {
         supabaseUrl: data.supabaseUrl || '',
         supabasePublishableKey: data.supabasePublishableKey || '',
+        paystackPublicKey: data.paystackPublicKey || '',
       };
     }
   } catch (err) {
     console.warn('[Supabase Config] Failed to fetch /api/config:', err);
   }
 
-  return { supabaseUrl: '', supabasePublishableKey: '' };
+  return { supabaseUrl: '', supabasePublishableKey: '', paystackPublicKey: '' };
 }
 
 /**

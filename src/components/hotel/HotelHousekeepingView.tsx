@@ -17,6 +17,7 @@ import {
   Activity,
 } from 'lucide-react';
 import { Room, HousekeepingTask, Hotel, StaffAccount, Reservation } from '../../types';
+import { IghoLoadingEmblem } from '../IghoLogo';
 
 interface HotelHousekeepingViewProps {
   rooms?: Room[];
@@ -218,8 +219,8 @@ export const HotelHousekeepingView: React.FC<HotelHousekeepingViewProps> = ({
     }
     if (s === 'cleaning in progress' || s === 'cleaning') {
       return (
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce" />
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-amber-50 text-amber-900 border border-amber-200">
+          <IghoLoadingEmblem size="xs" speed="fast" />
           Cleaning in Progress
         </span>
       );
@@ -474,7 +475,7 @@ export const HotelHousekeepingView: React.FC<HotelHousekeepingViewProps> = ({
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-black text-white hover:bg-neutral-800 text-[11px] font-bold transition-all shadow-2xs cursor-pointer"
                             title="Start servicing room"
                           >
-                            <RefreshCw className="w-3 h-3 text-white animate-spin-slow" />
+                            <Sparkles className="w-3 h-3 text-amber-400" />
                             <span>Start Cleaning</span>
                           </button>
                         ) : null}

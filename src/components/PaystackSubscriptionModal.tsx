@@ -13,6 +13,7 @@ import {
   Check,
 } from 'lucide-react';
 import { SubscriptionPlan } from '../types';
+import { IghoLoadingEmblem } from './IghoLogo';
 
 interface PaystackSubscriptionModalProps {
   isOpen: boolean;
@@ -128,9 +129,8 @@ export const PaystackSubscriptionModal: React.FC<PaystackSubscriptionModalProps>
             <div className="p-3 bg-neutral-50 rounded-xl text-xs text-neutral-600 font-mono text-center">
               Ref: {transactionRef}
             </div>
-            <div className="flex items-center justify-center gap-1.5 text-xs font-semibold text-emerald-700">
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              <span>Redirecting to your workspace...</span>
+            <div className="flex items-center justify-center py-2">
+              <IghoLoadingEmblem size="sm" speed="fast" />
             </div>
           </div>
         ) : (
@@ -347,10 +347,7 @@ export const PaystackSubscriptionModal: React.FC<PaystackSubscriptionModalProps>
                   className="w-full bg-[#0BA4DB] hover:bg-[#0993C5] text-white py-3.5 rounded-full font-bold text-xs shadow-md transition-all active:scale-98 flex items-center justify-center gap-2"
                 >
                   {isProcessing ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Authorizing with Paystack...</span>
-                    </>
+                    <IghoLoadingEmblem size="xs" speed="fast" />
                   ) : (
                     <>
                       <Lock className="w-3.5 h-3.5" />

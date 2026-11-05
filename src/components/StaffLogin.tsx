@@ -1,24 +1,58 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Building2, Eye, EyeOff, Lock, Mail, ShieldAlert, AlertCircle } from 'lucide-react';
-import { ActiveScreen } from '../types';
-import { IghoOfficialEmblem } from './IghoLogo';
-import { authService } from '../lib/authService';
+import { ActiveScreen, CustomerProfile, ResolvedAuthAccount } from '../types';
+import { IghoOfficialEmblem, IghoLoadingEmblem } from './IghoLogo';
+import { authService, HardenedResolvedAuthAccount } from '../lib/authService';
 
 interface StaffLoginProps {
-  onLoginSuccess: (staffEmail: string) => void;
+  onLoginSuccess: (
+    staffEmail: string,
+    profile?: CustomerProfile,
+    resolved?: HardenedResolvedAuthAccount | ResolvedAuthAccount
+  ) => void;
   onNavigate: (screen: ActiveScreen) => void;
 }
 
+
 export const StaffLogin: React.FC<StaffLoginProps> = ({ onLoginSuccess, onNavigate }) => {
-  const [email, setEmail] = useState('avendoorcompany@gmail.com');
-  const [password, setPassword] = useState('Admin@2026!');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [unconfirmedEmailForResend, setUnconfirmedEmailForResend] = useState<string | null>(null);
+  const [resendingEmail, setResendingEmail] = useState(false);
+  const [resendStatusMessage, setResendStatusMessage] = useState<string | null>(null);
+
+  const handleResendConfirmation = async (targetEmail: string) => {
+    const clean = targetEmail.trim().toLowerCase();
+    if (!clean) return;
+    setResendingEmail(true);
+    setResendStatusMessage(null);
+    try {
+      const { error: resendErr } = await authService.resendConfirmationEmail(clean);
+      setResendingEmail(false);
+      if (resendErr) {
+        const msg = resendErr.message || '';
+        if (msg.toLowerCase().includes('rate limit')) {
+          setResendStatusMessage('Email rate limit reached. Please wait a few moments.');
+        } else {
+          setResendStatusMessage(msg || 'Failed to resend confirmation email.');
+        }
+      } else {
+        setResendStatusMessage('Verification email sent! Please check your inbox.');
+      }
+    } catch (err: any) {
+      setResendingEmail(false);
+      setResendStatusMessage(err?.message || 'Error communicating with Supabase Auth.');
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setUnconfirmedEmailForResend(null);
+    setResendStatusMessage(null);
     setLoading(true);
 
     const cleanEmail = email.trim().toLowerCase();
@@ -28,9 +62,16 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({ onLoginSuccess, onNaviga
       const { data, error: signInErr } = await authService.signIn(cleanEmail, password);
 
       if (signInErr) {
-        // If Supabase returns invalid login credentials or error
         setLoading(false);
-        setError(signInErr.message || 'Invalid staff credentials.');
+        const msg = signInErr.message || '';
+        if (msg.toLowerCase().includes('email not confirmed')) {
+          setUnconfirmedEmailForResend(cleanEmail);
+          setError('Email not confirmed. Please check your inbox and confirm your email before signing in.');
+        } else if (msg.toLowerCase().includes('invalid login credentials')) {
+          setError('Incorrect email or password. Please verify your staff credentials.');
+        } else {
+          setError(msg || 'Invalid staff credentials.');
+        }
         return;
       }
 
@@ -54,29 +95,23 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({ onLoginSuccess, onNaviga
         }
 
         setLoading(false);
-        onLoginSuccess(cleanEmail);
-        onNavigate(resolved.targetScreen || 'staff_portal');
+        onLoginSuccess(cleanEmail, undefined, resolved);
+        if (!resolved.isSuperAdmin) {
+          onNavigate(resolved.targetScreen || 'staff_portal');
+        }
         return;
       }
-    } catch (err: any) {
-      console.warn('[StaffLogin] Supabase sign-in notice:', err);
-    }
 
-    // Fallback simulation for local offline testing
-    setTimeout(() => {
       setLoading(false);
-      onLoginSuccess(cleanEmail);
-    }, 400);
+      setError('Authentication failed. No active session returned.');
+      return;
+    } catch (err: any) {
+      setLoading(false);
+      setError(err?.message || 'Authentication error. Please try again.');
+      return;
+    }
   };
 
-  const sampleStaffAccounts = [
-    { label: 'Super Admin', email: 'rumeobire@gmail.com' },
-    { label: 'Hotel Owner', email: 'owner@palmviewgrand.com' },
-    { label: 'Manager', email: 'manager@palmviewgrand.com' },
-    { label: 'Receptionist', email: 'reception@palmviewgrand.com' },
-    { label: 'Finance', email: 'finance@palmviewgrand.com' },
-    { label: 'Housekeeping', email: 'housekeeping@palmviewgrand.com' },
-  ];
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col justify-between p-4 sm:p-6">
@@ -112,9 +147,29 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({ onLoginSuccess, onNaviga
         </div>
 
         {error && (
-          <div className="bg-red-500/15 border border-red-500/40 rounded-xl p-3 text-red-200 text-xs flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-            <span>{error}</span>
+          <div className="bg-red-500/15 border border-red-500/40 rounded-xl p-3 text-red-200 text-xs space-y-2">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+            {unconfirmedEmailForResend && (
+              <div className="pt-2 border-t border-red-500/30 flex items-center justify-between text-[11px]">
+                <span className="text-neutral-300">Need another confirmation link?</span>
+                <button
+                  type="button"
+                  disabled={resendingEmail}
+                  onClick={() => handleResendConfirmation(unconfirmedEmailForResend)}
+                  className="font-bold underline text-white hover:text-red-200 cursor-pointer disabled:opacity-50"
+                >
+                  {resendingEmail ? 'Sending...' : 'Resend Email'}
+                </button>
+              </div>
+            )}
+            {resendStatusMessage && (
+              <p className="text-[11px] text-neutral-300 font-medium bg-black/40 p-2 rounded-lg">
+                {resendStatusMessage}
+              </p>
+            )}
           </div>
         )}
 
@@ -160,37 +215,16 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({ onLoginSuccess, onNaviga
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-white text-black py-3 rounded-full font-bold text-xs hover:bg-neutral-200 transition-all active:scale-95 shadow-md mt-2 flex items-center justify-center gap-2"
+            className="w-full bg-white text-black py-3 rounded-full font-bold text-xs hover:bg-neutral-200 transition-all active:scale-95 shadow-md mt-2 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-75"
           >
-            {loading ? 'Signing in...' : 'Sign in'}
+            {loading ? (
+              <IghoLoadingEmblem size="xs" inverted={true} speed="fast" />
+            ) : (
+              <span>Sign in</span>
+            )}
           </button>
         </form>
 
-        {/* Quick Role Fill for Testing / Review */}
-        <div className="pt-1 space-y-1.5 border-t border-neutral-800/80">
-          <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-wider block text-center">
-            Quick Persona Switch
-          </span>
-          <div className="grid grid-cols-2 gap-1.5">
-            {sampleStaffAccounts.map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                onClick={() => {
-                  setEmail(item.email);
-                  setPassword('Admin@2026!');
-                }}
-                className={`px-2 py-1.5 rounded-lg text-[11px] font-semibold text-left truncate transition-colors border ${
-                  email === item.email
-                    ? 'bg-white text-black border-white'
-                    : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white hover:border-neutral-700'
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </div>
 
         {/* Bottom Links */}
         <div className="pt-2 text-center text-xs text-neutral-500 border-t border-neutral-800 flex flex-wrap items-center justify-center gap-2">

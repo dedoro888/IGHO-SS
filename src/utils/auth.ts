@@ -80,8 +80,9 @@ export function mapResolvedAuthAccount(resolved: ResolvedAuthAccount): UserAuthP
   };
 }
 
-export const SUPER_ADMIN_EMAILS = ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'];
-export const SUPER_ADMIN_EMAIL = 'rumeobire@gmail.com';
+// Note: Super Admin status is SOLELY granted by public.platform_roles via Supabase Auth.
+// Email-based super admin role grants are strictly prohibited and removed.
+
 
 /**
  * Retrieve saved CustomerProfile for an email if present
@@ -121,29 +122,12 @@ export function saveCustomerProfile(profile: CustomerProfile): void {
 }
 
 /**
- * Global IGHO Account role resolution.
- * IGHO uses ONE central identity system.
- * The account's role determines where the user lands:
- * - super_admin -> /console (SuperAdminConsole)
- * - hotel_owner / staff -> Hotel PMS (StaffPortal)
- * - customer -> Customer Portal (GuestDashboard)
+ * Global IGHO Account role resolution for local fallbacks and tenant staff.
+ * Note: Super Admin role can NEVER be granted here. Platform Super Admin
+ * authority is strictly verified against public.platform_roles via authService.
  */
 export function resolveUserAccount(email: string, customProfile?: CustomerProfile): UserAuthProfile {
   const normalizedEmail = email.trim().toLowerCase();
-
-  // 1. Super Admin (Platform Owner)
-  if (SUPER_ADMIN_EMAILS.map(e => e.toLowerCase()).includes(normalizedEmail)) {
-    const isDedoro = normalizedEmail === 'dedoro888@gmail.com';
-    return {
-      email: normalizedEmail,
-      name: isDedoro ? 'dedoro888' : 'Rume Obire',
-      role: 'super_admin',
-      roleLabel: 'Super Admin (Platform Owner)',
-      targetScreen: 'super_admin_console',
-      organizationName: 'IGHO Software Systems (Global)',
-      description: 'Platform owner with full governance over organizations, finance, subscriptions & products.',
-    };
-  }
 
   // Check dynamic staff list in localStorage first to resolve newly created hotel accounts
   if (typeof window !== 'undefined') {

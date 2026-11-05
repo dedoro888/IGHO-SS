@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ShieldAlert,
@@ -45,7 +45,7 @@ import { INITIAL_FEEDBACK as INITIAL_FEEDBACKS } from '../data/mockData';
 
 import { ConsoleSidebar, ConsoleTab } from './console/ConsoleSidebar';
 import { ConsoleStorageView } from './console/ConsoleStorageView';
-import { IghoOfficialEmblem } from './IghoLogo';
+import { IghoOfficialEmblem, IghoLoadingEmblem } from './IghoLogo';
 import { ConsoleDashboardView } from './console/ConsoleDashboardView';
 import { ConsoleHotelsView } from './console/ConsoleHotelsView';
 import { ConsoleSchoolsView } from './console/ConsoleSchoolsView';
@@ -60,9 +60,12 @@ import { ConsoleProductsView } from './console/ConsoleProductsView';
 import { ConsoleSettingsView } from './console/ConsoleSettingsView';
 import { ConsoleAuditLogsView } from './console/ConsoleAuditLogsView';
 import { EditProfileModal } from './common/EditProfileModal';
+import { authService } from '../lib/authService';
 
 interface SuperAdminConsoleProps {
   currentUserEmail?: string;
+  isSuperAdmin?: boolean;
+  isVerifying?: boolean;
   hotels: Hotel[];
   rooms?: Room[];
   reservations?: Reservation[];
@@ -78,7 +81,9 @@ interface SuperAdminConsoleProps {
 }
 
 export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
-  currentUserEmail = 'rumeobire@gmail.com',
+  currentUserEmail = '',
+  isSuperAdmin = false,
+  isVerifying = false,
   hotels: initialHotels,
   rooms = [],
   reservations = [],
@@ -92,10 +97,45 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   demoRequests: initialDemoRequests = [],
   onUpdateDemoRequests,
 }) => {
-  // Current user identity
-  const [activeUserEmail, setActiveUserEmail] = useState<string>(currentUserEmail);
-  const superAdminEmails = ['rumeobire@gmail.com', 'dedoro888@gmail.com', 'admin@igho.com'];
-  const isAuthorized = superAdminEmails.includes(activeUserEmail.toLowerCase());
+  // Database-verified authority check: authoritative query against public.platform_roles
+  const [dbVerified, setDbVerified] = useState<boolean>(isSuperAdmin);
+  const [checkingAuth, setCheckingAuth] = useState<boolean>(!isSuperAdmin);
+
+  useEffect(() => {
+    let isCancelled = false;
+    setCheckingAuth(true);
+
+    authService.getUser().then(({ user, error }) => {
+      if (isCancelled) return;
+      if (error || !user) {
+        setDbVerified(false);
+        setCheckingAuth(false);
+        return;
+      }
+      authService.getPlatformRole(user.id).then(({ isSuperAdmin: hasRole, error: roleErr }) => {
+        if (isCancelled) return;
+        if (!roleErr && hasRole) {
+          setDbVerified(true);
+        } else {
+          setDbVerified(false);
+        }
+        setCheckingAuth(false);
+      });
+    }).catch(() => {
+      if (!isCancelled) {
+        setDbVerified(false);
+        setCheckingAuth(false);
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentUserEmail]);
+
+  // Reliable database-backed authorization gate (does not depend on frontend prop alone)
+  const isAuthorized = dbVerified;
+
 
   // Navigation tab state
   const [currentTab, setCurrentTab] = useState<ConsoleTab>('dashboard');
@@ -104,12 +144,8 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   const [profileDropdownOpen, setProfileDropdownOpen] = useState<boolean>(false);
 
   // User Profile States
-  const [profileName, setProfileName] = useState<string>(() => {
-    const email = (currentUserEmail || '').toLowerCase();
-    if (email === 'dedoro888@gmail.com') return 'dedoro888';
-    return 'Rume Obire';
-  });
-  const [profileEmail, setProfileEmail] = useState<string>(currentUserEmail || 'rumeobire@gmail.com');
+  const [profileName, setProfileName] = useState<string>('Platform Super Admin');
+  const [profileEmail, setProfileEmail] = useState<string>(currentUserEmail || 'superadmin@igho.software');
   const [profilePassword, setProfilePassword] = useState<string>('••••••••');
   const [profilePicture, setProfilePicture] = useState<string>('');
   const [editProfileOpen, setEditProfileOpen] = useState<boolean>(false);
@@ -180,7 +216,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
     const timestampStr = `${now.toISOString().split('T')[0]} ${now.toTimeString().split(' ')[0]}`;
     const newLog: PlatformAuditLog = {
       id: `audit-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      actorEmail: activeUserEmail,
+      actorEmail: currentUserEmail || 'superadmin@igho.software',
       action,
       target,
       targetType,
@@ -454,7 +490,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
       'UPDATE_PLATFORM_SETTING',
       'Platform Global Configuration',
       'setting',
-      { updatedBy: activeUserEmail },
+      { updatedBy: currentUserEmail || 'superadmin@igho.software' },
       'previousSettings',
       'updatedSettings'
     );
@@ -559,7 +595,16 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
     (f) => f.type === 'complaint' && f.status !== 'resolved' && f.status !== 'closed'
   ).length;
 
-  // STRICT ACCESS CONTROL SCREEN (Section 2, 3, 30)
+  // VERIFYING PLATFORM AUTHORITY
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen bg-neutral-950 flex items-center justify-center p-6">
+        <IghoLoadingEmblem size="xl" className="w-16 h-16 sm:w-20 sm:h-20" />
+      </div>
+    );
+  }
+
+  // STRICT ACCESS CONTROL SCREEN
   if (!isAuthorized) {
     return (
       <div className="min-h-screen bg-neutral-950 text-white flex flex-col items-center justify-center p-6 font-sans">
@@ -576,11 +621,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
               Super Admin Authorization Required
             </h2>
             <p className="text-xs text-neutral-400 leading-relaxed">
-              The <strong>IGHO Console</strong> is the internal ecosystem management system. It is strictly restricted to the platform Super Admin identity:
-              <br />
-              <code className="text-white font-mono bg-neutral-950 px-2 py-0.5 rounded mt-1 inline-block">
-                rumeobire@gmail.com
-              </code>
+              The <strong>IGHO Console</strong> is the internal ecosystem management system. Access is strictly restricted to accounts verified with a <code>super_admin</code> role in the database.
             </p>
           </div>
 
@@ -588,23 +629,27 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
             <span className="text-[10px] text-neutral-400 font-bold uppercase block">
               Current Authenticated Session:
             </span>
-            <div className="font-mono text-neutral-300 truncate">{activeUserEmail}</div>
+            <div className="font-mono text-neutral-300 truncate">{currentUserEmail || 'No active session'}</div>
             <span className="text-[10px] text-amber-400 font-medium block">
-              Role: Tenant / Staff / Customer
+              Status: Unauthorized for IGHO Platform Console
             </span>
           </div>
 
           <div className="space-y-2 pt-2">
             <button
-              onClick={() => setActiveUserEmail('rumeobire@gmail.com')}
-              className="w-full py-3 rounded-xl bg-white text-black font-extrabold text-xs hover:bg-neutral-200 transition-colors shadow-sm"
+              onClick={() => {
+                authService.signOut().finally(() => {
+                  onNavigate('guest_login');
+                });
+              }}
+              className="w-full py-3 rounded-xl bg-white text-black font-extrabold text-xs hover:bg-neutral-200 transition-colors shadow-sm cursor-pointer"
             >
-              Sign In as Super Admin (rumeobire@gmail.com)
+              Sign In with Authorized Super Admin Account
             </button>
 
             <button
               onClick={() => onNavigate('landing')}
-              className="w-full py-2 text-neutral-400 hover:text-white text-xs transition-colors"
+              className="w-full py-2 text-neutral-400 hover:text-white text-xs transition-colors cursor-pointer"
             >
               ← Back to IGHO Home
             </button>
@@ -646,9 +691,8 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
                 }}
                 pendingRegistrationsCount={pendingRegistrationsCount}
                 openComplaintsCount={openComplaintsCount}
-                currentUserEmail={activeUserEmail}
+                currentUserEmail={currentUserEmail}
                 onNavigate={onNavigate}
-                onSwitchPersona={(email) => setActiveUserEmail(email)}
                 isCollapsed={false} // Keep expanded for maximum readability inside drawer
                 onToggleCollapse={() => setMobileMenuOpen(false)} // Clicking collapse closes drawer on mobile
                 isMobile={true}
@@ -668,9 +712,8 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
         onSelectTab={(tab) => setCurrentTab(tab)}
         pendingRegistrationsCount={pendingRegistrationsCount}
         openComplaintsCount={openComplaintsCount}
-        currentUserEmail={activeUserEmail}
+        currentUserEmail={currentUserEmail}
         onNavigate={onNavigate}
-        onSwitchPersona={(email) => setActiveUserEmail(email)}
         isCollapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         profileName={profileName}

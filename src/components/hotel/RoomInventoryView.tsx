@@ -4,6 +4,7 @@ import {
   Room,
   Reservation,
 } from '../../types';
+import { IghoLoadingEmblem } from '../IghoLogo';
 import {
   Plus,
   Zap,
@@ -1532,8 +1533,8 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
             </div>
 
             {isUploadingPhoto && (
-              <div className="text-center p-3 text-xs text-neutral-500 animate-pulse">
-                Uploading photos...
+              <div className="flex items-center justify-center py-4">
+                <IghoLoadingEmblem size="sm" speed="fast" />
               </div>
             )}
 

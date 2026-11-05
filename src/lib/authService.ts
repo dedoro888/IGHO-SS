@@ -19,7 +19,12 @@ export interface HardenedResolvedAuthAccount extends ResolvedAuthAccount {
  * using real PostgreSQL tables, strict status verification, and fail-closed security.
  */
 export class SupabaseAuthService {
-  private activeResolutionSeq = 0;
+  // In-flight resolution deduplication keyed by authenticated user UUID + optional organizationId
+  private inFlightResolutions = new Map<string, Promise<HardenedResolvedAuthAccount>>();
+  // Monotonic generation counter to detect when a session is invalidated (sign-out, account switch)
+  private sessionGeneration = 0;
+  // Current active user ID to protect against cross-session overwriting
+  private activeUserId: string | null = null;
 
   /**
    * Register a new user using Supabase Auth.
@@ -62,10 +67,69 @@ export class SupabaseAuthService {
   }
 
   /**
+   * Initiate genuine Google OAuth with Supabase.
+   * Prompts user with Google account chooser (select_account) and redirects back.
+   */
+  async signInWithGoogle(redirectTo?: string): Promise<{ data: any; error: any }> {
+    const supabase = await getSupabaseClient();
+    if (!supabase) {
+      return { data: null, error: new Error('Supabase client is not configured.') };
+    }
+
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const redirect = redirectTo || (origin ? `${origin}/` : undefined);
+
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: redirect,
+        queryParams: {
+          prompt: 'select_account',
+          access_type: 'offline',
+        },
+      },
+    });
+
+    return { data, error };
+  }
+
+  /**
+   * Resend signup confirmation email for unconfirmed accounts.
+   */
+  async resendConfirmationEmail(email: string): Promise<{ data: any; error: any }> {
+    const supabase = await getSupabaseClient();
+    if (!supabase) {
+      return { data: null, error: new Error('Supabase client is not configured.') };
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const { data, error } = await supabase.auth.resend({
+      type: 'signup',
+      email: cleanEmail,
+    });
+
+    return { data, error };
+  }
+
+  /**
+   * Set or update active user UUID for session consistency tracking.
+   */
+  setActiveUserId(userId: string | null) {
+    if (this.activeUserId !== userId) {
+      this.sessionGeneration++;
+      this.inFlightResolutions.clear();
+      this.activeUserId = userId;
+    }
+  }
+
+  /**
    * Sign out the currently active user session.
+   * Invalidates any in-flight resolutions and increments session generation.
    */
   async signOut() {
-    this.activeResolutionSeq++;
+    this.sessionGeneration++;
+    this.inFlightResolutions.clear();
+    this.activeUserId = null;
     const supabase = await getSupabaseClient();
     if (!supabase) return { error: null };
     return await supabase.auth.signOut();
@@ -92,6 +156,38 @@ export class SupabaseAuthService {
   }
 
   /**
+   * Send a password reset email via Supabase Auth.
+   */
+  async resetPasswordForEmail(email: string, redirectTo?: string): Promise<{ data: any; error: any }> {
+    const supabase = await getSupabaseClient();
+    if (!supabase) {
+      return { data: null, error: new Error('Supabase client is not configured.') };
+    }
+    const cleanEmail = email.trim().toLowerCase();
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const redirect = redirectTo || (origin ? `${origin}/#reset-password` : undefined);
+
+    const { data, error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+      redirectTo: redirect,
+    });
+    return { data, error };
+  }
+
+  /**
+   * Update user password using active session (e.g., during recovery or profile settings).
+   */
+  async updateUserPassword(newPassword: string): Promise<{ data: any; error: any }> {
+    const supabase = await getSupabaseClient();
+    if (!supabase) {
+      return { data: null, error: new Error('Supabase client is not configured.') };
+    }
+    const { data, error } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+    return { data, error };
+  }
+
+  /**
    * Retrieve the profile record for an authenticated user from public.profiles.
    * profiles.id references auth.users.id.
    */
@@ -110,23 +206,78 @@ export class SupabaseAuthService {
 
   /**
    * Check if the authenticated user has the platform Super Admin role in public.platform_roles.
-   * platform_roles.user_id references profiles.id.
+   * Priority 1: Call existing Supabase RPC function public.is_platform_super_admin() (SECURITY DEFINER),
+   *             which safely queries platform_roles & active profile without being blocked by RLS default-deny.
+   * Priority 2: Direct SELECT query fallback on public.platform_roles preserving granted_at
+   *             if RPC is unavailable or returns an error.
+   * Strict Rule: If RPC returns false without error, immediately return isSuperAdmin: false.
+   *              Do NOT use direct query to override this explicit denial.
+   * If both fail, deny access and preserve actual verification error for diagnostics.
    */
   async getPlatformRole(userId: string): Promise<{ isSuperAdmin: boolean; platformRole: DbPlatformRole | null; error: any }> {
     const supabase = await getSupabaseClient();
     if (!supabase) return { isSuperAdmin: false, platformRole: null, error: new Error('Supabase client not initialized') };
 
-    const { data, error } = await supabase
+    let rpcErrorToPreserve: any = null;
+
+    // 1. Primary Check: Existing Supabase RPC function (SECURITY DEFINER)
+    try {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('is_platform_super_admin');
+
+      if (!rpcError && typeof rpcData === 'boolean') {
+        if (rpcData === true) {
+          return {
+            isSuperAdmin: true,
+            platformRole: {
+              id: `platform-super-admin-${userId}`,
+              user_id: userId,
+              role: 'super_admin',
+              granted_at: new Date().toISOString(),
+            },
+            error: null,
+          };
+        } else {
+          // Strict Denial: RPC affirmatively verified user is NOT a Super Admin.
+          // Do not attempt direct table query to override this denial.
+          return {
+            isSuperAdmin: false,
+            platformRole: null,
+            error: null,
+          };
+        }
+      }
+
+      if (rpcError) {
+        rpcErrorToPreserve = rpcError;
+      }
+    } catch (err: any) {
+      rpcErrorToPreserve = err;
+    }
+
+    // 2. Fallback: Direct table query against public.platform_roles preserving granted_at
+    // Only attempted if RPC errors or is unavailable
+    const { data, error: directError } = await supabase
       .from('platform_roles')
       .select('id, user_id, role, granted_at')
       .eq('user_id', userId)
       .eq('role', 'super_admin')
       .maybeSingle();
 
+    if (directError) {
+      // Both RPC and direct query failed: preserve actual verification error for diagnostics
+      return {
+        isSuperAdmin: false,
+        platformRole: null,
+        error: directError || rpcErrorToPreserve,
+      };
+    }
+
+    const isDirectSuperAdmin = !!data && data.role === 'super_admin';
+
     return {
-      isSuperAdmin: !!data && data.role === 'super_admin',
+      isSuperAdmin: isDirectSuperAdmin,
       platformRole: data as DbPlatformRole | null,
-      error,
+      error: isDirectSuperAdmin ? null : rpcErrorToPreserve,
     };
   }
 
@@ -182,240 +333,259 @@ export class SupabaseAuthService {
    * 6. Strict organization.status === 'active' (mandatory before granting any staff access).
    * 7. Fail-closed: Any database query error immediately halts and denies access. Never falls back to customer on errors.
    */
-  async resolveAuthenticatedUser(
+  resolveAuthenticatedUser(
     userId: string,
     email: string,
     selectedOrganizationId?: string
   ): Promise<HardenedResolvedAuthAccount> {
-    const currentSeq = ++this.activeResolutionSeq;
+    const dedupeKey = `${userId}:${selectedOrganizationId || ''}`;
+    const generationAtStart = this.sessionGeneration;
 
-    const baseResult: HardenedResolvedAuthAccount = {
-      userId,
-      email,
-      profile: null,
-      isSuperAdmin: false,
-      membership: null,
-      organization: null,
-      effectiveRole: 'customer',
-      targetScreen: 'guest_dashboard',
-      accessGranted: false,
-    };
-
-    // 1. Fetch user profile from public.profiles
-    const { profile, error: profileError } = await this.getProfile(userId);
-    if (this.activeResolutionSeq !== currentSeq) {
-      return { ...baseResult, denialReason: 'Stale authentication request cancelled.' };
+    // Deduplication: Reuse existing in-flight promise for the exact same user & org context
+    const existing = this.inFlightResolutions.get(dedupeKey);
+    if (existing) {
+      return existing;
     }
 
-    if (profileError) {
-      return {
-        ...baseResult,
+    const resolutionPromise = (async (): Promise<HardenedResolvedAuthAccount> => {
+      const baseResult: HardenedResolvedAuthAccount = {
+        userId,
+        email,
+        profile: null,
+        isSuperAdmin: false,
+        membership: null,
+        organization: null,
+        effectiveRole: 'customer',
+        targetScreen: 'guest_dashboard',
         accessGranted: false,
-        denialReason: `Database error querying profile: ${profileError.message}`,
       };
-    }
 
-    if (!profile) {
-      return {
-        ...baseResult,
-        accessGranted: false,
-        denialReason: 'User profile record not found in public.profiles.',
-      };
-    }
+      // Helper to ensure an outdated session or sign-out cannot authorise a newer session
+      const isStale = () => this.sessionGeneration !== generationAtStart;
 
-    baseResult.profile = profile;
+      // 1. Fetch user profile from public.profiles
+      const { profile, error: profileError } = await this.getProfile(userId);
+      if (isStale()) {
+        return { ...baseResult, accessGranted: false, denialReason: 'Session changed or signed out during resolution.' };
+      }
 
-    // 2. Strict Check: profile.account_status MUST explicitly equal 'active'
-    if ((profile.account_status || '').toLowerCase() !== 'active') {
-      return {
-        ...baseResult,
-        accessGranted: false,
-        denialReason: `Profile account status is '${profile.account_status || 'unverified'}'. Access denied.`,
-      };
-    }
-
-    // 3. Check Platform Super Admin
-    const { isSuperAdmin, error: adminError } = await this.getPlatformRole(userId);
-    if (this.activeResolutionSeq !== currentSeq) {
-      return { ...baseResult, denialReason: 'Stale authentication request cancelled.' };
-    }
-
-    if (adminError && adminError.code !== 'PGRST116') {
-      return {
-        ...baseResult,
-        accessGranted: false,
-        denialReason: `Database error checking platform permissions: ${adminError.message}`,
-      };
-    }
-
-    if (isSuperAdmin) {
-      return {
-        ...baseResult,
-        isSuperAdmin: true,
-        effectiveRole: 'super_admin',
-        targetScreen: 'super_admin_console',
-        accessGranted: true,
-      };
-    }
-
-    // 4. Retrieve Organization Memberships via array-based query
-    const { memberships, error: membershipsError } = await this.getOrganizationMemberships(userId);
-    if (this.activeResolutionSeq !== currentSeq) {
-      return { ...baseResult, denialReason: 'Stale authentication request cancelled.' };
-    }
-
-    // Fail-closed: Never convert query errors into customer accounts
-    if (membershipsError) {
-      return {
-        ...baseResult,
-        accessGranted: false,
-        denialReason: `Database error retrieving organization memberships: ${membershipsError.message}`,
-      };
-    }
-
-    const staffRoles: DbOrganizationRole[] = ['owner', 'manager', 'receptionist', 'finance', 'housekeeping'];
-
-    const activeStaffMemberships = memberships.filter(
-      (m) => (m.status || '').toLowerCase() === 'active' && staffRoles.includes(m.role)
-    );
-
-    const inactiveStaffMemberships = memberships.filter(
-      (m) => (m.status || '').toLowerCase() !== 'active' && staffRoles.includes(m.role)
-    );
-
-    let chosenMembership: DbOrganizationMembership | null = null;
-
-    if (selectedOrganizationId) {
-      // User explicitly selected an organization
-      const matched = activeStaffMemberships.find((m) => m.organization_id === selectedOrganizationId);
-      if (matched) {
-        chosenMembership = matched;
-      } else {
-        const inactiveMatch = inactiveStaffMemberships.find((m) => m.organization_id === selectedOrganizationId);
-        if (inactiveMatch) {
-          return {
-            ...baseResult,
-            accessGranted: false,
-            denialReason: `Membership in selected organization is '${inactiveMatch.status}'. Access denied.`,
-          };
-        }
+      if (profileError) {
         return {
           ...baseResult,
           accessGranted: false,
-          denialReason: 'No active staff membership found for the selected organization.',
+          denialReason: `Database error querying profile: ${profileError.message}`,
         };
       }
-    } else {
-      // Deterministic multi-membership handling
-      if (activeStaffMemberships.length > 1) {
-        // Multiple active organizations exist and none has been explicitly selected
+
+      if (!profile) {
         return {
           ...baseResult,
-          accessGranted: true,
-          requiresOrganizationSelection: true,
-          availableMemberships: activeStaffMemberships,
-          effectiveRole: 'customer',
-          targetScreen: 'setup_selector',
+          accessGranted: false,
+          denialReason: 'User profile record not found in public.profiles.',
         };
-      } else if (activeStaffMemberships.length === 1) {
-        chosenMembership = activeStaffMemberships[0];
-      } else {
-        // No active staff memberships
-        if (inactiveStaffMemberships.length > 0) {
-          return {
-            ...baseResult,
-            accessGranted: false,
-            denialReason: `Organization staff membership is '${inactiveStaffMemberships[0].status}'. Access denied.`,
-          };
-        }
+      }
 
-        // Check if there are customer memberships
-        const customerMemberships = memberships.filter((m) => m.role === 'customer');
-        const inactiveCustomer = customerMemberships.find((m) => (m.status || '').toLowerCase() !== 'active');
-        if (inactiveCustomer) {
-          return {
-            ...baseResult,
-            accessGranted: false,
-            denialReason: `Account membership is '${inactiveCustomer.status}'. Access denied.`,
-          };
-        }
+      baseResult.profile = profile;
 
-        // Default: Authenticated user with no staff memberships is a guest
-        // (Guests never receive staff permissions)
+      // 2. Strict Check: profile.account_status MUST explicitly equal 'active'
+      if ((profile.account_status || '').toLowerCase() !== 'active') {
         return {
           ...baseResult,
-          effectiveRole: 'customer',
-          targetScreen: 'guest_dashboard',
+          accessGranted: false,
+          denialReason: `Profile account status is '${profile.account_status || 'unverified'}'. Access denied.`,
+        };
+      }
+
+      // 3. Check Platform Super Admin in public.platform_roles (preserves granted_at)
+      const { isSuperAdmin, error: adminError } = await this.getPlatformRole(userId);
+      if (isStale()) {
+        return { ...baseResult, accessGranted: false, denialReason: 'Session changed or signed out during resolution.' };
+      }
+
+      if (adminError && adminError.code !== 'PGRST116') {
+        return {
+          ...baseResult,
+          accessGranted: false,
+          denialReason: `Database error checking platform permissions: ${adminError.message}`,
+        };
+      }
+
+      if (isSuperAdmin) {
+        return {
+          ...baseResult,
+          isSuperAdmin: true,
+          effectiveRole: 'super_admin',
+          targetScreen: 'super_admin_console',
           accessGranted: true,
         };
       }
-    }
 
-    // 5. Operational Staff Role Verification:
-    // Mandatory: An organisation must be successfully retrieved and verified before granting any organisation staff role.
-    if (chosenMembership) {
-      if ((chosenMembership.status || '').toLowerCase() !== 'active') {
+      // 4. Retrieve Organization Memberships via array-based query
+      const { memberships, error: membershipsError } = await this.getOrganizationMemberships(userId);
+      if (isStale()) {
+        return { ...baseResult, accessGranted: false, denialReason: 'Session changed or signed out during resolution.' };
+      }
+
+      // Fail-closed: Never convert query errors into customer accounts
+      if (membershipsError) {
         return {
           ...baseResult,
           accessGranted: false,
-          denialReason: `Membership status is '${chosenMembership.status}'. Access denied.`,
+          denialReason: `Database error retrieving organization memberships: ${membershipsError.message}`,
         };
       }
 
-      if (!chosenMembership.organization_id) {
-        return {
-          ...baseResult,
-          accessGranted: false,
-          denialReason: 'Membership record has no organization reference. Access denied.',
-        };
+      const staffRoles: DbOrganizationRole[] = ['owner', 'manager', 'receptionist', 'finance', 'housekeeping'];
+
+      const activeStaffMemberships = memberships.filter(
+        (m) => (m.status || '').toLowerCase() === 'active' && staffRoles.includes(m.role)
+      );
+
+      const inactiveStaffMemberships = memberships.filter(
+        (m) => (m.status || '').toLowerCase() !== 'active' && staffRoles.includes(m.role)
+      );
+
+      let chosenMembership: DbOrganizationMembership | null = null;
+
+      if (selectedOrganizationId) {
+        // User explicitly selected an organization
+        const matched = activeStaffMemberships.find((m) => m.organization_id === selectedOrganizationId);
+        if (matched) {
+          chosenMembership = matched;
+        } else {
+          const inactiveMatch = inactiveStaffMemberships.find((m) => m.organization_id === selectedOrganizationId);
+          if (inactiveMatch) {
+            return {
+              ...baseResult,
+              accessGranted: false,
+              denialReason: `Membership in selected organization is '${inactiveMatch.status}'. Access denied.`,
+            };
+          }
+          return {
+            ...baseResult,
+            accessGranted: false,
+            denialReason: 'No active staff membership found for the selected organization.',
+          };
+        }
+      } else {
+        // Deterministic multi-membership handling
+        if (activeStaffMemberships.length > 1) {
+          // Multiple active organizations exist and none has been explicitly selected
+          return {
+            ...baseResult,
+            accessGranted: true,
+            requiresOrganizationSelection: true,
+            availableMemberships: activeStaffMemberships,
+            effectiveRole: 'customer',
+            targetScreen: 'setup_selector',
+          };
+        } else if (activeStaffMemberships.length === 1) {
+          chosenMembership = activeStaffMemberships[0];
+        } else {
+          // No active staff memberships
+          if (inactiveStaffMemberships.length > 0) {
+            return {
+              ...baseResult,
+              accessGranted: false,
+              denialReason: `Organization staff membership is '${inactiveStaffMemberships[0].status}'. Access denied.`,
+            };
+          }
+
+          // Check if there are customer memberships
+          const customerMemberships = memberships.filter((m) => m.role === 'customer');
+          const inactiveCustomer = customerMemberships.find((m) => (m.status || '').toLowerCase() !== 'active');
+          if (inactiveCustomer) {
+            return {
+              ...baseResult,
+              accessGranted: false,
+              denialReason: `Account membership is '${inactiveCustomer.status}'. Access denied.`,
+            };
+          }
+
+          // Default: Authenticated user with no staff memberships is a guest
+          // (Guests never receive staff permissions)
+          return {
+            ...baseResult,
+            effectiveRole: 'customer',
+            targetScreen: 'guest_dashboard',
+            accessGranted: true,
+          };
+        }
       }
 
-      const { organization, error: orgError } = await this.getOrganization(chosenMembership.organization_id);
-      if (this.activeResolutionSeq !== currentSeq) {
-        return { ...baseResult, denialReason: 'Stale authentication request cancelled.' };
-      }
+      // 5. Operational Staff Role Verification:
+      // Mandatory: An organisation must be successfully retrieved and verified before granting any organisation staff role.
+      if (chosenMembership) {
+        if ((chosenMembership.status || '').toLowerCase() !== 'active') {
+          return {
+            ...baseResult,
+            accessGranted: false,
+            denialReason: `Membership status is '${chosenMembership.status}'. Access denied.`,
+          };
+        }
 
-      if (orgError) {
+        if (!chosenMembership.organization_id) {
+          return {
+            ...baseResult,
+            accessGranted: false,
+            denialReason: 'Membership record has no organization reference. Access denied.',
+          };
+        }
+
+        const { organization, error: orgError } = await this.getOrganization(chosenMembership.organization_id);
+        if (isStale()) {
+          return { ...baseResult, accessGranted: false, denialReason: 'Session changed or signed out during resolution.' };
+        }
+
+        if (orgError) {
+          return {
+            ...baseResult,
+            accessGranted: false,
+            denialReason: `Database error retrieving organization: ${orgError.message}`,
+          };
+        }
+
+        if (!organization) {
+          return {
+            ...baseResult,
+            accessGranted: false,
+            denialReason: 'Associated organization record not found in public.organizations. Access denied.',
+          };
+        }
+
+        // Strict check: organization.status MUST explicitly equal 'active'
+        if ((organization.status || '').toLowerCase() !== 'active') {
+          return {
+            ...baseResult,
+            accessGranted: false,
+            denialReason: `Organization status is '${organization.status || 'inactive'}'. Access denied.`,
+          };
+        }
+
         return {
           ...baseResult,
-          accessGranted: false,
-          denialReason: `Database error retrieving organization: ${orgError.message}`,
-        };
-      }
-
-      if (!organization) {
-        return {
-          ...baseResult,
-          accessGranted: false,
-          denialReason: 'Associated organization record not found in public.organizations. Access denied.',
-        };
-      }
-
-      // Strict check: organization.status MUST explicitly equal 'active'
-      if ((organization.status || '').toLowerCase() !== 'active') {
-        return {
-          ...baseResult,
-          accessGranted: false,
-          denialReason: `Organization status is '${organization.status || 'inactive'}'. Access denied.`,
+          membership: chosenMembership,
+          organization,
+          effectiveRole: chosenMembership.role,
+          targetScreen: 'staff_portal',
+          accessGranted: true,
         };
       }
 
       return {
         ...baseResult,
-        membership: chosenMembership,
-        organization,
-        effectiveRole: chosenMembership.role,
-        targetScreen: 'staff_portal',
+        effectiveRole: 'customer',
+        targetScreen: 'guest_dashboard',
         accessGranted: true,
       };
-    }
+    })();
 
-    return {
-      ...baseResult,
-      effectiveRole: 'customer',
-      targetScreen: 'guest_dashboard',
-      accessGranted: true,
-    };
+    this.inFlightResolutions.set(dedupeKey, resolutionPromise);
+    resolutionPromise.finally(() => {
+      this.inFlightResolutions.delete(dedupeKey);
+    });
+
+    return resolutionPromise;
   }
 
   /**
