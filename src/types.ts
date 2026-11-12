@@ -218,13 +218,15 @@ export interface Hotel {
   description?: string;
   subscriptionPlanId?: string;
   subscriptionPlanName?: string;
+  hasGuestPortal?: boolean;
   subscriptionStatus?: 'trial' | 'active' | 'pending' | 'expired' | 'none';
-  billingCycle?: 'monthly' | 'annual';
+  billingCycle?: 'monthly' | 'annual' | '5year_contract';
   trialCode?: string;
   trialStartDate?: string;
   trialEndDate?: string;
   subscriptionStartDate?: string;
   subscriptionEndDate?: string;
+  isContractPlan?: boolean;
 }
 
 export interface Reservation {
@@ -245,9 +247,12 @@ export interface Reservation {
   address?: string;
   checkIn: string; // YYYY-MM-DD
   checkOut: string; // YYYY-MM-DD
+  checkInTime?: string; // e.g. 14:00
+  checkOutTime?: string; // e.g. 11:00
   nights: number;
   guests: number;
   total: number;
+  lockedRatePerNight?: number; // Immutable locked rate from booking creation time
   status:
     | 'pending_verification'
     | 'pending_payment'
@@ -268,7 +273,13 @@ export interface Reservation {
   cancellationRequestedAt?: string;
   refundStatus?: 'none' | 'pending' | 'initiated' | 'completed';
   refundAmount?: number;
+  refundBankDetails?: {
+    bankName: string;
+    accountNumber: string;
+    accountName: string;
+  };
   refundInitiatedAt?: string;
+  refundCompletedAt?: string;
   refundRef?: string;
   refundNotes?: string;
   originalDates?: {
@@ -412,7 +423,12 @@ export interface SubscriptionPlan {
   maxStaff: number;
   maxUsers: number;
   productAccess: ('stay' | 'classroom' | 'medbay')[];
+  hasGuestPortal?: boolean;
   active: boolean;
+  contractDiscountPercent?: number; // e.g. 87% rate
+  contractAnnualPrice?: number;
+  contractFiveYearTotal?: number;
+  contractDepositRequired?: number; // e.g. 20% deposit
 }
 
 export interface HotelSubscription {
@@ -423,11 +439,14 @@ export interface HotelSubscription {
   planName: string;
   status: 'trial' | 'active' | 'past_due' | 'cancelled' | 'expired' | 'suspended';
   amount: number;
-  billingCycle: 'monthly' | 'annual';
+  billingCycle: 'monthly' | 'annual' | '5year_contract';
   startDate: string;
   renewalDate: string;
   trialEndDate?: string;
   paymentStatus: 'paid' | 'pending' | 'failed' | 'overdue';
+  isContract?: boolean;
+  contractYears?: number;
+  depositPaid?: number;
 }
 
 export interface PlatformTransaction {
@@ -457,11 +476,13 @@ export interface PlatformAuditLog {
     | 'ASSIGN_ROLE'
     | 'CHANGE_ROLE'
     | 'DEACTIVATE_USER'
+    | 'BAN_USER'
     | 'REACTIVATE_USER'
     | 'CHANGE_SUBSCRIPTION_PRICE'
     | 'CHANGE_PLAN'
     | 'REFUND_PAYMENT'
     | 'UPDATE_PLATFORM_SETTING'
+    | 'UPDATE_USER_PROFILE'
     | 'RESOLVE_COMPLAINT';
   target: string;
   targetType: 'hotel' | 'user' | 'subscription' | 'setting' | 'complaint' | 'system';
@@ -481,6 +502,7 @@ export interface PlatformUser {
   status: 'active' | 'deactivated' | 'suspended';
   createdAt: string;
   lastActivity: string;
+  avatar?: string;
 }
 
 export interface PlatformProduct {
@@ -510,6 +532,8 @@ export interface PlatformSettings {
     supportEmail: string;
     supportPhone: string;
     companyInfo: string;
+    footerAboutText?: string;
+    copyrightText?: string;
   };
   subscriptionPayout?: {
     walletOrAccount: string;
@@ -582,4 +606,178 @@ export interface TrialToken {
   claimedAt?: string;
   notes?: string;
 }
+
+export interface WaitlistEntry {
+  id: string;
+  product: 'classroom' | 'medbay';
+  fullName: string;
+  email: string;
+  phone: string;
+  orgName: string;
+  institutionType: string;
+  city: string;
+  stateName: string;
+  additionalComments?: string;
+  status: 'pending' | 'contacted' | 'approved' | 'rejected';
+  createdAt: string;
+  updatedAt?: string;
+}
+
+// ─── ENTERPRISE PMS HOSPITALITY DATA MODELS ───
+
+export interface CashierShift {
+  id: string;
+  hotelId: string;
+  cashierEmail: string;
+  cashierName: string;
+  terminalId: string;
+  openedAt: string;
+  openingFloat: number; // in NGN (₦)
+  closedAt?: string;
+  closingCashCount?: number;
+  expectedCash?: number;
+  variance?: number; // actual - expected
+  varianceReason?: string;
+  cashIn: number;
+  cashOut: number;
+  posCardTotal: number;
+  bankTransferTotal: number;
+  status: 'open' | 'closed';
+  handoverTo?: string;
+  handoverNotes?: string;
+}
+
+export interface FolioCharge {
+  id: string;
+  folioId: string;
+  date: string;
+  description: string;
+  category: 'room' | 'vat' | 'consumption_tax' | 'service_charge' | 'food_beverage' | 'laundry' | 'caution_deposit' | 'other';
+  amount: number; // in NGN
+  postedBy: string;
+  isReversed?: boolean;
+  reversalRefId?: string;
+  businessDate: string;
+}
+
+export interface LinkedReversal {
+  id: string;
+  originalChargeId: string;
+  folioId: string;
+  amount: number; // negative number
+  reason: string;
+  requestedBy: string;
+  approverEmail: string;
+  approvedAt: string;
+  timestamp: string;
+}
+
+export interface FolioPayment {
+  id: string;
+  folioId: string;
+  date: string;
+  amount: number;
+  method: 'cash' | 'pos_card' | 'bank_transfer' | 'paystack' | 'deposit_credit';
+  receiptNumber: string; // sequential no-gap
+  receivedBy: string;
+  notes?: string;
+  businessDate: string;
+}
+
+export interface GuestFolio {
+  id: string;
+  hotelId: string;
+  reservationId: string;
+  folioType: 'master' | 'room' | 'incidentals' | 'corporate_split';
+  folioNumber: string; // e.g. FOL-2026-001
+  guestName: string;
+  guestEmail: string;
+  roomNumber: string;
+  charges: FolioCharge[];
+  payments: FolioPayment[];
+  reversals: LinkedReversal[];
+  totalCharges: number;
+  totalPayments: number;
+  balanceDue: number;
+  status: 'open' | 'settled' | 'closed';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RefundRequest {
+  id: string;
+  hotelId: string;
+  reservationId: string;
+  guestName: string;
+  guestEmail: string;
+  amount: number;
+  reason: string;
+  status: 'pending_approval' | 'approved' | 'rejected' | 'settled';
+  requesterEmail: string;
+  requesterName: string;
+  requestedAt: string;
+  approverEmail?: string;
+  approvedAt?: string;
+  rejectionReason?: string;
+  settlementMethod?: string;
+  settlementRef?: string;
+}
+
+export interface NightAuditRecord {
+  id: string;
+  hotelId: string;
+  businessDate: string;
+  rolledToDate: string;
+  completedAt: string;
+  auditorEmail: string;
+  inHouseRoomsCount: number;
+  totalRoomRevenuePosted: number;
+  totalVatPosted: number;
+  totalConsumptionTaxPosted: number;
+  cashierShiftsReconciled: number;
+  auditNotes?: string;
+  status: 'successful' | 'flagged';
+}
+
+export interface BusinessDateStatus {
+  hotelId: string;
+  currentBusinessDate: string; // YYYY-MM-DD
+  isDayLocked: boolean;
+  lockedDates: string[];
+  lastAuditAt?: string;
+}
+
+export interface MaintenanceWorkOrder {
+  id: string;
+  hotelId: string;
+  roomId: string;
+  roomNumber: string;
+  category: 'hvac' | 'plumbing' | 'electrical' | 'carpentry' | 'painting' | 'furniture' | 'other';
+  title: string;
+  description: string;
+  priority: 'critical' | 'urgent' | 'routine';
+  status: 'open' | 'in_progress' | 'completed' | 'cancelled';
+  reportedBy: string;
+  assignedTechnician?: string;
+  startDate: string;
+  expectedEndDate: string;
+  blocksRoom: boolean;
+  guestConflictChecked: boolean;
+  conflictDetails?: string;
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface TaxConfiguration {
+  hotelId: string;
+  vatRate: number; // 7.5% in Nigeria
+  vatEnabled: boolean;
+  consumptionTaxRate: number; // 5% State Hotel Consumption Tax
+  consumptionTaxEnabled: boolean;
+  serviceChargeRate: number; // 10% standard hotel service charge
+  serviceChargeEnabled: boolean;
+  calculationOrder: 'subtotal_then_service_then_tax' | 'compound';
+  firsTinNumber?: string;
+}
+
 

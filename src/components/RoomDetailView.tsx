@@ -155,7 +155,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
 
         {(() => {
           const account = currentUserEmail ? resolveUserAccount(currentUserEmail) : null;
-          const showReturnButton = isSuperAdmin || (account && account.role !== 'customer');
+          const showReturnButton = Boolean(isSuperAdmin && currentUserEmail) || Boolean(account && account.role !== 'customer');
           return (
             <div className="flex items-center gap-2">
               <div className="w-5 h-5 bg-black text-white font-black rounded flex items-center justify-center text-xs">

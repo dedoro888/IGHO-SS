@@ -22,6 +22,7 @@ import {
   HotelSubscription,
   PlatformAuditLog,
 } from '../../types';
+import { formatHotelId } from '../../utils/hotelId';
 
 interface ConsoleHotelDetailModalProps {
   hotel: Hotel | null;
@@ -54,7 +55,9 @@ export const ConsoleHotelDetailModal: React.FC<ConsoleHotelDetailModalProps> = (
     'overview' | 'owner' | 'staff' | 'rooms' | 'reservations' | 'subscription' | 'activity'
   >('overview');
 
-  const hotelRooms = allRooms.filter((r) => r.branchId === hotel.id || !r.branchId);
+  const hotelRooms = allRooms.filter(
+    (r) => r.hotelId === hotel.id || r.branchId === hotel.id || (!r.hotelId && hotel.id === 'hotel-lava')
+  );
   const hotelReservations = allReservations.filter((r) => r.hotelId === hotel.id);
   const hotelStaff = allStaff.filter((s) => s.hotelId === hotel.id);
   const hotelLogs = auditLogs.filter(
@@ -84,7 +87,7 @@ export const ConsoleHotelDetailModal: React.FC<ConsoleHotelDetailModalProps> = (
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-base font-bold text-black truncate">{hotel.name}</h3>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neutral-100 border border-neutral-200 text-neutral-700">
-                  ID: {hotel.id}
+                  ID: {formatHotelId(hotel.id)}
                 </span>
                 {isSuspended ? (
                   <span className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
@@ -225,19 +228,99 @@ export const ConsoleHotelDetailModal: React.FC<ConsoleHotelDetailModalProps> = (
 
           {/* TAB 4: ROOMS */}
           {activeTab === 'rooms' && (
-            <div className="bg-white rounded-2xl border border-neutral-200 shadow-xs overflow-hidden">
-              {hotelRooms.length === 0 ? (
-                <div className="p-8 text-center text-neutral-500">No rooms configured yet.</div>
-              ) : (
-                <div className="p-4 grid grid-cols-2 gap-3">
-                  {hotelRooms.map((r) => (
-                    <div key={r.id} className="p-3 rounded-xl border border-neutral-200 bg-neutral-50 space-y-1">
-                      <div className="font-bold text-black">Room {r.number} - {r.typeName}</div>
-                      <div className="text-[11px] text-neutral-600 font-mono">₦{r.pricePerNight?.toLocaleString()} / night</div>
-                    </div>
-                  ))}
+            <div className="space-y-4">
+              {/* Rooms Summary Bar */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 shadow-xs">
+                  <span className="text-[10px] uppercase font-bold text-neutral-400 block">Total Rooms</span>
+                  <span className="text-lg font-black text-black font-mono">{hotelRooms.length}</span>
                 </div>
-              )}
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 shadow-xs">
+                  <span className="text-[10px] uppercase font-bold text-emerald-600 block">Available</span>
+                  <span className="text-lg font-black text-emerald-700 font-mono">
+                    {hotelRooms.filter((r) => r.status === 'available' || r.status === 'Vacant / Clean').length}
+                  </span>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 shadow-xs">
+                  <span className="text-[10px] uppercase font-bold text-rose-600 block">Occupied</span>
+                  <span className="text-lg font-black text-rose-700 font-mono">
+                    {hotelRooms.filter((r) => r.status === 'occupied' || (typeof r.status === 'string' && r.status.startsWith('Occupied'))).length}
+                  </span>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 shadow-xs">
+                  <span className="text-[10px] uppercase font-bold text-blue-600 block">Reserved / Other</span>
+                  <span className="text-lg font-black text-blue-700 font-mono">
+                    {hotelRooms.filter((r) => r.status === 'reserved' || r.status === 'cleaning' || r.status === 'maintenance').length}
+                  </span>
+                </div>
+              </div>
+
+              {/* Room Cards Grid */}
+              <div className="bg-white rounded-2xl border border-neutral-200 shadow-xs p-4">
+                {hotelRooms.length === 0 ? (
+                  <div className="p-8 text-center text-neutral-500">No rooms configured for this property yet.</div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {hotelRooms.map((r) => {
+                      const roomNum = r.number || r.id.replace('room-', '');
+                      const isOccupied = r.status === 'occupied' || (typeof r.status === 'string' && r.status.startsWith('Occupied'));
+                      const isAvailable = r.status === 'available' || r.status === 'Vacant / Clean';
+                      const isReserved = r.status === 'reserved';
+                      const isCleaning = r.status === 'cleaning' || (typeof r.status === 'string' && r.status.includes('Cleaning'));
+
+                      return (
+                        <div
+                          key={r.id}
+                          className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50/70 hover:bg-neutral-50 transition-colors flex flex-col justify-between gap-2.5"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="px-2.5 py-1 rounded-lg bg-black text-white font-mono font-black text-xs shadow-xs">
+                                Room {roomNum}
+                              </span>
+                              {r.floor && (
+                                <span className="text-[10px] font-mono text-neutral-500 font-semibold">
+                                  Fl. {r.floor}
+                                </span>
+                              )}
+                            </div>
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border font-mono ${
+                                isOccupied
+                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                  : isAvailable
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  : isReserved
+                                  ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                  : isCleaning
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                  : 'bg-neutral-100 text-neutral-700 border-neutral-200'
+                              }`}
+                            >
+                              {r.status}
+                            </span>
+                          </div>
+
+                          <div>
+                            <div className="font-bold text-xs text-black line-clamp-1">{r.typeName || r.type}</div>
+                            <div className="text-[10px] text-neutral-500 mt-0.5 flex items-center gap-2">
+                              {r.beds && <span>{r.beds}</span>}
+                              {r.view && <span>• {r.view}</span>}
+                            </div>
+                          </div>
+
+                          <div className="pt-2 border-t border-neutral-200 flex items-center justify-between">
+                            <span className="text-[10px] text-neutral-400 font-medium">Rate / Night</span>
+                            <span className="text-xs font-black font-mono text-black">
+                              ₦{r.pricePerNight?.toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

@@ -17,7 +17,7 @@ import {
   MapPin,
   Check,
 } from 'lucide-react';
-import { ActiveScreen, CustomerProfile } from '../types';
+import { ActiveScreen, CustomerProfile, PlatformSettings } from '../types';
 import { MacBookProDashboard } from './MacBookProDashboard';
 import { HeaderNav } from './HeaderNav';
 
@@ -28,6 +28,7 @@ interface LandingPageProps {
   onSignOut?: () => void;
   onEditProfile?: () => void;
   isSuperAdmin?: boolean;
+  platformSettings?: PlatformSettings;
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({
@@ -37,6 +38,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onSignOut,
   onEditProfile,
   isSuperAdmin = false,
+  platformSettings,
 }) => {
   const partners = ['PALMVIEW', 'SOUTHSIDE', 'GRAND KUBA', 'ANGELIS', 'BAHAMAS', 'EAGLE EYE'];
 
@@ -483,28 +485,46 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <div className="w-6 h-6 bg-white text-black font-black rounded flex items-center justify-center text-xs">
                 I
               </div>
-              <span className="font-extrabold text-lg tracking-tight text-white">IGHO</span>
+              <span className="font-extrabold text-lg tracking-tight text-white">
+                {platformSettings?.general?.platformName || 'IGHO'}
+              </span>
             </div>
             <p className="text-neutral-400 leading-relaxed text-[11px]">
-              Building smart software that helps organisations operate better and grow faster.
+              {platformSettings?.general?.footerAboutText ||
+                'Building smart software that helps organisations operate better and grow faster.'}
             </p>
+            {platformSettings?.socialHandles && platformSettings.socialHandles.length > 0 && (
+              <div className="flex flex-wrap gap-2 pt-2">
+                {platformSettings.socialHandles.map((handle) => (
+                  <a
+                    key={handle.id}
+                    href={handle.url || '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2.5 py-1 rounded-lg bg-neutral-900 border border-neutral-800 text-[11px] text-neutral-300 hover:text-white hover:border-neutral-600 hover:bg-neutral-800 transition-colors inline-flex items-center gap-1.5"
+                  >
+                    <span>{handle.platformName || handle.platform}</span>
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">
             <div className="text-white font-semibold text-xs">Products</div>
             <ul className="space-y-1.5 text-[11px]">
               <li>
-                <button onClick={() => onNavigate('hotel_directory')} className="hover:text-white">
+                <button onClick={() => onNavigate('hotel_directory')} className="hover:text-white cursor-pointer">
                   IGHO Stay
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('classroom_waitlist')} className="hover:text-white">
+                <button onClick={() => onNavigate('classroom_waitlist')} className="hover:text-white cursor-pointer">
                   IGHO Classroom
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('medbay_waitlist')} className="hover:text-white">
+                <button onClick={() => onNavigate('medbay_waitlist')} className="hover:text-white cursor-pointer">
                   IGHO MedBay
                 </button>
               </li>
@@ -515,17 +535,17 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <div className="text-white font-semibold text-xs">Company</div>
             <ul className="space-y-1.5 text-[11px]">
               <li>
-                <button onClick={() => onNavigate('demo_request')} className="hover:text-white">
+                <button onClick={() => onNavigate('demo_request')} className="hover:text-white cursor-pointer">
                   About Us
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('demo_request')} className="hover:text-white">
+                <button onClick={() => onNavigate('demo_request')} className="hover:text-white cursor-pointer">
                   Book a Demo
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('demo_request')} className="hover:text-white">
+                <button onClick={() => onNavigate('demo_request')} className="hover:text-white cursor-pointer">
                   Contact
                 </button>
               </li>
@@ -536,23 +556,36 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <div className="text-white font-semibold text-xs">Contact</div>
             <ul className="space-y-1.5 text-[11px] text-neutral-400">
               <li className="flex items-center gap-1.5">
-                <Mail className="w-3.5 h-3.5 text-neutral-500" />
-                <span>hello@igho.software</span>
+                <Mail className="w-3.5 h-3.5 text-neutral-500 shrink-0" />
+                <a
+                  href={`mailto:${platformSettings?.general?.supportEmail || 'hello@igho.software'}`}
+                  className="hover:text-white transition-colors"
+                >
+                  {platformSettings?.general?.supportEmail || 'hello@igho.software'}
+                </a>
               </li>
               <li className="flex items-center gap-1.5">
-                <Phone className="w-3.5 h-3.5 text-neutral-500" />
-                <span>+234 (0) 803 000 0000</span>
+                <Phone className="w-3.5 h-3.5 text-neutral-500 shrink-0" />
+                <a
+                  href={`tel:${platformSettings?.general?.supportPhone || '+2349020886597'}`}
+                  className="hover:text-white transition-colors"
+                >
+                  {platformSettings?.general?.supportPhone || '+234 902 0886 597'}
+                </a>
               </li>
-              <li className="flex items-center gap-1.5">
-                <MapPin className="w-3.5 h-3.5 text-neutral-500" />
-                <span>Asaba, Delta State, Nigeria</span>
+              <li className="flex items-start gap-1.5">
+                <MapPin className="w-3.5 h-3.5 text-neutral-500 shrink-0 mt-0.5" />
+                <span>{platformSettings?.general?.companyInfo || 'Asaba, Delta State, Nigeria'}</span>
               </li>
             </ul>
           </div>
         </div>
 
         <div className="max-w-6xl mx-auto pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-[11px] text-neutral-500">
-          <div>© {new Date().getFullYear()} IGHO Software Systems. All rights reserved.</div>
+          <div>
+            {platformSettings?.general?.copyrightText ||
+              `© ${new Date().getFullYear()} ${platformSettings?.general?.platformName || 'IGHO Software Systems'}. All rights reserved.`}
+          </div>
           <div className="flex flex-wrap gap-4 items-center">
             <span>Privacy Policy</span>
             <span>Terms of Service</span>

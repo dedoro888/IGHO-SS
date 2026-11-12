@@ -62,74 +62,58 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
   // Fallback plans if none provided in props
   const displayPlans = plans && plans.length > 0 ? plans : [
     {
-      id: 'plan-starter',
-      name: 'Starter Tier',
-      monthlyPrice: 45000,
-      annualPrice: 450000,
+      id: 'plan-starter-30k',
+      name: 'Plan 1 — Standard Operations (PMS)',
+      monthlyPrice: 30000,
+      annualPrice: 300000,
       trialDurationDays: 30,
-      maxRooms: 15,
-      maxStaff: 3,
-      maxUsers: 5,
+      maxRooms: 20,
+      maxStaff: 5,
+      maxUsers: 10,
       productAccess: ['stay' as const],
+      hasGuestPortal: false,
       active: true,
       features: [
-        'Up to 15 Rooms & Suites',
-        '3 Staff Accounts & Roles',
+        'Up to 20 Rooms & Suites',
+        '5 Staff Accounts & Roles',
         'Front Desk Check-in & Check-out',
-        'Real-time Reservation Pipeline',
-        'Guest Folios & Receipt Generator',
-        'Dedicated Public Booking Page',
-        'Automated Bank Transfer Verification',
+        'Live Room Inventory & Housekeeping',
+        'Direct Hotel Bank Transfer Verification',
+        'Guest Folios & Printable Receipts',
+        'Paystack Payment Processing Absorbed by IGHO',
+        'Guest Portal: Not Included (No Online Guest Booking)',
       ],
     },
     {
-      id: 'plan-complete',
-      name: 'Growth / Complete Tier',
-      monthlyPrice: 75000,
-      annualPrice: 750000,
-      trialDurationDays: 30,
-      maxRooms: 50,
-      maxStaff: 10,
-      maxUsers: 15,
-      productAccess: ['stay' as const],
-      active: true,
-      features: [
-        'Up to 50 Rooms & Suites',
-        '10 Staff Accounts with Custom RBAC',
-        'Housekeeping Operations Manager',
-        'Guest Complaints & Maintenance Reports',
-        'Date Reschedule & Upgrade Processing',
-        'Refund Initiation & Bank Reconciliation',
-        'Exportable Financial & Occupancy Reports',
-        'Priority Technical Support',
-      ],
-    },
-    {
-      id: 'plan-enterprise',
-      name: 'Enterprise Tier',
-      monthlyPrice: 150000,
-      annualPrice: 1500000,
+      id: 'plan-complete-50k',
+      name: 'Plan 2 — Complete Hospitality Cloud',
+      monthlyPrice: 50000,
+      annualPrice: 500000,
       trialDurationDays: 30,
       maxRooms: 999,
-      maxStaff: 999,
-      maxUsers: 999,
+      maxStaff: 100,
+      maxUsers: 200,
       productAccess: ['stay' as const],
+      hasGuestPortal: true,
       active: true,
       features: [
         'Unlimited Rooms & Suites',
-        'Unlimited Staff & Custom Roles',
-        'Multi-Branch Hotel Operations',
-        'Centralized Inventory & Folio Consolidation',
-        'Custom Role Builder & Fine Permissions',
-        'Dedicated IGHO Account Manager',
-        '24/7 Phone, WhatsApp & On-site Support',
+        'Direct Public Guest Booking Portal (Online Stays)',
+        'Unlimited Staff Accounts with Custom Editable Roles',
+        'Separate Caution Deposit Accounting & Refunds',
+        'Multi-Branch Property Management',
+        'Guest Inquiries, Reports & Service Dispatch',
+        'Audit Logging & Financial Analytics Export',
+        'Paystack Payment Processing Absorbed by IGHO',
+        '24/7 Priority Support & Onboarding SLA',
       ],
     },
   ];
 
   // Handle Free Trial Activation with Special Code (generated from IGHO Console)
-  const handleActivateTrial = (e: React.FormEvent) => {
+  const handleActivateTrial = async (e: React.FormEvent) => {
     e.preventDefault();
+
     setCodeError(null);
 
     const cleanCode = specialCode.trim().toUpperCase();
@@ -169,35 +153,35 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
         return;
       }
     } else if (!VALID_TRIAL_CODES.includes(cleanCode)) {
-      setCodeError('Invalid special trial code. Please enter a valid token generated from the IGHO Console.');
+      setCodeError('Invalid special trial code. Please enter a valid token generated from the IGO Console.');
       return;
     }
 
     setIsActivatingTrial(true);
 
-    setTimeout(() => {
-      // Mark token as used if it was a dynamically generated token
-      if (matchedToken) {
-        try {
-          const updatedTokens = dynamicTokens.map((t) =>
-            t.id === matchedToken.id
-              ? {
-                  ...t,
-                  status: 'used' as const,
-                  claimedByHotelId: hotel.id,
-                  claimedByHotelName: hotel.name,
-                  claimedAt: new Date().toISOString(),
-                }
-              : t
-          );
-          localStorage.setItem('igho_trial_tokens', JSON.stringify(updatedTokens));
-          window.dispatchEvent(new Event('igho_tokens_updated'));
-        } catch {}
+    try {
+      const res = await fetch('/api/trial-tokens/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: cleanCode,
+          hotelId: hotel.id,
+          hotelName: hotel.name,
+          redeemedByEmail: currentUserEmail || hotel.email,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setIsActivatingTrial(false);
+        setCodeError(data.message || 'Invalid trial code.');
+        return;
       }
 
-      // Calculate 1 month expiration date (30 days)
+      // Calculate 1 month expiration date (30 days) from server response or fallback
       const now = new Date();
-      const trialEndDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      const trialEndDate = data.token?.endDate || new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
       const updatedHotel: Hotel = {
         ...hotel,
@@ -214,13 +198,18 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
         trialEndDate: trialEndDate,
       };
 
-      setTrialSuccessMessage(`Special token "${cleanCode}" verified! Your 1-Month Free Trial is now active until ${new Date(trialEndDate).toLocaleDateString()}.`);
+      setTrialSuccessMessage(
+        `Special token "${cleanCode}" verified! Your 1-Month Free Trial is now active until ${new Date(trialEndDate).toLocaleDateString()}.`
+      );
       setIsActivatingTrial(false);
 
       setTimeout(() => {
         onSubscriptionActivated(updatedHotel);
       }, 1200);
-    }, 800);
+    } catch (err) {
+      setIsActivatingTrial(false);
+      setCodeError('Unable to connect to server to verify trial token. Please try again.');
+    }
   };
 
   // Handle Paid Plan Activation via Paystack
@@ -240,6 +229,7 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
       subscriptionStatus: 'active',
       subscriptionPlanId: selectedPlanForPayment.id,
       subscriptionPlanName: selectedPlanForPayment.name,
+      hasGuestPortal: selectedPlanForPayment.hasGuestPortal ?? (selectedPlanForPayment.monthlyPrice >= 50000),
       billingCycle: billingCycle,
       subscriptionStartDate: now.toISOString(),
       subscriptionEndDate: subscriptionEndDate,

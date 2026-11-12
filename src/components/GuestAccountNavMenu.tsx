@@ -143,7 +143,7 @@ export const GuestAccountNavMenu: React.FC<GuestAccountNavMenuProps> = ({
 
           {/* Menu Actions */}
           <div className="space-y-1">
-            {isSuperAdmin && (
+            {Boolean(isSuperAdmin && isLoggedIn) && (
               <button
                 onClick={() => {
                   setMenuOpen(false);
@@ -152,7 +152,7 @@ export const GuestAccountNavMenu: React.FC<GuestAccountNavMenuProps> = ({
                 className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors text-left cursor-pointer border border-emerald-200"
               >
                 <Shield className="w-3.5 h-3.5 text-emerald-600" />
-                <span>IGHO Super Admin Console</span>
+                <span>IGO Console</span>
               </button>
             )}
 

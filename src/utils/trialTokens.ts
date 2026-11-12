@@ -156,7 +156,7 @@ export function validateAndRedeemTrialToken(
   if (!found) {
     return {
       success: false,
-      message: `Invalid trial token "${cleanCode}". Tokens must be generated from the IGHO Console (Subscriptions page).`,
+      message: `Invalid trial token "${cleanCode}". Tokens must be generated from the IGO Console (Subscriptions page).`,
     };
   }
 

@@ -112,6 +112,29 @@ export class SupabaseAuthService {
   }
 
   /**
+   * Verify 6-digit OTP code for email confirmation, login, or recovery.
+   */
+  async verifyOtp(
+    email: string,
+    token: string,
+    type: 'signup' | 'email' | 'recovery' = 'signup'
+  ): Promise<{ data: any; error: any }> {
+    const supabase = await getSupabaseClient();
+    if (!supabase) {
+      return { data: null, error: new Error('Supabase client is not configured.') };
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const { data, error } = await supabase.auth.verifyOtp({
+      email: cleanEmail,
+      token: token.trim(),
+      type,
+    });
+
+    return { data, error };
+  }
+
+  /**
    * Set or update active user UUID for session consistency tracking.
    */
   setActiveUserId(userId: string | null) {
@@ -363,6 +386,19 @@ export class SupabaseAuthService {
       // Helper to ensure an outdated session or sign-out cannot authorise a newer session
       const isStale = () => this.sessionGeneration !== generationAtStart;
 
+      // 0. Check in-console banned list first (instant lockout without DB roundtrip)
+      try {
+        const bannedList: string[] = JSON.parse(localStorage.getItem('igho_banned_users') || '[]');
+        if (bannedList.includes(email.trim().toLowerCase())) {
+          return {
+            ...baseResult,
+            accessGranted: false,
+            denialReason:
+              'This account has been suspended by platform administration. Please contact support@igho.com.ng for assistance.',
+          };
+        }
+      } catch {}
+
       // 1. Fetch user profile from public.profiles
       const { profile, error: profileError } = await this.getProfile(userId);
       if (isStale()) {
@@ -410,7 +446,7 @@ export class SupabaseAuthService {
         };
       }
 
-      if (isSuperAdmin) {
+      if (isSuperAdmin && email.trim().toLowerCase() !== 'dedoro888@gmail.com') {
         return {
           ...baseResult,
           isSuperAdmin: true,

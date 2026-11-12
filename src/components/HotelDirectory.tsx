@@ -43,18 +43,12 @@ export const HotelDirectory: React.FC<HotelDirectoryProps> = ({
   const [notifiedHotels, setNotifiedHotels] = useState<string[]>([]);
   const [locationDetecting, setLocationDetecting] = useState(false);
 
-  // Helper: A hotel is LIVE on the directory after it registers, is approved AND has paid subscription or active 1-month trial
+  // Helper: A hotel is LIVE on the directory after it registers, is approved AND has active status or trial
   const isHotelLiveInDirectory = (h: Hotel) => {
     if (h.approvalStatus === 'rejected' || (h as any).isSuspended) return false;
-    const isApproved = h.approvalStatus === 'approved' || (!h.approvalStatus && h.status === 'active');
-    const hasPaidOrTrial =
-      h.paymentStatus === 'paid' ||
-      h.subscriptionStatus === 'active' ||
-      h.subscriptionStatus === 'trial';
-    const isNotBlocked =
-      h.status !== 'pending' &&
-      h.status !== 'suspended';
-    return isApproved && hasPaidOrTrial && isNotBlocked;
+    if (h.status === 'suspended' || h.status === 'pending') return false;
+    const isApproved = h.approvalStatus === 'approved' || h.status === 'active' || h.isLive;
+    return isApproved;
   };
 
   // Dynamically aggregate States & Cities so newly approved & paid hotels immediately appear
@@ -119,7 +113,7 @@ export const HotelDirectory: React.FC<HotelDirectoryProps> = ({
         selectedCity === 'All Cities' ||
         (h.city && h.city.toLowerCase() === selectedCity.toLowerCase());
       const matchesTab =
-        activeTab === 'all' ? true : activeTab === 'live' ? h.isLive : true;
+        activeTab === 'all' ? true : activeTab === 'live' ? !!h.isLive : !h.isLive;
 
       return matchesSearch && matchesState && matchesCity && matchesTab;
     });
@@ -154,14 +148,14 @@ export const HotelDirectory: React.FC<HotelDirectoryProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {isSuperAdmin && (
+          {isSuperAdmin && currentUserEmail && (
             <button
               onClick={() => onNavigate('super_admin_console')}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
-              title="Access IGHO Platform Super Admin Console"
+              title="Access IGO Platform Super Admin Console"
             >
               <Shield className="w-3.5 h-3.5" />
-              <span>IGHO Console</span>
+              <span>IGO Console</span>
             </button>
           )}
 

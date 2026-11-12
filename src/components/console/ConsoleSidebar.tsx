@@ -28,6 +28,7 @@ export type ConsoleTab =
   | 'hotels'
   | 'schools'
   | 'hospitals'
+  | 'waitlists'
   | 'registrations'
   | 'users'
   | 'subscriptions'
@@ -44,6 +45,7 @@ interface ConsoleSidebarProps {
   onSelectTab: (tab: ConsoleTab) => void;
   pendingRegistrationsCount: number;
   openComplaintsCount: number;
+  pendingWaitlistsCount?: number;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   isMobile?: boolean;
@@ -54,6 +56,7 @@ interface ConsoleSidebarProps {
   profileEmail?: string;
   profilePicture?: string;
   onEditProfileClick?: () => void;
+  onSignOut?: () => void;
 }
 
 export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
@@ -61,6 +64,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
   onSelectTab,
   pendingRegistrationsCount,
   openComplaintsCount,
+  pendingWaitlistsCount = 0,
   isCollapsed,
   onToggleCollapse,
   isMobile = false,
@@ -71,12 +75,19 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
   profileEmail = 'rumeobire@gmail.com',
   profilePicture = '',
   onEditProfileClick,
+  onSignOut,
 }) => {
   const [orgsExpanded, setOrgsExpanded] = useState<boolean>(false);
 
   const isOrgTab = currentTab === 'hotels' || currentTab === 'schools' || currentTab === 'hospitals';
 
   const secondaryNavItems = [
+    {
+      id: 'waitlists' as ConsoleTab,
+      label: 'Waitlist Intake',
+      icon: Layers,
+      badge: pendingWaitlistsCount > 0 ? pendingWaitlistsCount : undefined,
+    },
     {
       id: 'registrations' as ConsoleTab,
       label: 'Registration Queue',
@@ -111,15 +122,11 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
         }}
         className={`${
           isMobile
-            ? 'fixed top-0 bottom-0 left-0 h-full w-[272px] z-50 rounded-r-[2rem] border-r shadow-2xl bg-white/95 flex flex-col justify-start pb-6 px-5 pt-4 gap-4'
-            : `hidden md:flex sticky top-4 max-h-[calc(100vh-2rem)] ml-4 my-4 flex-col justify-start gap-4 shrink-0 bg-transparent shadow-none border-none px-0 ${
-                isCollapsed ? 'overflow-visible' : 'overflow-y-auto overscroll-contain pr-1 scrollbar-none'
+            ? 'fixed top-0 bottom-0 left-0 h-full w-[272px] z-50 rounded-r-[2rem] border-r shadow-2xl bg-white/95 flex flex-col justify-between pb-6 px-5 pt-4 gap-3 overflow-hidden'
+            : `hidden md:flex sticky top-4 h-[calc(100vh-2rem)] ml-4 my-4 flex-col justify-between gap-3 shrink-0 bg-transparent shadow-none border-none px-0 ${
+                isCollapsed ? 'overflow-visible' : 'overflow-hidden'
               }`
         }`}
-        style={{
-          overscrollBehavior: 'contain',
-          scrollbarWidth: 'none',
-        }}
       >
         {/* SECTION 1: HEADER BRANDING PILL */}
         <div
@@ -134,7 +141,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
               <IghoOfficialEmblem className="w-7 h-7 cursor-pointer shrink-0 animate-none" />
               <div className="flex flex-col text-left leading-tight min-w-0">
                 <div className="flex items-center gap-1">
-                  <span className="font-extrabold text-[12px] tracking-tight text-neutral-900 font-sans">IGHO</span>
+                  <span className="font-extrabold text-[12px] tracking-tight text-neutral-900 font-sans">IGO</span>
                   <span className="text-neutral-400 text-[10px]">/</span>
                   <span className="text-[11px] font-bold text-[#10b981]">Console</span>
                 </div>
@@ -148,9 +155,11 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
 
         {/* SECTION 2: NAVIGATION & SCROLLABLE CONTROLS LIST */}
         <div
-          className="flex flex-col shrink-0 h-fit w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-4 nav-second-segment"
+          className={`flex flex-col flex-1 min-h-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-3.5 nav-second-segment ${
+            isCollapsed ? 'overflow-visible' : 'overflow-y-auto max-h-[calc(100vh-14rem)] pr-1.5 scrollbar-thin scrollbar-thumb-neutral-200 hover:scrollbar-thumb-neutral-300'
+          }`}
         >
-          <div className="h-fit space-y-2.5 text-xs w-full">
+          <div className="space-y-2 text-xs w-full">
             {/* Overview Tab Link */}
             <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
               <button
@@ -242,47 +251,51 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                 </AnimatePresence>
               </button>
 
-              {/* Float Bubbles on Hover when Collapsed */}
+              {/* Float Bubbles on Hover when Collapsed (Curved to the right and underneath) */}
               {isCollapsed && (
                 <>
-                  <div className="absolute top-1/2 right-1/2 -translate-y-1/2 w-28 h-20 opacity-0 pointer-events-none group-hover:pointer-events-auto z-10" />
+                  {/* Invisible hover bridge to keep bubble cluster active */}
+                  <div className="absolute top-0 left-1/2 w-36 h-36 opacity-0 pointer-events-none group-hover:pointer-events-auto z-10" />
 
                   {/* Bubble 1: Hotels & Stay */}
                   <button
+                    type="button"
                     onClick={() => onSelectTab('hotels')}
-                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black border border-neutral-800 shadow-xl flex items-center justify-center text-white opacity-0 scale-0 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto group-hover:-translate-x-[4.25rem] group-hover:-translate-y-[2rem] hover:scale-110 active:scale-95 hover:bg-neutral-900 cursor-pointer z-20"
+                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black border border-neutral-700 shadow-xl flex items-center justify-center text-white opacity-0 scale-0 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto group-hover:translate-x-[3.4rem] group-hover:translate-y-[0.35rem] hover:scale-115 active:scale-95 hover:bg-neutral-900 cursor-pointer z-30 transition-all duration-300"
                     style={{
-                      transition: 'all 450ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+                      transition: 'all 400ms cubic-bezier(0.34, 1.56, 0.64, 1)',
                     }}
-                    title="Hotels & Stay"
+                    title="Hotels & Stay (IGHO Stay)"
                   >
-                    <Building2 className="w-3.5 h-3.5 text-white" />
+                    <Building2 className="w-4 h-4 text-white" />
                   </button>
 
                   {/* Bubble 2: Schools */}
                   <button
+                    type="button"
                     onClick={() => onSelectTab('schools')}
-                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white border border-black shadow-lg flex items-center justify-center text-black opacity-0 scale-0 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto group-hover:-translate-x-[5.25rem] group-hover:translate-y-0 hover:scale-110 active:scale-95 hover:bg-neutral-50 cursor-pointer z-20"
+                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white border border-neutral-300 shadow-xl flex items-center justify-center text-black opacity-0 scale-0 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto group-hover:translate-x-[2.85rem] group-hover:translate-y-[2.85rem] hover:scale-115 active:scale-95 hover:bg-neutral-50 cursor-pointer z-30 transition-all duration-300"
                     style={{
-                      transition: 'all 450ms cubic-bezier(0.34, 1.56, 0.64, 1)',
-                      transitionDelay: '35ms',
+                      transition: 'all 400ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+                      transitionDelay: '40ms',
                     }}
-                    title="Schools (Beta)"
+                    title="Schools & Academia (IGHO Classroom)"
                   >
-                    <GraduationCap className="w-3.5 h-3.5 text-black" />
+                    <GraduationCap className="w-4 h-4 text-black" />
                   </button>
 
                   {/* Bubble 3: Hospitals */}
                   <button
+                    type="button"
                     onClick={() => onSelectTab('hospitals')}
-                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white border border-black shadow-lg flex items-center justify-center text-black opacity-0 scale-0 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto group-hover:-translate-x-[4.25rem] group-hover:translate-y-[2rem] hover:scale-110 active:scale-95 hover:bg-neutral-50 cursor-pointer z-20"
+                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white border border-neutral-300 shadow-xl flex items-center justify-center text-black opacity-0 scale-0 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto group-hover:translate-x-[1.1rem] group-hover:translate-y-[4.35rem] hover:scale-115 active:scale-95 hover:bg-neutral-50 cursor-pointer z-30 transition-all duration-300"
                     style={{
-                      transition: 'all 450ms cubic-bezier(0.34, 1.56, 0.64, 1)',
-                      transitionDelay: '70ms',
+                      transition: 'all 400ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+                      transitionDelay: '80ms',
                     }}
-                    title="Hospitals (Roadmap)"
+                    title="Hospitals & Clinics (IGHO Medbay)"
                   >
-                    <Cross className="w-3.5 h-3.5 text-black" />
+                    <Cross className="w-4 h-4 text-black" />
                   </button>
                 </>
               )}
@@ -511,7 +524,11 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
             <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
               <button
                 onClick={() => {
-                  if (onNavigate) onNavigate('guest_login');
+                  if (onSignOut) {
+                    onSignOut();
+                  } else if (onNavigate) {
+                    onNavigate('landing');
+                  }
                 }}
                 title="Log Out"
                 className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 text-rose-600 hover:text-rose-700 bg-rose-50/50 hover:bg-rose-50 border-rose-100 hover:border-rose-200 ${

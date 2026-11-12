@@ -30,6 +30,7 @@ import {
   PlatformAuditLog,
 } from '../../types';
 import { ConsoleHotelDetailModal } from './ConsoleHotelDetailModal';
+import { formatHotelId } from '../../utils/hotelId';
 
 interface DemoRequestEntry {
   id: string;
@@ -88,6 +89,22 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
   const [demoSearchQuery, setDemoSearchQuery] = useState('');
   const [demoStatusFilter, setDemoStatusFilter] = useState('all');
   const [demoCurrentPage, setDemoCurrentPage] = useState(1);
+  const [schoolsCount, setSchoolsCount] = useState<number>(2);
+  const [hospitalsCount, setHospitalsCount] = useState<number>(2);
+
+  useEffect(() => {
+    fetch('/api/waitlists')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.waitlists)) {
+          const sch = data.waitlists.filter((w: any) => w.product === 'classroom').length;
+          const hosp = data.waitlists.filter((w: any) => w.product === 'medbay').length;
+          setSchoolsCount(Math.max(2, sch));
+          setHospitalsCount(Math.max(2, hosp));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const loadDemos = () => {
@@ -259,6 +276,48 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
 
       {activeSubTab === 'directory' ? (
         <>
+          {/* Live Multi-Vertical Organization Registry Counters */}
+          <div className="bg-gradient-to-r from-neutral-900 via-neutral-950 to-black text-white rounded-2xl p-4 sm:p-5 border border-neutral-800 shadow-md flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-white font-bold shrink-0">
+                <Building2 className="w-5 h-5 text-emerald-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-white">Platform Organizations Registry</h3>
+                <p className="text-xs text-neutral-400">Live operational organizations and institutions across all verticals</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
+              {/* Hotels Live Counter */}
+              <div className="px-3.5 py-2 rounded-xl bg-neutral-850/90 border border-neutral-750 flex items-center gap-2.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-neutral-400">Hotels (Stay)</div>
+                  <div className="text-base sm:text-lg font-black font-mono text-white leading-none mt-0.5">{totalHotels} Live</div>
+                </div>
+              </div>
+
+              {/* Schools Live Counter */}
+              <div className="px-3.5 py-2 rounded-xl bg-neutral-850/90 border border-neutral-750 flex items-center gap-2.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-neutral-400">Schools (Classroom)</div>
+                  <div className="text-base sm:text-lg font-black font-mono text-white leading-none mt-0.5">{schoolsCount} Pipeline</div>
+                </div>
+              </div>
+
+              {/* Hospitals Live Counter */}
+              <div className="px-3.5 py-2 rounded-xl bg-neutral-850/90 border border-neutral-750 flex items-center gap-2.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-neutral-400">Hospitals (MedBay)</div>
+                  <div className="text-base sm:text-lg font-black font-mono text-white leading-none mt-0.5">{hospitalsCount} Pipeline</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* 5 KPI Metric Cards in a row */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
         {/* 1. Total Hotels */}
@@ -395,14 +454,8 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-neutral-50 border-b border-neutral-200 text-[10px] font-bold uppercase tracking-wider text-neutral-500">
-                  <th className="p-4 w-8">
-                    <input
-                      type="checkbox"
-                      checked={selectedRows.length === paginatedHotels.length && paginatedHotels.length > 0}
-                      onChange={toggleSelectAll}
-                      className="rounded border-neutral-300 text-black focus:ring-0 cursor-pointer"
-                    />
-                  </th>
+                  <th className="p-4 w-12 text-center">S/N</th>
+                  <th className="p-4 w-32">Hotel ID</th>
                   <th className="p-4">Hotel Name</th>
                   <th className="p-4">Location</th>
                   <th className="p-4">Rooms</th>
@@ -412,38 +465,43 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100 text-xs text-neutral-800">
-                {paginatedHotels.map((hotel) => (
-                  <tr
-                    key={hotel.id}
-                    className="hover:bg-neutral-50/80 transition-colors"
-                  >
-                    <td className="p-4">
-                      <input
-                        type="checkbox"
-                        checked={selectedRows.includes(hotel.id)}
-                        onChange={() => toggleSelectRow(hotel.id)}
-                        className="rounded border-neutral-300 text-black focus:ring-0 cursor-pointer"
-                      />
-                    </td>
-                    <td className="p-4">
-                      <button
-                        onClick={() => setInspectingHotel(hotel)}
-                        className="font-bold text-neutral-900 hover:text-black hover:underline text-left block cursor-pointer"
-                        title="Click to inspect hotel details & compliance"
-                      >
-                        {hotel.name}
-                      </button>
-                      <div className="text-[10px] text-neutral-400 font-mono">{hotel.id}</div>
-                    </td>
-                    <td className="p-4">
-                      <div className="flex items-center gap-1 text-neutral-700">
-                        <MapPin className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                        <span>{hotel.city || 'N/A'}, {hotel.state || 'N/A'}</span>
-                      </div>
-                    </td>
-                    <td className="p-4 font-mono font-medium">
-                      {hotel.roomCount || 0} rooms
-                    </td>
+                {paginatedHotels.map((hotel, index) => {
+                  const serialNumber = (currentPage - 1) * pageSize + index + 1;
+                  const hotelIdFormatted = formatHotelId(hotel.id);
+                  const actualRoomCount = (rooms || []).filter((r) => r.hotelId === hotel.id).length;
+
+                  return (
+                    <tr
+                      key={hotel.id}
+                      className="hover:bg-neutral-50/80 transition-colors"
+                    >
+                      <td className="p-4 text-center font-mono font-bold text-neutral-400 text-xs">
+                        {serialNumber}
+                      </td>
+                      <td className="p-4 font-mono font-bold text-xs">
+                        <span className="px-2 py-0.5 rounded bg-neutral-100 border border-neutral-200 text-neutral-800 text-[10px]">
+                          {hotelIdFormatted}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <button
+                          onClick={() => setInspectingHotel(hotel)}
+                          className="font-bold text-neutral-900 hover:text-black hover:underline text-left block cursor-pointer"
+                          title="Click to inspect hotel details & compliance"
+                        >
+                          {hotel.name}
+                        </button>
+                        <div className="text-[10px] text-neutral-400 font-mono">{hotel.email}</div>
+                      </td>
+                      <td className="p-4">
+                        <div className="flex items-center gap-1 text-neutral-700">
+                          <MapPin className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                          <span>{hotel.city || 'N/A'}, {hotel.state || 'N/A'}</span>
+                        </div>
+                      </td>
+                      <td className="p-4 font-mono font-medium">
+                        <span className="font-bold text-neutral-900">{actualRoomCount || hotel.roomCount || 0}</span> rooms
+                      </td>
                     <td className="p-4">
                       {hotel.isLive ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -499,7 +557,8 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
                       </div>
                     </td>
                   </tr>
-                ))}
+                );
+              })}
               </tbody>
             </table>
           </div>
@@ -806,30 +865,35 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
             <div>
               <h3 className="text-lg font-bold text-neutral-900">Delete Property Account</h3>
               <p className="text-xs text-neutral-500 mt-1 leading-relaxed">
-                This action is permanent. Type <span className="font-mono font-bold text-black">{deletingHotel.name}</span> to confirm deletion of this organization.
+                This action is permanent and removes the organization, its rooms, and staff associations. Type <span className="font-mono font-bold text-black">{deletingHotel.name}</span> or <span className="font-mono font-bold text-rose-600">DELETE</span> to confirm.
               </p>
             </div>
             <input
               type="text"
               value={typedConfirmation}
               onChange={(e) => setTypedConfirmation(e.target.value)}
-              placeholder="Type hotel name exactly"
+              placeholder={`Type "${deletingHotel.name}" or "DELETE"`}
               className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3 py-2 text-xs text-neutral-900 focus:outline-none focus:border-rose-500"
             />
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
+                type="button"
                 onClick={() => setDeletingHotel(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-neutral-700 hover:bg-neutral-100"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-neutral-700 hover:bg-neutral-100 cursor-pointer"
               >
                 Cancel
               </button>
               <button
-                disabled={typedConfirmation !== deletingHotel.name}
+                type="button"
+                disabled={
+                  typedConfirmation.trim().toLowerCase() !== deletingHotel.name.trim().toLowerCase() &&
+                  typedConfirmation.trim().toUpperCase() !== 'DELETE'
+                }
                 onClick={() => {
                   onDeleteHotel(deletingHotel.id);
                   setDeletingHotel(null);
                 }}
-                className="px-4 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-40 shadow-sm"
+                className="px-4 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 disabled:opacity-40 shadow-sm cursor-pointer transition-colors"
               >
                 Permanently Delete
               </button>
@@ -843,7 +907,7 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
         <ConsoleHotelDetailModal
           hotel={inspectingHotel}
           onClose={() => setInspectingHotel(null)}
-          allRooms={rooms.filter((r) => r.hotelId === inspectingHotel.id)}
+          allRooms={rooms.filter((r) => r.hotelId === inspectingHotel.id || r.branchId === inspectingHotel.id || (!r.hotelId && inspectingHotel.id === 'hotel-lava'))}
           allReservations={reservations.filter((res) => res.hotelId === inspectingHotel.id)}
           allStaff={staff.filter((s) => s.hotelId === inspectingHotel.id)}
           subscription={subscriptions.find((s) => s.hotelId === inspectingHotel.id)}

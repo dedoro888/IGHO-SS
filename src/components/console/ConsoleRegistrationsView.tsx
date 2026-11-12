@@ -632,13 +632,13 @@ export const ConsoleRegistrationsView: React.FC<ConsoleRegistrationsViewProps> =
                 <div className="flex items-center gap-2">
                   <input
                     readOnly
-                    value={`https://stay.igho.com/${approvedHotelModal.slug || approvedHotelModal.id}`}
+                    value={`https://${approvedHotelModal.slug || approvedHotelModal.id}.igho.com.ng`}
                     className="flex-1 bg-neutral-100 border border-neutral-300 rounded-xl px-3 py-2 text-xs font-mono text-neutral-800"
                   />
                   <button
                     onClick={() =>
                       handleCopy(
-                        `https://stay.igho.com/${approvedHotelModal.slug || approvedHotelModal.id}`,
+                        `https://${approvedHotelModal.slug || approvedHotelModal.id}.igho.com.ng`,
                         'link'
                       )
                     }
@@ -655,13 +655,13 @@ export const ConsoleRegistrationsView: React.FC<ConsoleRegistrationsViewProps> =
                 <div className="flex items-center gap-2">
                   <input
                     readOnly
-                    value={`https://stay.igho.com/activate?token=act_${approvedHotelModal.id}`}
+                    value={`https://stay.igho.com.ng/activate?token=act_${approvedHotelModal.id}`}
                     className="flex-1 bg-neutral-100 border border-neutral-300 rounded-xl px-3 py-2 text-xs font-mono text-neutral-800"
                   />
                   <button
                     onClick={() =>
                       handleCopy(
-                        `https://stay.igho.com/activate?token=act_${approvedHotelModal.id}`,
+                        `https://stay.igho.com.ng/activate?token=act_${approvedHotelModal.id}`,
                         'invite'
                       )
                     }

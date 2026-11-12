@@ -48,9 +48,9 @@ export const HotelGuestPortal: React.FC<HotelGuestPortalProps> = ({
   });
 
   // Resolve user role to allow quick return to Console / Staff Portal
-  const effectiveEmail = currentUserEmail || (typeof window !== 'undefined' ? localStorage.getItem('igho_currentStaffEmail') : '') || '';
+  const effectiveEmail = currentUserEmail || '';
   const account = effectiveEmail ? resolveUserAccount(effectiveEmail) : null;
-  const showReturnButton = isSuperAdmin || (account && account.role !== 'customer');
+  const showReturnButton = Boolean(isSuperAdmin && currentUserEmail) || Boolean(account && account.role !== 'customer');
 
   return (
     <div className="min-h-screen bg-white text-neutral-900 flex flex-col justify-between">

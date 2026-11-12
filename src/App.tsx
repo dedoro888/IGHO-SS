@@ -123,7 +123,7 @@ export default function App() {
   });
   const [guestDashboardTab, setGuestDashboardTab] = useState<'overview' | 'bookings' | 'profile'>('overview');
   const [currentStaffEmail, setCurrentStaffEmail] = useState<string>(() => {
-    return loadFromStorage('igho_currentStaffEmail', 'admin@lavahotels.ng');
+    return loadFromStorage('igho_currentStaffEmail', '');
   });
 
   // Sole authority for Platform Super Admin status: verified against public.platform_roles
@@ -202,7 +202,11 @@ export default function App() {
             if (resolved.userId !== userId) {
               return;
             }
-            const verified = Boolean(resolved.isSuperAdmin && resolved.accessGranted);
+            const verified = Boolean(
+              resolved.isSuperAdmin &&
+              resolved.accessGranted &&
+              authEmail !== 'dedoro888@gmail.com'
+            );
             setIsSuperAdmin(verified);
             setIsVerifyingSuperAdmin(false);
 
@@ -263,12 +267,15 @@ export default function App() {
   const [activeScreen, setActiveScreen] = useState<ActiveScreen>(() => {
     if (typeof window !== 'undefined') {
       const hash = window.location.hash.toLowerCase();
-      if (hash === '#console' || hash === '#/console') {
+      const savedEmail = loadFromStorage('igho_currentUserEmail', '');
+      if ((hash === '#console' || hash === '#/console') && savedEmail) {
         return 'super_admin_console';
       }
       try {
         const savedScreen = localStorage.getItem('igho_active_screen');
-        if (savedScreen) return savedScreen as ActiveScreen;
+        if (savedScreen && (savedScreen !== 'super_admin_console' || savedEmail)) {
+          return savedScreen as ActiveScreen;
+        }
       } catch {}
     }
     return 'landing';
@@ -282,10 +289,24 @@ export default function App() {
     } catch {}
   }, [activeScreen]);
 
-  // Handle URL hash changes for direct routing (/console or #console)
+  const [activeInviteToken, setActiveInviteToken] = useState<string | null>(null);
+
+  // Handle URL hash changes for direct routing (/console or #console, #invite=)
   useEffect(() => {
     const handleHashRouting = () => {
-      const hash = window.location.hash.toLowerCase();
+      const rawHash = window.location.hash;
+      const hash = rawHash.toLowerCase();
+
+      // Check for staff invitation link format: /#invite=TOKEN or #invite=TOKEN
+      if (rawHash.includes('invite=')) {
+        const token = rawHash.split('invite=')[1]?.split('&')[0];
+        if (token) {
+          setActiveInviteToken(token);
+          setActiveScreen('staff_invitation_accept');
+          return;
+        }
+      }
+
       if (hash === '#console' || hash === '#/console' || window.location.pathname === '/console') {
         if (isVerifyingSuperAdmin) {
           // While verifying against Supabase database, mount console so database verification gate runs
@@ -294,11 +315,14 @@ export default function App() {
           }
           return;
         }
-        if (isSuperAdmin) {
+        if (currentUserEmail && isSuperAdmin) {
           setActiveScreen('super_admin_console');
         } else {
-          // Strictly fail closed: block non-super-admins from /console
+          // Strictly fail closed: block logged out or non-super-admins from /console
           window.location.hash = '';
+          if (window.history?.replaceState) {
+            window.history.replaceState(null, '', window.location.pathname);
+          }
           if (activeScreen === 'super_admin_console') {
             setActiveScreen('landing');
           }
@@ -308,7 +332,7 @@ export default function App() {
     handleHashRouting();
     window.addEventListener('hashchange', handleHashRouting);
     return () => window.removeEventListener('hashchange', handleHashRouting);
-  }, [isSuperAdmin, isVerifyingSuperAdmin, activeScreen]);
+  }, [isSuperAdmin, isVerifyingSuperAdmin, activeScreen, currentUserEmail]);
 
   const navigateTo = (screen: ActiveScreen, authEmail?: string) => {
     const emailToCheck = (authEmail || currentUserEmail || '').trim().toLowerCase();
@@ -320,14 +344,19 @@ export default function App() {
         setActiveScreen('super_admin_console');
         return;
       }
-      if (!isSuperAdmin) {
-        alert('Access Denied: IGHO Console is strictly restricted to authorized IGHO Platform Super Admins verified in the database.');
+      if (!currentUserEmail || !isSuperAdmin) {
+        // Strictly fail closed: redirected to login if not authenticated as super admin
+        window.location.hash = '';
+        if (window.history?.replaceState) {
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+        setActiveScreen('guest_login');
         return;
       }
       window.location.hash = 'console';
     } else if (screen === 'staff_portal') {
       if (isSuperAdmin) {
-        alert('Access Restricted: Hotel management dashboards are private to hotel staff. The IGHO Console cannot access or impersonate individual hotel operational portals.');
+        alert('Access Restricted: Hotel management dashboards are private to hotel staff. The IGO Console cannot access or impersonate individual hotel operational portals.');
         return;
       }
       const userHotel = hotels.find((h) => h.email?.toLowerCase() === emailToCheck);
@@ -340,6 +369,18 @@ export default function App() {
           alert(`Your subscription for "${userHotel.name}" is unpaid. Please choose a subscription plan first via the Notification Bell in the header.`);
           return;
         }
+      }
+    } else if (screen === 'hotel_guest_portal') {
+      if (
+        selectedHotel &&
+        (selectedHotel.hasGuestPortal === false ||
+          selectedHotel.subscriptionPlanId === 'plan-starter-30k' ||
+          selectedHotel.packageType === 'management')
+      ) {
+        alert(
+          `Guest Portal Unavailable: ${selectedHotel.name} is on the Standard Operations Plan (₦30,000/mo), which does not include a public online booking portal. Direct online bookings require the ₦50,000 Complete Plan.`
+        );
+        return;
       }
     } else if (window.location.hash === '#console' || window.location.hash === '#/console') {
       history.replaceState(null, '', window.location.pathname);
@@ -359,14 +400,20 @@ export default function App() {
 
     setCurrentUserEmail('');
     setCurrentGuestProfile(null);
+    setCurrentStaffEmail('');
     setIsSuperAdmin(false);
     setIsVerifyingSuperAdmin(false);
     try {
       window.location.hash = '';
+      if (typeof window !== 'undefined' && window.history?.replaceState) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
       localStorage.removeItem('igho_currentUserEmail');
+      localStorage.removeItem('igho_currentStaffEmail');
+      localStorage.removeItem('igho_auth_user');
       localStorage.setItem('igho_active_screen', 'landing');
     } catch {}
-    navigateTo('landing');
+    setActiveScreen('landing');
   };
 
   const handleEditProfile = () => {
@@ -406,12 +453,22 @@ export default function App() {
     }
 
     // Direct database-verified resolution from Supabase:
-    if (resolvedAuth?.isSuperAdmin || isSuperAdmin) {
+    const isSuperAdminAccount = Boolean(
+      resolvedAuth?.isSuperAdmin &&
+      cleanEmail !== 'dedoro888@gmail.com'
+    );
+    if (isSuperAdminAccount) {
       setIsSuperAdmin(true);
       setIsVerifyingSuperAdmin(false);
       window.location.hash = 'console';
       setActiveScreen('super_admin_console');
       return;
+    } else {
+      setIsSuperAdmin(false);
+      setIsVerifyingSuperAdmin(false);
+      if (window.location.hash.toLowerCase() === '#console' || window.location.hash.toLowerCase() === '#/console') {
+        window.location.hash = '';
+      }
     }
 
     const account = resolveUserAccount(cleanEmail, profile);
@@ -516,12 +573,13 @@ export default function App() {
   }, [selectedHotel]);
 
   const [rooms, setRooms] = useState<Room[]>(() => {
-    const saved = loadFromStorage<Room[]>('igho_db_rooms', INITIAL_ROOMS);
-    // Ensure Lava Hotel & Suites has exactly the 6 rooms configured in INITIAL_ROOMS
-    const nonLavaRooms = (saved || []).filter(
-      (r) => r.hotelId && r.hotelId !== 'hotel-cold-lava' && r.hotelId !== 'hotel-lava'
-    );
-    return [...INITIAL_ROOMS, ...nonLavaRooms];
+    try {
+      const stored = localStorage.getItem('igho_db_rooms');
+      if (stored !== null) {
+        return JSON.parse(stored);
+      }
+    } catch {}
+    return INITIAL_ROOMS;
   });
   useEffect(() => {
     saveToStorage('igho_db_rooms', rooms);
@@ -533,11 +591,13 @@ export default function App() {
   });
 
   const [reservations, setReservations] = useState<Reservation[]>(() => {
-    const saved = loadFromStorage<Reservation[]>('igho_db_reservations', INITIAL_RESERVATIONS);
-    const nonLavaRes = (saved || []).filter(
-      (r) => r.hotelId && r.hotelId !== 'hotel-cold-lava' && r.hotelId !== 'hotel-lava'
-    );
-    return [...INITIAL_RESERVATIONS, ...nonLavaRes];
+    try {
+      const stored = localStorage.getItem('igho_db_reservations');
+      if (stored !== null) {
+        return JSON.parse(stored);
+      }
+    } catch {}
+    return INITIAL_RESERVATIONS;
   });
   useEffect(() => {
     saveToStorage('igho_db_reservations', reservations);
@@ -639,13 +699,26 @@ export default function App() {
   useEffect(() => {
     const handleHotelsUpdate = () => {
       const stored = loadFromStorage<Hotel[]>('igho_db_hotels', []);
-      if (stored.length > 0) {
-        setHotels(stored);
-      }
+      const sanitized = (stored || []).filter((h: any) => h.id !== 'hotel-transcorp' && h.id !== 'hotel-eko');
+      setHotels(sanitized);
     };
     window.addEventListener('igho_hotels_updated', handleHotelsUpdate);
     return () => window.removeEventListener('igho_hotels_updated', handleHotelsUpdate);
   }, []);
+
+  // Immediate Security Lockout Listener (When an account is banned from IGO Console)
+  useEffect(() => {
+    const handleUserBanned = (e: any) => {
+      const bannedEmail = e.detail?.email?.toLowerCase();
+      const status = e.detail?.status;
+      if (bannedEmail && currentUserEmail.toLowerCase() === bannedEmail && (status === 'suspended' || status === 'deactivated')) {
+        handleGuestSignOut();
+        alert('Your account has been suspended by platform administration. Please contact support@igho.com.ng.');
+      }
+    };
+    window.addEventListener('igho_user_banned', handleUserBanned);
+    return () => window.removeEventListener('igho_user_banned', handleUserBanned);
+  }, [currentUserEmail]);
 
   // Prevent race conditions and infinite write-back loops on load / sync
   const [initialStateLoaded, setInitialStateLoaded] = React.useState(false);
@@ -689,9 +762,9 @@ export default function App() {
             setHotels((prev) => {
               // Retain any pending or freshly registered local hotels not yet committed to backend
               const localUnsynced = (prev || []).filter(
-                (lh) => !s.hotels.some((sh: any) => sh.id === lh.id)
+                (lh) => lh.id !== 'hotel-transcorp' && lh.id !== 'hotel-eko' && !s.hotels.some((sh: any) => sh.id === lh.id)
               );
-              const merged = [...localUnsynced, ...s.hotels];
+              const merged = [...localUnsynced, ...s.hotels].filter((h: any) => h.id !== 'hotel-transcorp' && h.id !== 'hotel-eko');
               saveToStorage('igho_db_hotels', merged);
               return merged;
             });
@@ -912,7 +985,7 @@ export default function App() {
             return h;
           })
         );
-        triggerLiveToast(`⚡ Live Update: Room ${room.number} (${room.type} · ₦${room.pricePerNight.toLocaleString()}) added by hotel`, 'add');
+        // Data sync happens silently in background without spamming console notifications
       } else if (action === 'update' && room) {
         setRooms((prev) => prev.map((r) => (r.id === room.id ? room : r)));
         setSelectedRoom((prev) => (prev.id === room.id ? room : prev));
@@ -921,12 +994,8 @@ export default function App() {
             ? { ...prev, room, total: room.pricePerNight * prev.nights }
             : prev
         );
-        triggerLiveToast(`⚡ Live Update: Room ${room.number} rate updated to ₦${room.pricePerNight.toLocaleString()}/night`, 'update');
       } else if (action === 'delete' && roomId) {
-        let deletedRoomNumber = '';
         setRooms((prev) => {
-          const target = prev.find((r) => r.id === roomId);
-          if (target) deletedRoomNumber = target.number;
           const remaining = prev.filter((r) => r.id !== roomId);
 
           // If guest was looking at this exact room in RoomDetailView, safely navigate them back to portal
@@ -956,12 +1025,33 @@ export default function App() {
             roomCount: Math.max(0, (h.roomCount || 1) - 1),
           }))
         );
-
-        triggerLiveToast(`⚡ Live Update: Room ${deletedRoomNumber || ''} removed by hotel`, 'delete');
       }
     });
 
-    return () => unsubscribe();
+    // Official Console Notifications strictly for: Waitlists, Demos, and Support Inquiries
+    const handleWaitlistEvent = (e: any) => {
+      const product = e.detail?.product === 'classroom' ? 'Classroom' : e.detail?.product === 'medbay' ? 'Medbay' : 'Product';
+      triggerLiveToast(`📋 New Waitlist: ${e.detail?.name || 'A user'} joined the ${product} waitlist`, 'add');
+    };
+
+    const handleDemoEvent = (e: any) => {
+      triggerLiveToast(`📅 Demo Request: New demo inquiry from ${e.detail?.orgName || e.detail?.fullName || 'Organization'}`, 'add');
+    };
+
+    const handleSupportEvent = (e: any) => {
+      triggerLiveToast(`💬 Customer Support: New inquiry from ${e.detail?.guestName || 'Guest'} (${e.detail?.subject || 'Feedback'})`, 'update');
+    };
+
+    window.addEventListener('igho_waitlist_joined', handleWaitlistEvent);
+    window.addEventListener('igho_demo_requested', handleDemoEvent);
+    window.addEventListener('igho_feedback_submitted', handleSupportEvent);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('igho_waitlist_joined', handleWaitlistEvent);
+      window.removeEventListener('igho_demo_requested', handleDemoEvent);
+      window.removeEventListener('igho_feedback_submitted', handleSupportEvent);
+    };
   }, [selectedRoom.id, activeScreen, bookingDraft.room?.id]);
 
   const handleAddRoom = (newRoom: Room) => {
@@ -984,9 +1074,8 @@ export default function App() {
       })
     );
 
-    // Broadcast in real-time across tabs and SSE
+    // Broadcast in real-time across tabs and SSE silently in background
     broadcastLiveRoomAction('add', newRoom);
-    triggerLiveToast(`Room ${newRoom.number} added (${newRoom.type} · ₦${newRoom.pricePerNight.toLocaleString()})`, 'add');
   };
 
   const handleUpdateRoom = (updatedRoom: Room) => {
@@ -1004,16 +1093,12 @@ export default function App() {
       }));
     }
 
-    // Broadcast in real-time across tabs and SSE
+    // Broadcast in real-time across tabs and SSE silently in background
     broadcastLiveRoomAction('update', updatedRoom);
-    triggerLiveToast(`Room ${updatedRoom.number} rate updated to ₦${updatedRoom.pricePerNight.toLocaleString()}/night`, 'update');
   };
 
   const handleDeleteRoom = (roomId: string) => {
-    let deletedRoomNumber = '';
     setRooms((prev) => {
-      const target = prev.find((r) => r.id === roomId);
-      if (target) deletedRoomNumber = target.number;
       const remaining = prev.filter((r) => r.id !== roomId);
 
       if (selectedRoom.id === roomId && remaining.length > 0) {
@@ -1038,9 +1123,8 @@ export default function App() {
       }))
     );
 
-    // Broadcast in real-time across tabs and SSE
+    // Broadcast in real-time across tabs and SSE silently in background
     broadcastLiveRoomAction('delete', null, roomId, selectedHotel.id);
-    triggerLiveToast(`Room ${deletedRoomNumber || ''} removed immediately from all guest views`, 'delete');
   };
 
   const handleAddReservation = (newRes: Reservation) => {
@@ -1081,7 +1165,8 @@ export default function App() {
           (userAccountMatch?.targetScreen === 'staff_portal' && h.name.toLowerCase().includes('lava'))
       )
     : null;
-  const activeHotelForPMS = currentUserHotel || selectedHotel;
+  const activeHotelForPMS = currentUserHotel || (hotels.find((h) => h.id === selectedHotel.id) || selectedHotel);
+  const activeSelectedHotel = hotels.find((h) => h.id === selectedHotel.id) || selectedHotel;
 
   // Check if an approved hotel has unlocked their subscription:
   // Approved hotels MUST show subscription plans first, UNLESS they paid OR activated 1-month free trial with special code
@@ -1121,6 +1206,7 @@ export default function App() {
           onSignOut={handleGuestSignOut}
           onEditProfile={handleEditProfile}
           isSuperAdmin={isSuperAdmin}
+          platformSettings={platformSettings}
         />
       )}
 
@@ -1222,8 +1308,8 @@ export default function App() {
       {/* SCREEN 5: HOTEL PUBLIC GUEST PORTAL (ROOMS & SUITES) */}
       {activeScreen === 'hotel_guest_portal' && (
         <HotelGuestPortal
-          hotel={selectedHotel}
-          rooms={rooms.filter((r) => !r.hotelId || r.hotelId === selectedHotel.id)}
+          hotel={activeSelectedHotel}
+          rooms={rooms.filter((r) => !r.hotelId || r.hotelId === activeSelectedHotel.id)}
           currentUserEmail={currentUserEmail}
           currentGuestProfile={currentGuestProfile}
           onSignOut={handleGuestSignOut}
@@ -1241,7 +1327,7 @@ export default function App() {
       {activeScreen === 'room_detail' && (
         <RoomDetailView
           room={selectedRoom}
-          hotel={selectedHotel}
+          hotel={activeSelectedHotel}
           allRooms={rooms}
           currentUserEmail={currentUserEmail}
           currentGuestProfile={currentGuestProfile}
@@ -1261,7 +1347,7 @@ export default function App() {
       {activeScreen === 'guest_checkout' && (
         <GuestBookingCheckout
           room={bookingDraft.room}
-          hotel={selectedHotel}
+          hotel={activeSelectedHotel}
           bookingDraft={bookingDraft}
           currentUserEmail={currentUserEmail}
           currentGuestProfile={currentGuestProfile}
@@ -1278,7 +1364,7 @@ export default function App() {
       {/* SCREEN 8: GUEST DASHBOARD (BOOKINGS, PROFILE, STATUS BANNERS) */}
       {activeScreen === 'guest_dashboard' && (
         <GuestDashboard
-          hotel={selectedHotel}
+          hotel={activeSelectedHotel}
           reservations={reservations}
           rooms={rooms}
           currentUserEmail={currentUserEmail}
@@ -1349,14 +1435,14 @@ export default function App() {
                 </span>
                 <h2 className="text-xl font-black text-white">Hotel PMS Dashboard Restricted</h2>
                 <p className="text-xs text-neutral-400 leading-relaxed">
-                  Hotel operational dashboards contain proprietary tenant operations and guest private records. By strict platform policy, the IGHO Console cannot access or view private hotel dashboards.
+                  Hotel operational dashboards contain proprietary tenant operations and guest private records. By strict platform policy, the IGO Console cannot access or view private hotel dashboards.
                 </p>
               </div>
               <button
                 onClick={() => navigateTo('super_admin_console')}
                 className="w-full py-3 rounded-xl bg-white text-black font-extrabold text-xs hover:bg-neutral-200 transition-colors cursor-pointer shadow-sm"
               >
-                Return to IGHO Console
+                Return to IGO Console
               </button>
             </div>
           </div>
@@ -1429,6 +1515,21 @@ export default function App() {
             onAddCustomRole={(newRole) => {
               setCustomRoles((prev) => [...prev, newRole]);
             }}
+            onUpdateCustomRole={(updatedRole) => {
+              setCustomRoles((prev) =>
+                prev.map((r) => (r.id === updatedRole.id ? updatedRole : r))
+              );
+              setStaff((prev) =>
+                prev.map((s) =>
+                  s.role === updatedRole.id || s.role === updatedRole.name.toLowerCase()
+                    ? { ...s, permissions: updatedRole.permissions }
+                    : s
+                )
+              );
+            }}
+            onDeleteCustomRole={(roleId) => {
+              setCustomRoles((prev) => prev.filter((r) => r.id !== roleId));
+            }}
             onUpdateReportStatus={(reportId, status, notes) => {
               setGuestReports((prev) =>
                 prev.map((r) => (r.id === reportId ? { ...r, status, resolutionNotes: notes } : r))
@@ -1474,11 +1575,13 @@ export default function App() {
           onUpdateSettings={(updatedSettings) => setPlatformSettings(updatedSettings)}
           onNavigate={(screen) => {
             if (screen === 'guest_login') {
-              setCurrentUserEmail('');
-              setCurrentGuestProfile(null);
+              handleGuestSignOut();
+              navigateTo('guest_login');
+              return;
             }
             navigateTo(screen);
           }}
+          onSignOut={handleGuestSignOut}
           onUpdateHotels={(updatedHotels) => setHotels(updatedHotels)}
           demoRequests={demoRequests}
           onUpdateDemoRequests={setDemoRequests}
@@ -1486,16 +1589,51 @@ export default function App() {
       )}
 
       {/* SCREEN 16: STAFF INVITATION ACCEPTANCE & ONBOARDING */}
-      {activeScreen === 'staff_invitation_accept' && (
-        <StaffInvitationAccept
-          invitation={INITIAL_INVITATIONS[0]}
-          onAccept={(_token, _password, name) => {
-            alert(`Welcome to IGHO, ${name}! Your staff account is activated.`);
-            navigateTo('staff_portal');
-          }}
-          onNavigate={navigateTo}
-        />
-      )}
+      {activeScreen === 'staff_invitation_accept' && (() => {
+        const matchingInvite =
+          invitations.find((i) => i.token === activeInviteToken || i.id === activeInviteToken) ||
+          invitations[0] || {
+            id: 'inv-lava',
+            hotelId: 'hotel-lava',
+            hotelName: 'Lava Hotel & Suites',
+            email: 'staff@lavahotels.ng',
+            role: 'receptionist',
+          };
+
+        return (
+          <StaffInvitationAccept
+            invitationData={{
+              id: matchingInvite.id,
+              hotelId: matchingInvite.hotelId,
+              hotelName: matchingInvite.hotelName || 'Lava Hotel & Suites',
+              email: matchingInvite.email,
+              role: (matchingInvite.role as any) || 'receptionist',
+            }}
+            onComplete={(newStaffAccount) => {
+              setStaff((prev) => [newStaffAccount, ...prev]);
+              setInvitations((prev) =>
+                prev.map((i) =>
+                  i.id === matchingInvite.id || i.token === activeInviteToken
+                    ? { ...i, status: 'accepted' }
+                    : i
+                )
+              );
+              setCurrentStaffEmail(newStaffAccount.email);
+              try {
+                window.location.hash = '';
+              } catch {}
+              setLiveToast({
+                id: Date.now().toString(),
+                type: 'create',
+                message: `Account activated! Welcome to ${matchingInvite.hotelName}, ${newStaffAccount.name}.`,
+              });
+              setTimeout(() => setLiveToast(null), 4000);
+              navigateTo('staff_portal');
+            }}
+            onNavigate={navigateTo}
+          />
+        );
+      })()}
 
       {/* FLOATING REAL-TIME LIVE ACTIVITY NOTIFICATION TOAST */}
       {liveToast && (

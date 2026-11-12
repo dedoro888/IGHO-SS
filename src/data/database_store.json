@@ -1,0 +1,118 @@
+{
+  "customRoles": [],
+  "invitations": [
+    {
+      "id": "inv-1794053717662",
+      "hotelId": "htl-lava",
+      "email": "accountant@lavahotel.com",
+      "role": "finance",
+      "token": "inv-1794053717662-vfkqx0",
+      "status": "pending",
+      "invitedBy": "Hotel Owner",
+      "invitedAt": "2026-11-07T12:15:17.662Z",
+      "expiresAt": "2026-11-14T12:15:17.662Z"
+    }
+  ],
+  "waitlists": [
+    {
+      "id": "wl-1794215630202-f8xy",
+      "product": "classroom",
+      "fullName": "Principal Emmanuel Adebayo",
+      "email": "adebayo@lagosgrammar.edu.ng",
+      "phone": "+2348021234567",
+      "orgName": "Lagos Grammar School",
+      "institutionType": "Secondary School",
+      "city": "Ikeja",
+      "stateName": "Lagos",
+      "additionalComments": "Interested in managing our 800 students and term examinations.",
+      "status": "pending",
+      "createdAt": "2026-11-09T09:13:50.202Z"
+    }
+  ],
+  "storageFiles": [
+    {
+      "id": "file-lava-1",
+      "organizationId": "hotel-lava",
+      "name": "lobby_facade_highres.jpg",
+      "category": "guest_portal_media",
+      "categoryName": "Guest Portal & Promotional Media",
+      "sizeBytes": 4200000,
+      "path": "/org/hotel-lava/media/lobby_facade_highres.jpg",
+      "uploadedAt": "2026-11-04T20:52:57.502Z",
+      "uploadedBy": "owner@lavahotel.com"
+    },
+    {
+      "id": "file-lava-2",
+      "organizationId": "hotel-lava",
+      "name": "executive_suite_gallery.zip",
+      "category": "room_galleries",
+      "categoryName": "Room and Facility Galleries",
+      "sizeBytes": 18500000,
+      "path": "/org/hotel-lava/rooms/executive_suite_gallery.zip",
+      "uploadedAt": "2026-11-05T20:52:57.502Z",
+      "uploadedBy": "manager@lavahotel.com"
+    },
+    {
+      "id": "file-lava-3",
+      "organizationId": "hotel-lava",
+      "name": "cac_registration_certificate.pdf",
+      "category": "hotel_documents",
+      "categoryName": "Hotel & Compliance Documents",
+      "sizeBytes": 1850000,
+      "path": "/org/hotel-lava/docs/cac_registration_certificate.pdf",
+      "uploadedAt": "2026-10-28T20:52:57.502Z",
+      "uploadedBy": "owner@lavahotel.com"
+    }
+  ],
+  "trialTokens": [
+    {
+      "id": "tok-trial-30",
+      "code": "IGHO-TR-9K4M",
+      "durationDays": 30,
+      "status": "active",
+      "createdAt": "2026-11-09T20:58:43.676Z",
+      "createdBy": "Super Admin",
+      "notes": "Launch 1-Month Free Trial Promo Token"
+    },
+    {
+      "id": "tok-universal-1",
+      "code": "IGHO-TR-7X2P",
+      "durationDays": 30,
+      "status": "active",
+      "createdAt": "2026-11-09T20:58:43.676Z",
+      "createdBy": "Super Admin",
+      "notes": "Universal 30-Day Evaluation Token"
+    },
+    {
+      "id": "tok-pilot-lava",
+      "code": "IGHO-TR-LAVA",
+      "durationDays": 30,
+      "assignedHotelId": "hotel-lava",
+      "assignedHotelName": "Lava Hotel & Suites",
+      "status": "active",
+      "createdAt": "2026-11-09T20:58:43.676Z",
+      "createdBy": "Super Admin",
+      "notes": "Allocated Exclusively to Lava Hotel & Suites"
+    }
+  ],
+  "hotels": [
+    {
+      "id": "hotel-lava",
+      "name": "Lava Hotel & Suites",
+      "location": "Victoria Island, Lagos",
+      "city": "Victoria Island",
+      "state": "Lagos",
+      "country": "Nigeria",
+      "subscriptionPlanId": "plan-starter-30k",
+      "subscriptionPlanName": "Plan 1 — Standard Operations (PMS)",
+      "packageType": "management",
+      "hasGuestPortal": false,
+      "startingPrice": 40000,
+      "roomCount": 6,
+      "isLive": true
+    }
+  ],
+  "storageCustomQuotas": {
+    "hotel-lava": 10737418240
+  }
+}

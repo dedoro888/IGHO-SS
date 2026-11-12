@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CreditCard,
   ShieldCheck,
@@ -13,23 +13,36 @@ import {
   XCircle,
   Download,
   Lock,
+  HardDrive,
+  Info,
+  Layers,
+  Image as ImageIcon,
+  FileText,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { Hotel, SubscriptionPlan } from '../../types';
 import { INITIAL_PLANS } from '../../data/platformData';
 import { PaystackSubscriptionModal } from '../PaystackSubscriptionModal';
+import { SubscriptionCountdownTimer } from '../common/SubscriptionCountdownTimer';
 
 interface HotelSubscriptionViewProps {
   hotel: Hotel;
   plans?: SubscriptionPlan[];
-  onUpgradePlan?: (planId: string, billingCycle: 'monthly' | 'annual') => void;
+  payoutSettings?: any;
+  onUpgrade?: (planId: string, billingCycle: 'monthly' | 'annual' | '5year_contract') => void;
+  onUpgradePlan?: (planId: string, billingCycle: 'monthly' | 'annual' | '5year_contract') => void;
 }
 
 export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
   hotel,
   plans = INITIAL_PLANS,
+  payoutSettings,
+  onUpgrade,
   onUpgradePlan,
 }) => {
-  const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('monthly');
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual' | '5year_contract'>('monthly');
   const [selectedPlanId, setSelectedPlanId] = useState<string>(
     hotel.packageType === 'complete' ? plans[1]?.id || plans[0]?.id : plans[0]?.id || 'plan-1'
   );
@@ -40,12 +53,66 @@ export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
   const [updatePaymentModal, setUpdatePaymentModal] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('Mastercard ending in 4821');
 
+  // De-cluttered Collapsible Section Toggles
+  const [showStorageBreakdown, setShowStorageBreakdown] = useState(false);
+  const [showBillingHistory, setShowBillingHistory] = useState(false);
+
+  // Live Organisation Storage State
+  const [storageInfo, setStorageInfo] = useState<{
+    quotaBytes: number;
+    usedBytes: number;
+    percentage: number;
+    warningState: 'normal' | 'approaching' | 'critical' | 'exceeded';
+    categoriesBreakdown?: any;
+    fileCount?: number;
+  }>({
+    quotaBytes: hotel.packageType === 'complete' ? 10 * 1024 * 1024 * 1024 : 1 * 1024 * 1024 * 1024,
+    usedBytes: 24.55 * 1024 * 1024,
+    percentage: 2.3,
+    warningState: 'normal',
+  });
+
+  const loadStorage = () => {
+    fetch(`/api/storage/${hotel.id}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          setStorageInfo({
+            quotaBytes: data.quotaBytes,
+            usedBytes: data.usedBytes,
+            percentage: data.percentage,
+            warningState: data.warningState,
+            categoriesBreakdown: data.categoriesBreakdown,
+            fileCount: data.fileCount,
+          });
+        }
+      })
+      .catch((e) => console.error(e));
+  };
+
+  useEffect(() => {
+    loadStorage();
+    window.addEventListener('storage_file_uploaded', loadStorage);
+    window.addEventListener('storage_file_deleted', loadStorage);
+    window.addEventListener('igho_hotel_plan_migrated', loadStorage);
+    return () => {
+      window.removeEventListener('storage_file_uploaded', loadStorage);
+      window.removeEventListener('storage_file_deleted', loadStorage);
+      window.removeEventListener('igho_hotel_plan_migrated', loadStorage);
+    };
+  }, [hotel.id]);
+
   // Check if hotel registration is pending approval
   const isPendingApproval = hotel.approvalStatus === 'pending' || !hotel.isLive;
 
   // Active plan calculations
   const activePlan = plans.find((p) => p.id === selectedPlanId) || plans[0];
-  const activePlanPrice = billingCycle === 'annual' ? activePlan?.annualPrice : activePlan?.monthlyPrice;
+  const activePlanPrice =
+    billingCycle === '5year_contract'
+      ? activePlan?.contractAnnualPrice || Math.round((activePlan?.monthlyPrice || 30000) * 12 * 0.87)
+      : billingCycle === 'annual'
+      ? activePlan?.annualPrice
+      : activePlan?.monthlyPrice;
 
   // Payment history records
   const [paymentHistory, setPaymentHistory] = useState([
@@ -72,7 +139,13 @@ export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
     setShowPaystackModal(false);
 
     // Add to payment history
-    const dueAmount = billingCycle === 'annual' ? planToPay.annualPrice : planToPay.monthlyPrice;
+    const dueAmount =
+      billingCycle === '5year_contract'
+        ? planToPay.contractAnnualPrice || Math.round(planToPay.monthlyPrice * 12 * 0.87)
+        : billingCycle === 'annual'
+        ? planToPay.annualPrice
+        : planToPay.monthlyPrice;
+
     setPaymentHistory((prev) => [
       {
         id: `tx-${Date.now()}`,
@@ -102,15 +175,21 @@ export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
               className={`w-2.5 h-2.5 rounded-full ${
                 isPendingApproval ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500 animate-pulse'
               }`}
-            ></span>
-            <h1 className="text-2xl font-black text-black tracking-tight">IGHO Stay Subscription</h1>
+            />
+            <h1 className="text-2xl font-black text-black tracking-tight">IGHO Stay Subscription & Entitlements</h1>
           </div>
           <p className="text-xs text-neutral-500 mt-0.5">
-            Manage your organization plan, automated Paystack billing, and platform features.
+            Manage your organization license, enterprise 5-year price-lock contracts, and cloud storage quotas.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <SubscriptionCountdownTimer
+            hotel={hotel}
+            mode="pill"
+            onRenewClick={() => handleOpenPaystack(activePlan)}
+          />
+
           {isPendingApproval ? (
             <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1.5">
               <Clock className="w-3.5 h-3.5" />
@@ -125,7 +204,7 @@ export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
         </div>
       </div>
 
-      {/* REQUIREMENT 7: SUBSCRIPTION ACCESS GATE FOR PENDING HOTELS */}
+      {/* Subscription Access Gate For Pending Hotels */}
       {isPendingApproval && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
@@ -134,54 +213,45 @@ export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
               Your registration request is currently under review by IGHO Software Systems
             </h3>
             <p className="text-xs text-amber-800 leading-relaxed">
-              Before your organization can purchase or activate a live subscription package, the registration must be
-              verified and approved by the IGHO Super Admin in the central Console. You will be able to complete payment
-              once verification is finished.
+              Before your organization can activate a live subscription package, the registration must be
+              verified and approved by the IGHO Super Admin in the central Console.
             </p>
           </div>
         </div>
       )}
 
       {/* Current Active Plan Card */}
-      <div className="bg-neutral-900 text-white rounded-2xl p-6 sm:p-8 shadow-md relative overflow-hidden">
+      <div className="bg-neutral-900 text-white rounded-2xl p-6 sm:p-7 shadow-md relative overflow-hidden">
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2 max-w-lg">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-neutral-800 text-emerald-400 text-xs font-semibold">
               <Sparkles className="w-3.5 h-3.5" />
-              <span>Current Subscription Status: {isCancelled ? 'Cancelled (Grace Period)' : 'Active'}</span>
+              <span>Current Status: {isCancelled ? 'Cancelled (Grace Period)' : 'Active License'}</span>
             </div>
             <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
               {activePlan?.name || 'Plan 1 — Starter'}
             </h2>
             <p className="text-xs text-neutral-400 leading-relaxed">
-              Enables full hotel property management, online booking engine, staff role permissions, housekeeping, and
-              instant Paystack checkout.
+              Enables full hotel property operations, rooms inventory, guest folios, housekeeping roster, and direct bank guest booking checkout.
             </p>
 
             <div className="pt-2 grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs text-neutral-300">
               <div>
-                <span className="text-neutral-500 block text-[10px] uppercase font-semibold">Room Limit</span>
+                <span className="text-neutral-500 block text-[10px] uppercase font-semibold">Room Quota</span>
                 <span className="font-bold text-white">Up to {activePlan?.maxRooms} Rooms</span>
               </div>
               <div>
-                <span className="text-neutral-500 block text-[10px] uppercase font-semibold">Staff Limit</span>
+                <span className="text-neutral-500 block text-[10px] uppercase font-semibold">Staff Accounts</span>
                 <span className="font-bold text-white">Up to {activePlan?.maxStaff} Seats</span>
               </div>
               <div>
-                <span className="text-neutral-500 block text-[10px] uppercase font-semibold">Start Date</span>
-                <span className="font-bold text-white">Sep 1, 2026</span>
+                <span className="text-neutral-500 block text-[10px] uppercase font-semibold">Storage Quota</span>
+                <span className="font-bold text-emerald-400">{storageInfo.quotaBytes >= 5 * 1024 * 1024 * 1024 ? '10 GB' : '1 GB'}</span>
               </div>
               <div>
-                <span className="text-neutral-500 block text-[10px] uppercase font-semibold">Renewal Date</span>
-                <span className="font-bold text-white">Oct 1, 2026</span>
+                <span className="text-neutral-500 block text-[10px] uppercase font-semibold">Billing Term</span>
+                <span className="font-bold text-white capitalize">{hotel.billingCycle || 'Annual'}</span>
               </div>
-            </div>
-
-            <div className="pt-2 flex items-center gap-4 text-xs">
-              <span className="text-neutral-400">Payment Status:</span>
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 flex items-center gap-1">
-                <Check className="w-3 h-3" /> Paid via Paystack
-              </span>
             </div>
           </div>
 
@@ -189,7 +259,9 @@ export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
             <div>
               <span className="text-neutral-400 text-xs block">Subscription Dues</span>
               <span className="text-3xl font-black text-white font-mono">₦{activePlanPrice?.toLocaleString()}</span>
-              <span className="text-xs text-neutral-400 block mt-0.5">/ {billingCycle}</span>
+              <span className="text-xs text-neutral-400 block mt-0.5">
+                / {billingCycle === '5year_contract' ? 'year (5-yr fixed rate)' : billingCycle}
+              </span>
             </div>
             <button
               onClick={() => handleOpenPaystack(activePlan)}
@@ -197,11 +269,11 @@ export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
               className={`w-full py-2.5 rounded-full font-bold text-xs transition-all shadow-xs flex items-center justify-center gap-1.5 ${
                 isPendingApproval
                   ? 'bg-neutral-700 text-neutral-400 cursor-not-allowed'
-                  : 'bg-[#0BA4DB] hover:bg-[#0993C5] text-white active:scale-95'
+                  : 'bg-white hover:bg-neutral-100 text-black active:scale-95'
               }`}
             >
               <CreditCard className="w-3.5 h-3.5" />
-              <span>Renew via Paystack</span>
+              <span>Renew Subscription</span>
             </button>
             <div className="flex gap-2 text-[11px]">
               <button
@@ -222,42 +294,126 @@ export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
         </div>
       </div>
 
-      {/* Paystack Automated Payout & Settlement Clearance Notice */}
-      <div className="p-4 rounded-2xl bg-white border border-neutral-200 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
-            <CreditCard className="w-5 h-5" />
+      {/* ORGANISATION-WIDE STORAGE ENTITLEMENT CARD (DE-CLUTTERED) */}
+      <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-neutral-900 text-white flex items-center justify-center shrink-0">
+              <HardDrive className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-black text-black">Organisation Cloud Storage Quota</h3>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-neutral-100 text-neutral-800 border border-neutral-300">
+                  {storageInfo.quotaBytes >= 5 * 1024 * 1024 * 1024 ? '10 GB Allowance' : '1 GB Allowance'}
+                </span>
+              </div>
+              <p className="text-[11px] text-neutral-500">
+                Covers room galleries, guest receipts, folios, reports, and all hotel attachments.
+              </p>
+            </div>
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-extrabold text-neutral-900">Paystack Subaccount & Settlement Clearance</span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                ACTIVE
+
+          <div className="flex items-center gap-4">
+            <div className="text-right font-mono">
+              <div className="text-xs font-black text-neutral-900">
+                {(storageInfo.usedBytes / (1024 * 1024)).toFixed(1)} MB{' '}
+                <span className="text-[10px] text-neutral-500 font-normal">
+                  / {(storageInfo.quotaBytes / (1024 * 1024 * 1024)).toFixed(0)} GB
+                </span>
+              </div>
+              <span className="text-[10px] font-bold text-neutral-400">
+                {storageInfo.percentage.toFixed(1)}% Used
               </span>
             </div>
-            <p className="text-neutral-600 text-[11px] mt-0.5">
-              Subscription billing and guest payouts process directly through your Paystack Subaccount (<span className="font-mono font-bold text-neutral-900">{hotel.paystackSubaccountId || 'ACCT_lava_ng_9384'}</span>). Settlements credit to your linked bank account via Paystack automated clearance rather than manual transfers.
-            </p>
+
+            <button
+              type="button"
+              onClick={() => setShowStorageBreakdown(!showStorageBreakdown)}
+              className="px-3 py-1.5 border border-neutral-200 hover:bg-neutral-50 rounded-lg text-xs font-semibold text-neutral-700 flex items-center gap-1"
+            >
+              <span>{showStorageBreakdown ? 'Hide Breakdown' : 'Details'}</span>
+              {showStorageBreakdown ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
           </div>
         </div>
+
+        {/* Progress bar */}
+        <div className="h-2 w-full bg-neutral-100 rounded-full overflow-hidden border border-neutral-200/60">
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${
+              storageInfo.percentage >= 100
+                ? 'bg-rose-500'
+                : storageInfo.percentage >= 90
+                ? 'bg-orange-500'
+                : storageInfo.percentage >= 75
+                ? 'bg-amber-500'
+                : 'bg-emerald-500'
+            }`}
+            style={{ width: `${Math.min(100, Math.max(2, storageInfo.percentage))}%` }}
+          />
+        </div>
+
+        {/* Expandable 8 Asset Categories Details */}
+        {showStorageBreakdown && (
+          <div className="pt-3 border-t border-neutral-100 animate-in fade-in duration-150 space-y-2">
+            <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block font-mono">
+              All 8 Asset Categories Included In This Storage Quota:
+            </span>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-neutral-700">
+              <div className="p-2 rounded-lg bg-neutral-50 border border-neutral-200 flex items-center gap-1.5">
+                <ImageIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span className="truncate">1. Guest Portal Media</span>
+              </div>
+              <div className="p-2 rounded-lg bg-neutral-50 border border-neutral-200 flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                <span className="truncate">2. Room Galleries</span>
+              </div>
+              <div className="p-2 rounded-lg bg-neutral-50 border border-neutral-200 flex items-center gap-1.5">
+                <CreditCard className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span className="truncate">3. Transfer Receipts</span>
+              </div>
+              <div className="p-2 rounded-lg bg-neutral-50 border border-neutral-200 flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                <span className="truncate">4. Booking Attachments</span>
+              </div>
+              <div className="p-2 rounded-lg bg-neutral-50 border border-neutral-200 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <span className="truncate">5. Hotel Documents</span>
+              </div>
+              <div className="p-2 rounded-lg bg-neutral-50 border border-neutral-200 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                <span className="truncate">6. Staff Uploads</span>
+              </div>
+              <div className="p-2 rounded-lg bg-neutral-50 border border-neutral-200 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                <span className="truncate">7. Generated Reports</span>
+              </div>
+              <div className="p-2 rounded-lg bg-neutral-50 border border-neutral-200 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-neutral-500 shrink-0" />
+                <span className="truncate">8. Operational Files</span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Available Plans Section (Dynamic from IGHO Console) */}
+      {/* Available Plans Section With 5-Year Enterprise Contract */}
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-bold text-black tracking-tight">Available Subscription Packages</h3>
             <p className="text-xs text-neutral-500">
-              Upgrade or switch between plans configured centrally in the IGHO Console.
+              Choose your payment term or lock in guaranteed rates with a 5-year fixed enterprise contract.
             </p>
           </div>
 
-          {/* Monthly / Annual Toggle */}
+          {/* Monthly / Annual / 5-Year Contract Selector */}
           <div className="inline-flex items-center bg-neutral-100 p-1 rounded-full border border-neutral-200/60 text-xs font-semibold self-start sm:self-auto">
             <button
               type="button"
               onClick={() => setBillingCycle('monthly')}
-              className={`px-4 py-1.5 rounded-full transition-colors whitespace-nowrap ${
+              className={`px-3 py-1.5 rounded-full transition-colors whitespace-nowrap ${
                 billingCycle === 'monthly' ? 'bg-black text-white shadow-xs font-bold' : 'text-neutral-600 hover:text-black'
               }`}
             >
@@ -266,24 +422,59 @@ export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
             <button
               type="button"
               onClick={() => setBillingCycle('annual')}
-              className={`px-4 py-1.5 rounded-full flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+              className={`px-3 py-1.5 rounded-full flex items-center gap-1 transition-colors whitespace-nowrap ${
                 billingCycle === 'annual' ? 'bg-black text-white shadow-xs font-bold' : 'text-neutral-600 hover:text-black'
               }`}
             >
               <span>Annual</span>
-              <span className="bg-emerald-100 text-emerald-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
-                Save 17%
+              <span className="bg-emerald-100 text-emerald-800 text-[9px] px-1.5 py-0.2 rounded-full font-bold">
+                -17%
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setBillingCycle('5year_contract')}
+              className={`px-3 py-1.5 rounded-full flex items-center gap-1 transition-colors whitespace-nowrap ${
+                billingCycle === '5year_contract'
+                  ? 'bg-purple-900 text-white shadow-xs font-bold'
+                  : 'text-neutral-600 hover:text-black'
+              }`}
+            >
+              <Sparkles className="w-3 h-3 text-amber-300" />
+              <span>5-Yr Contract</span>
+              <span className="bg-amber-100 text-amber-900 text-[9px] px-1.5 py-0.2 rounded-full font-bold">
+                87% Rate Lock
               </span>
             </button>
           </div>
         </div>
 
+        {/* 5-Year Contract Notice Banner */}
+        {billingCycle === '5year_contract' && (
+          <div className="p-4 bg-purple-50/70 border border-purple-200 rounded-2xl flex items-start gap-3">
+            <Sparkles className="w-4 h-4 text-purple-700 shrink-0 mt-0.5" />
+            <div className="text-xs space-y-1">
+              <span className="font-bold text-purple-950 block">
+                5-Year Enterprise Price-Lock Guarantee (87% Fixed Rate)
+              </span>
+              <p className="text-purple-900 leading-relaxed">
+                Shield your hotel from annual price hikes with an 87% fixed-price lock for 5 full years. Complete Plan is ₦522,000/yr (regular ₦600k) and Starter Plan is ₦313,200/yr (regular ₦360k), with flexible annual payments or contract deposit options.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Dynamic Plans Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 pt-1">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-1">
           {plans.map((plan) => {
-            const price = billingCycle === 'annual' ? plan.annualPrice : plan.monthlyPrice;
+            const price =
+              billingCycle === '5year_contract'
+                ? plan.contractAnnualPrice || Math.round(plan.monthlyPrice * 12 * 0.87)
+                : billingCycle === 'annual'
+                ? plan.annualPrice
+                : plan.monthlyPrice;
+
             const isCurrent = selectedPlanId === plan.id;
-            const isEnterprise = plan.id.includes('3') || plan.id.includes('enterprise');
 
             return (
               <div
@@ -299,12 +490,12 @@ export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
                     <div>
                       <h4 className="text-base font-bold text-neutral-900">{plan.name}</h4>
                       <p className="text-[11px] text-neutral-500">
-                        Up to {plan.maxRooms} rooms · {plan.maxStaff} staff
+                        Up to {plan.maxRooms} rooms · {plan.maxStaff} staff accounts
                       </p>
                     </div>
                     {isCurrent && (
-                      <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                        Current
+                      <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full">
+                        Active Plan
                       </span>
                     )}
                   </div>
@@ -312,8 +503,17 @@ export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
                   <div>
                     <span className="text-3xl font-black text-black">₦{price.toLocaleString()}</span>
                     <span className="text-xs text-neutral-500">
-                      {billingCycle === 'annual' ? ' / year' : ' / month'}
+                      {billingCycle === '5year_contract'
+                        ? ' / year (5-Year Lock)'
+                        : billingCycle === 'annual'
+                        ? ' / year'
+                        : ' / month'}
                     </span>
+                    {billingCycle === '5year_contract' && plan.contractDepositRequired && (
+                      <span className="text-[11px] text-purple-700 block mt-1 font-semibold">
+                        Commitment deposit: ₦{plan.contractDepositRequired.toLocaleString()}
+                      </span>
+                    )}
                   </div>
 
                   <div className="pt-3 border-t border-neutral-100 space-y-2 text-xs text-neutral-700">
@@ -344,7 +544,7 @@ export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
                           : 'bg-black hover:bg-neutral-800 text-white active:scale-95'
                       }`}
                     >
-                      <span>Upgrade / Switch</span>
+                      <span>Upgrade to {plan.name.split('—')[1] || plan.name}</span>
                       <ArrowRight className="w-3.5 h-3.5" />
                     </button>
                   )}
@@ -355,148 +555,77 @@ export const HotelSubscriptionView: React.FC<HotelSubscriptionViewProps> = ({
         </div>
       </div>
 
-      {/* PAYMENT HISTORY TABLE */}
-      <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-xs space-y-4">
+      {/* COLLAPSIBLE BILLING HISTORY */}
+      <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-xs space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-base font-bold text-black">Subscription Payment History</h3>
-            <p className="text-xs text-neutral-500">
-              Real-time settlement receipts processed securely via Paystack.
+            <h3 className="text-sm font-bold text-black">Subscription Payment History</h3>
+            <p className="text-[11px] text-neutral-500">
+              Audit license renewals and receipts.
             </p>
           </div>
-          <span className="text-xs font-bold text-neutral-600 bg-neutral-100 px-3 py-1 rounded-full">
-            {paymentHistory.length} Invoices
-          </span>
+          <button
+            type="button"
+            onClick={() => setShowBillingHistory(!showBillingHistory)}
+            className="px-3 py-1.5 border border-neutral-200 hover:bg-neutral-50 rounded-lg text-xs font-semibold text-neutral-700 flex items-center gap-1"
+          >
+            <span>{showBillingHistory ? 'Hide Invoices' : `View Invoices (${paymentHistory.length})`}</span>
+            {showBillingHistory ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-neutral-200 text-neutral-400 uppercase text-[10px] font-bold">
-                <th className="pb-2">Date</th>
-                <th className="pb-2">Package</th>
-                <th className="pb-2">Amount</th>
-                <th className="pb-2">Gateway</th>
-                <th className="pb-2">Paystack Reference</th>
-                <th className="pb-2">Status</th>
-                <th className="pb-2 text-right">Receipt</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100">
-              {paymentHistory.map((item) => (
-                <tr key={item.id} className="text-neutral-700">
-                  <td className="py-3 font-medium">{item.date}</td>
-                  <td className="py-3 font-semibold text-neutral-900">{item.plan}</td>
-                  <td className="py-3 font-mono font-bold text-black">₦{item.amount.toLocaleString()}</td>
-                  <td className="py-3">
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-50 text-[#0BA4DB] font-bold text-[10px]">
-                      Paystack
-                    </span>
-                  </td>
-                  <td className="py-3 font-mono text-[11px] text-neutral-500">{item.reference}</td>
-                  <td className="py-3">
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[10px]">
-                      <Check className="w-3 h-3" /> Paid
-                    </span>
-                  </td>
-                  <td className="py-3 text-right">
-                    <button
-                      onClick={() => alert(`Official Paystack Invoice #${item.reference} downloaded.`)}
-                      className="text-neutral-500 hover:text-black font-semibold text-[11px] inline-flex items-center gap-1"
-                    >
-                      <Download className="w-3 h-3" /> Receipt
-                    </button>
-                  </td>
+        {showBillingHistory && (
+          <div className="overflow-x-auto pt-2 border-t border-neutral-100 animate-in fade-in duration-150">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-neutral-200 text-neutral-400 uppercase text-[10px] font-bold">
+                  <th className="pb-2">Date</th>
+                  <th className="pb-2">Package</th>
+                  <th className="pb-2">Amount</th>
+                  <th className="pb-2">Gateway</th>
+                  <th className="pb-2">Reference</th>
+                  <th className="pb-2">Status</th>
+                  <th className="pb-2 text-right">Receipt</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-neutral-100">
+                {paymentHistory.map((item) => (
+                  <tr key={item.id} className="text-neutral-700">
+                    <td className="py-2.5 font-medium">{item.date}</td>
+                    <td className="py-2.5 font-semibold text-neutral-900">{item.plan}</td>
+                    <td className="py-2.5 font-mono font-bold text-black">₦{item.amount.toLocaleString()}</td>
+                    <td className="py-2.5 font-semibold text-neutral-600">{item.gateway}</td>
+                    <td className="py-2.5 font-mono text-[11px] text-neutral-500">{item.reference}</td>
+                    <td className="py-2.5">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[10px]">
+                        <Check className="w-3 h-3" /> Paid
+                      </span>
+                    </td>
+                    <td className="py-2.5 text-right">
+                      <button
+                        onClick={() => alert(`Official Invoice #${item.reference} downloaded.`)}
+                        className="text-neutral-500 hover:text-black font-semibold text-[11px] inline-flex items-center gap-1"
+                      >
+                        <Download className="w-3 h-3" /> PDF
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
-      {/* Paystack Payment Modal */}
-      <PaystackSubscriptionModal
-        isOpen={showPaystackModal}
-        onClose={() => setShowPaystackModal(false)}
-        plan={planToPay}
-        billingCycle={billingCycle}
-        customerEmail="hotel.admin@lavahotels.ng"
-        hotelName={hotel.name}
-        onSuccess={handlePaystackSuccess}
-      />
-
-      {/* Cancel Plan Modal */}
-      {showCancelModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-in zoom-in-95 duration-150">
-            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
-              <XCircle className="w-6 h-6" />
-            </div>
-            <div className="text-center space-y-1">
-              <h3 className="text-lg font-bold text-neutral-900">Cancel Subscription</h3>
-              <p className="text-xs text-neutral-500">
-                Are you sure you want to cancel your {activePlan?.name}? Your hotel workspace will remain active until
-                the end of the current billing cycle (Oct 1, 2026).
-              </p>
-            </div>
-            <div className="flex gap-2 pt-2">
-              <button
-                onClick={() => {
-                  setIsCancelled(true);
-                  setShowCancelModal(false);
-                }}
-                className="flex-1 bg-rose-600 hover:bg-rose-700 text-white py-2.5 rounded-full font-bold text-xs transition-colors"
-              >
-                Confirm Cancellation
-              </button>
-              <button
-                onClick={() => setShowCancelModal(false)}
-                className="px-5 border border-neutral-200 hover:bg-neutral-50 text-neutral-700 py-2.5 rounded-full font-semibold text-xs"
-              >
-                Keep Plan
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Update Card / Payment Method Modal */}
-      {updatePaymentModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
-              <h3 className="font-bold text-base text-neutral-900">Update Paystack Payment Method</h3>
-              <button onClick={() => setUpdatePaymentModal(false)} className="text-neutral-400 hover:text-black">
-                ✕
-              </button>
-            </div>
-            <div className="space-y-3">
-              <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 flex items-center justify-between text-xs">
-                <div>
-                  <span className="font-bold text-neutral-900 block">{paymentMethod}</span>
-                  <span className="text-neutral-500 text-[10px]">Active automatic renewal card</span>
-                </div>
-                <span className="text-emerald-700 font-bold text-[10px] bg-emerald-100 px-2 py-0.5 rounded-full">
-                  Active
-                </span>
-              </div>
-              <p className="text-xs text-neutral-500">
-                To update your recurring billing card, Paystack will perform a ₦50 pre-authorization charge which is
-                refunded immediately.
-              </p>
-              <button
-                onClick={() => {
-                  setPaymentMethod('Visa ending in 9102');
-                  setUpdatePaymentModal(false);
-                  alert('Payment method updated via Paystack tokenization.');
-                }}
-                className="w-full bg-[#0BA4DB] hover:bg-[#0993C5] text-white py-3 rounded-full font-bold text-xs transition-colors shadow-sm"
-              >
-                Authorize New Card on Paystack
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Paystack Checkout Modal */}
+      {showPaystackModal && (
+        <PaystackSubscriptionModal
+          hotel={hotel}
+          plan={planToPay}
+          billingCycle={billingCycle === '5year_contract' ? 'annual' : billingCycle}
+          onSuccess={handlePaystackSuccess}
+          onClose={() => setShowPaystackModal(false)}
+        />
       )}
     </div>
   );

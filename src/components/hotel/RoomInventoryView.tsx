@@ -403,29 +403,57 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
     setTempPhotos(room.images && room.images.length > 0 ? [...room.images] : []);
   };
 
-  // Handle Photo Upload / Preset add
+  // Handle Photo Upload / Preset add (Max 6 photos per room, max 10 MB per image)
   const handleAddPhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    setIsUploadingPhoto(true);
-    // Convert file to local preview object URL
-    const newUrls: string[] = [];
+    const MAX_PHOTO_SIZE = 10 * 1024 * 1024; // 10 MB
+    const MAX_ROOM_PHOTOS = 6;
+
+    const oversized: string[] = [];
+    const validFiles: File[] = [];
+
     Array.from(files).forEach((file: File) => {
-      const url = URL.createObjectURL(file);
-      newUrls.push(url);
+      if (file.size > MAX_PHOTO_SIZE) {
+        oversized.push(`${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB)`);
+      } else {
+        validFiles.push(file);
+      }
     });
 
+    if (oversized.length > 0) {
+      alert(`The following image(s) exceed the 10 MB limit:\n${oversized.join('\n')}\nPlease upload high-resolution images up to 10 MB.`);
+    }
+
+    if (validFiles.length === 0) return;
+
+    if (tempPhotos.length >= MAX_ROOM_PHOTOS) {
+      alert(`Rooms can have at most ${MAX_ROOM_PHOTOS} photos. Please remove an existing photo first.`);
+      return;
+    }
+
+    const availableSlots = MAX_ROOM_PHOTOS - tempPhotos.length;
+    const filesToUpload = validFiles.slice(0, availableSlots);
+
+    if (validFiles.length > availableSlots) {
+      alert(`Only ${availableSlots} more photo(s) can be added (maximum 6 photos per room).`);
+    }
+
+    setIsUploadingPhoto(true);
+    const newUrls: string[] = filesToUpload.map((file) => URL.createObjectURL(file));
+
     setTimeout(() => {
-      setTempPhotos((prev) => [...prev, ...newUrls]);
+      setTempPhotos((prev) => [...prev, ...newUrls].slice(0, MAX_ROOM_PHOTOS));
       setIsUploadingPhoto(false);
-    }, 600);
+    }, 150);
   };
 
   const handleAddPresetPhotos = () => {
     setTempPhotos((prev) => {
       const available = PRESET_ROOM_PHOTOS.filter((p) => !prev.includes(p));
-      const toAdd = available.slice(0, 5 - prev.length > 0 ? 5 - prev.length : 2);
+      const needed = Math.max(0, 6 - prev.length);
+      const toAdd = available.slice(0, needed);
       return [...prev, ...toAdd];
     });
   };
@@ -1239,7 +1267,7 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
                   {newRoomPhotos.length < 6 && (
                     <label className="flex flex-col items-center justify-center aspect-video border-2 border-dashed border-neutral-200 hover:border-black rounded-xl cursor-pointer bg-neutral-50/50 hover:bg-neutral-50 transition-colors">
                       <Upload className="w-4 h-4 text-neutral-400 mb-1" />
-                      <span className="text-[10px] font-semibold text-neutral-600">Add Picture</span>
+                      <span className="text-[10px] font-semibold text-neutral-600">Add Picture (Max 10MB)</span>
                       <input
                         type="file"
                         accept="image/*"
@@ -1248,11 +1276,20 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
                         onChange={(e) => {
                           const files = e.target.files;
                           if (!files || files.length === 0) return;
-                          const newUrls: string[] = [];
+                          const MAX_SIZE = 10 * 1024 * 1024;
+                          const oversized: string[] = [];
+                          const validUrls: string[] = [];
                           Array.from(files).forEach((file: File) => {
-                            newUrls.push(URL.createObjectURL(file));
+                            if (file.size > MAX_SIZE) {
+                              oversized.push(`${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB)`);
+                            } else {
+                              validUrls.push(URL.createObjectURL(file));
+                            }
                           });
-                          setNewRoomPhotos((prev) => [...prev, ...newUrls].slice(0, 6));
+                          if (oversized.length > 0) {
+                            alert(`The following images exceed the 10 MB limit:\n${oversized.join('\n')}\nPlease upload high-resolution images up to 10 MB each.`);
+                          }
+                          setNewRoomPhotos((prev) => [...prev, ...validUrls].slice(0, 6));
                         }}
                       />
                     </label>
@@ -1491,15 +1528,19 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
             {/* Photo count indicator requirement check */}
             <div className="flex items-center justify-between text-xs p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl">
               <span className="font-semibold text-neutral-700">
-                Uploaded: <strong className="text-black">{tempPhotos.length}</strong> photos
+                Uploaded: <strong className="text-black">{tempPhotos.length} / 6</strong> photos (Max 6 · up to 10 MB each)
               </span>
-              {tempPhotos.length >= 5 ? (
+              {tempPhotos.length >= 6 ? (
                 <span className="inline-flex items-center gap-1 text-emerald-700 font-bold text-[11px] bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                  <CheckCircle2 className="w-3 h-3" /> Ready for publish (≥5 photos)
+                  <CheckCircle2 className="w-3 h-3" /> Maximum 6 photos reached
+                </span>
+              ) : tempPhotos.length >= 3 ? (
+                <span className="inline-flex items-center gap-1 text-emerald-700 font-bold text-[11px] bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                  <CheckCircle2 className="w-3 h-3" /> Ready for publish ({tempPhotos.length}/6 photos)
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1 text-amber-700 font-semibold text-[11px] bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                  <AlertCircle className="w-3 h-3" /> Minimum 5 photos required for active badge
+                  <AlertCircle className="w-3 h-3" /> Add up to 6 high-res photos
                 </span>
               )}
             </div>
@@ -1507,28 +1548,33 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
             {/* Upload Area */}
             <div className="border-2 border-dashed border-neutral-200 rounded-2xl p-4 text-center space-y-2 hover:border-neutral-400 transition-colors">
               <div className="flex items-center justify-center gap-2">
-                <label className="cursor-pointer inline-flex items-center gap-1.5 px-5 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 rounded-full text-xs font-bold transition-colors">
+                <label className={`cursor-pointer inline-flex items-center gap-1.5 px-5 py-2 rounded-full text-xs font-bold transition-colors ${
+                  tempPhotos.length >= 6 ? 'bg-neutral-100 text-neutral-400 cursor-not-allowed' : 'bg-neutral-900 hover:bg-black text-white'
+                }`}>
                   <Upload className="w-3.5 h-3.5" />
-                  <span>Choose images (multiple allowed)</span>
+                  <span>{tempPhotos.length >= 6 ? 'Max 6 photos added' : 'Choose images (Max 10 MB each)'}</span>
                   <input
                     type="file"
                     multiple
+                    disabled={tempPhotos.length >= 6}
                     accept="image/*"
                     onChange={handleAddPhotos}
                     className="hidden"
                   />
                 </label>
-                <button
-                  type="button"
-                  onClick={handleAddPresetPhotos}
-                  className="inline-flex items-center gap-1 px-3 py-2 bg-neutral-50 hover:bg-neutral-100 text-neutral-600 rounded-full text-xs font-semibold border border-neutral-200 transition-colors"
-                >
-                  <Sparkles className="w-3 h-3 text-amber-500" />
-                  <span>Use curated presets</span>
-                </button>
+                {tempPhotos.length < 6 && (
+                  <button
+                    type="button"
+                    onClick={handleAddPresetPhotos}
+                    className="inline-flex items-center gap-1 px-3 py-2 bg-neutral-50 hover:bg-neutral-100 text-neutral-600 rounded-full text-xs font-semibold border border-neutral-200 transition-colors"
+                  >
+                    <Sparkles className="w-3 h-3 text-amber-500" />
+                    <span>Use curated presets</span>
+                  </button>
+                )}
               </div>
               <p className="text-[10px] text-neutral-400">
-                Upload real photos of the room. First photo is used as the cover.
+                Upload up to 6 high-resolution room photos (max 10 MB each). First photo is used as the cover.
               </p>
             </div>
 

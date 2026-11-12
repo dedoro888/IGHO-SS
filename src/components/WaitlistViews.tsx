@@ -49,34 +49,57 @@ export const WaitlistView: React.FC<WaitlistViewProps> = ({ type: initialType, o
     setStep(2);
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submittedEntryId, setSubmittedEntryId] = useState<string>('');
+
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fullName || !email || !phone || !orgName || !institutionType || !city || !stateName) {
       alert('Please fill out all required fields.');
       return;
     }
+
+    setIsSubmitting(true);
     const newEntry = {
       id: `wl-${Date.now()}`,
-      fullName,
-      email,
-      phone,
-      orgName,
-      institutionType,
-      city,
-      stateName,
-      additionalComments,
+      fullName: fullName.trim(),
+      email: email.trim().toLowerCase(),
+      phone: phone.trim(),
+      orgName: orgName.trim(),
+      institutionType: institutionType.trim(),
+      city: city.trim(),
+      stateName: stateName.trim(),
+      additionalComments: additionalComments.trim(),
       product: selectedProduct,
       status: 'pending',
-      createdAt: new Date().toISOString().split('T')[0],
+      createdAt: new Date().toISOString(),
     };
+
+    setSubmittedEntryId(newEntry.id);
+
     try {
+      // 1. Post to persistent backend API so IGO Console receives it immediately
+      fetch('/api/waitlists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newEntry),
+      }).catch((err) => console.error('Error posting waitlist to server:', err));
+
+      // 2. Save to local storage for instant offline / client accessibility
       const currentList = JSON.parse(localStorage.getItem('igho_waitlists') || '[]');
-      currentList.push(newEntry);
+      currentList.unshift(newEntry);
       localStorage.setItem('igho_waitlists', JSON.stringify(currentList));
+
+      // 3. Dispatch global browser update event
+      window.dispatchEvent(
+        new CustomEvent('igho_waitlists_updated', { detail: { entry: newEntry } })
+      );
     } catch (err) {
-      console.error(err);
+      console.error('Waitlist submission error:', err);
+    } finally {
+      setIsSubmitting(false);
+      setStep(3);
     }
-    setStep(3);
   };
 
   return (

@@ -208,8 +208,16 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
     }
   };
 
-  // Generate reference PVG-2026-E345A7
-  const reference = 'PVG-2026-E345A7';
+  // Generate distinct ID format IGHO-RES-2026-XXXXX and IGHO-BK-XXXXX
+  const [reservationId] = useState(() => {
+    const code = Math.random().toString(36).substring(2, 7).toUpperCase();
+    return `IGHO-RES-2026-${code}`;
+  });
+  const [reference] = useState(() => {
+    const code = Math.random().toString(36).substring(2, 7).toUpperCase();
+    return `IGHO-BK-${code}`;
+  });
+  const [arrivalTime, setArrivalTime] = useState('14:00');
 
   const copyToClipboard = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
@@ -242,7 +250,7 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
     setIsProcessing(true);
 
     const newRes: Reservation = {
-      id: `res-${Date.now()}`,
+      id: reservationId,
       reference: reference,
       hotelId: hotel.id,
       hotelName: hotel.name,
@@ -254,9 +262,12 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
       guestPhone,
       checkIn: bookingDraft.checkIn,
       checkOut: bookingDraft.checkOut,
+      checkInTime: arrivalTime,
+      checkOutTime: '11:00',
       nights: bookingDraft.nights,
       guests: bookingDraft.guests,
       total: bookingDraft.total,
+      lockedRatePerNight: bookingDraft.pricePerNight,
       status: 'pending_verification',
       createdAt: new Date().toISOString(),
       paymentRef: paymentRef.trim(),
@@ -314,14 +325,14 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {isSuperAdmin && (
+          {isSuperAdmin && currentUserEmail && (
             <button
               onClick={() => onNavigate('super_admin_console')}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
-              title="Access IGHO Platform Super Admin Console"
+              title="Access IGO Platform Super Admin Console"
             >
               <Shield className="w-3.5 h-3.5" />
-              <span>IGHO Console</span>
+              <span>IGO Console</span>
             </button>
           )}
 
@@ -418,6 +429,24 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
                       value={bookingDraft.guests}
                       className="w-full px-2.5 py-2 bg-neutral-100 rounded-lg text-xs font-medium text-neutral-700 border border-neutral-200"
                     />
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-semibold text-neutral-500">Estimated Arrival Time</span>
+                    <select
+                      value={arrivalTime}
+                      onChange={(e) => setArrivalTime(e.target.value)}
+                      className="w-full px-2.5 py-2 bg-white rounded-lg text-xs font-medium text-neutral-800 border border-neutral-300 focus:outline-none focus:border-black cursor-pointer"
+                    >
+                      <option value="12:00">12:00 PM (Early Check-in)</option>
+                      <option value="13:00">01:00 PM</option>
+                      <option value="14:00">02:00 PM (Standard)</option>
+                      <option value="15:00">03:00 PM</option>
+                      <option value="16:00">04:00 PM</option>
+                      <option value="17:00">05:00 PM</option>
+                      <option value="18:00">06:00 PM</option>
+                      <option value="20:00">08:00 PM (Late Check-in)</option>
+                      <option value="22:00">10:00 PM (Night Arrival)</option>
+                    </select>
                   </div>
                 </div>
 
@@ -549,13 +578,13 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
             <div className="space-y-3 bg-neutral-50 border border-neutral-200 rounded-2xl p-5">
               <div>
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-black">1. Make the bank transfer</h3>
+                  <h3 className="text-sm font-bold text-black">1. Make the direct bank transfer</h3>
                   <span className="text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full">
-                    Paystack Verified Settlement
+                    Direct Hotel Bank Transfer
                   </span>
                 </div>
                 <p className="text-xs text-neutral-600 mt-0.5">
-                  Transfer directly to the hotel's linked settlement account. Monies clear automatically through Paystack's clearing engine. Use your booking reference as the transfer narration.
+                  Transfer directly to the hotel's verified bank account below. Hotel staff will reconcile your payment and confirm your reservation upon receipt upload. Use your booking reference as the transfer narration.
                 </p>
               </div>
 
@@ -563,11 +592,11 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
                 {/* Bank */}
                 <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-neutral-200">
                   <div>
-                    <div className="text-[10px] font-bold text-neutral-500 uppercase font-mono">LINKED SETTLEMENT BANK</div>
-                    <div className="font-semibold text-black">{hotel.bankName || 'Providus Bank'} <span className="text-[11px] font-medium text-emerald-700">(Paystack Linked)</span></div>
+                    <div className="text-[10px] font-bold text-neutral-500 uppercase font-mono">HOTEL COMMERCIAL BANK</div>
+                    <div className="font-semibold text-black">{hotel.bankName || 'Access Bank PLC'}</div>
                   </div>
                   <button
-                    onClick={() => copyToClipboard(hotel.bankName || 'Providus Bank', 'bank')}
+                    onClick={() => copyToClipboard(hotel.bankName || 'Access Bank PLC', 'bank')}
                     className="p-1.5 hover:bg-neutral-100 rounded-lg text-neutral-500 hover:text-black cursor-pointer"
                   >
                     {copiedKey === 'bank' ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}

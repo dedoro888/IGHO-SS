@@ -18,6 +18,10 @@ import {
   DollarSign,
   ShieldCheck,
   Calendar,
+  RotateCcw,
+  Send,
+  HelpCircle,
+  Copy,
 } from 'lucide-react';
 import { Hotel, Reservation } from '../../types';
 import { ComparativePerformanceChart, MetricConfig } from '../common/ComparativePerformanceChart';
@@ -29,10 +33,11 @@ interface HotelBillingAndPaymentsViewProps {
     bankName: string;
     accountName: string;
     accountNumber: string;
-    paystackSubaccountId?: string;
+    transferInstructions?: string;
   }) => void;
   onUpdateReservationStatus?: (resId: string, status: Reservation['status']) => void;
   onVerifyPayment?: (resId: string, verified: boolean) => void;
+  onProcessRefund?: (resId: string, refundData: { amount: number; txRef?: string }) => void;
 }
 
 export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewProps> = ({
@@ -41,23 +46,31 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
   onUpdateBankInfo,
   onUpdateReservationStatus,
   onVerifyPayment,
+  onProcessRefund,
 }) => {
-  // Paystack & Bank Account Form State
-  const [bankName, setBankName] = useState(hotel.bankName || 'Providus Bank');
+  // Direct Hotel Bank Account Configuration (No Paystack Subaccounts)
+  const [bankName, setBankName] = useState(hotel.bankName || 'Zenith Bank PLC');
   const [accountName, setAccountName] = useState(hotel.accountName || `${hotel.name || 'Hotel'} Ltd`);
-  const [accountNumber, setAccountNumber] = useState(hotel.accountNumber || '');
-  const [paystackSubaccountId, setPaystackSubaccountId] = useState(
-    hotel.paystackSubaccountId || `ACCT_${hotel.id.replace('hotel-', '')}_${hotel.accountNumber?.slice(-4) || '9384'}`
+  const [accountNumber, setAccountNumber] = useState(hotel.accountNumber || '1014529384');
+  const [transferInstructions, setTransferInstructions] = useState(
+    (hotel as any).transferInstructions ||
+      'Please transfer the exact booking fee to our direct commercial bank account above. Use your Booking Reference as payment remarks/narration and upload your transfer receipt to confirm your room.'
   );
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [copiedBank, setCopiedBank] = useState(false);
 
-  // Sub-view: 'overview' | 'invoices' | 'bank_config'
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'invoices' | 'bank_config'>('overview');
+  // Sub-view: 'overview' | 'invoices' | 'refunds' | 'bank_config'
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'invoices' | 'refunds' | 'bank_config'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedReceiptRes, setSelectedReceiptRes] = useState<Reservation | null>(null);
   const [printingRes, setPrintingRes] = useState<Reservation | null>(null);
 
-  // Safe status update dispatch
+  // Refund processing state
+  const [selectedRefundRes, setSelectedRefundRes] = useState<Reservation | null>(null);
+  const [disbursementRef, setDisbursementRef] = useState('');
+  const [refundProcessingSuccess, setRefundProcessingSuccess] = useState(false);
+
+  // Status update dispatch
   const handleUpdateStatus = (resId: string, status: Reservation['status']) => {
     if (onUpdateReservationStatus) {
       onUpdateReservationStatus(resId, status);
@@ -67,44 +80,65 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
     }
   };
 
-  // Handle Paystack & Bank configuration save
+  // Handle direct bank save
   const handleSaveBankInfo = (e: React.FormEvent) => {
     e.preventDefault();
-    onUpdateBankInfo({ bankName, accountName, accountNumber, paystackSubaccountId });
+    onUpdateBankInfo({
+      bankName,
+      accountName,
+      accountNumber,
+      transferInstructions,
+    });
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2500);
   };
 
-  // Calculations for Financial Reports
+  // Calculations for Financial Reports & Exact Deductions
   const confirmedReservations = reservations.filter(
     (r) => r.status === 'confirmed' || r.status === 'checked_in' || r.status === 'checked_out'
   );
-  const totalRevenue = confirmedReservations.reduce((sum, r) => sum + (r.total || 0), 0);
+  const grossRevenue = confirmedReservations.reduce((sum, r) => sum + (r.total || 0), 0);
+
+  // Completed refunds are deducted directly from gross revenue
+  const refundedReservations = reservations.filter(
+    (r) => r.refundStatus === 'completed' || ((r.status === 'cancelled' || r.status === 'rejected') && r.refundAmount)
+  );
+  const totalRefundedAmount = refundedReservations.reduce(
+    (sum, r) => sum + (r.refundAmount || (r.status === 'cancelled' && r.refundStatus === 'completed' ? r.total : 0) || 0),
+    0
+  );
+  const netRevenue = Math.max(0, grossRevenue - totalRefundedAmount);
+
+  // Pending Verifications
   const pendingReservations = reservations.filter((r) => r.status === 'pending_verification');
   const pendingAmount = pendingReservations.reduce((sum, r) => sum + (r.total || 0), 0);
+
+  // Pending Refunds
+  const pendingRefunds = reservations.filter(
+    (r) => r.status === 'cancelled' && (r.refundStatus === 'pending' || r.refundStatus === 'initiated' || !r.refundStatus)
+  );
 
   const totalRooms = hotel.roomCount || 30;
   const occupiedCount = reservations.filter((r) => r.status === 'checked_in').length;
   const occupancyRate = totalRooms > 0 ? Math.round((occupiedCount / totalRooms) * 100) : 0;
   const averageDailyRate =
-    confirmedReservations.length > 0 ? Math.round(totalRevenue / confirmedReservations.length) : 0;
-  const revPar = totalRooms > 0 ? Math.round(totalRevenue / totalRooms) : 0;
+    confirmedReservations.length > 0 ? Math.round(netRevenue / Math.max(1, confirmedReservations.length)) : 0;
 
-  // Chart configuration with exact values for axes
+  // Comparative performance chart metrics
   const financialMetrics: MetricConfig[] = [
     {
-      id: 'revenue',
-      name: 'Revenue (₦)',
+      id: 'net_revenue',
+      name: 'Net Revenue (₦)',
       unit: '',
       isCurrency: true,
       data: [
-        { label: 'Mon', current: Math.round(totalRevenue * 0.12), previous: Math.round(totalRevenue * 0.08) },
-        { label: 'Tue', current: Math.round(totalRevenue * 0.18), previous: Math.round(totalRevenue * 0.14) },
-        { label: 'Wed', current: Math.round(totalRevenue * 0.15), previous: Math.round(totalRevenue * 0.16) },
-        { label: 'Thu', current: Math.round(totalRevenue * 0.22), previous: Math.round(totalRevenue * 0.19) },
-        { label: 'Fri', current: Math.round(totalRevenue * 0.35), previous: Math.round(totalRevenue * 0.28) },
-        { label: 'Sat', current: Math.round(totalRevenue * 0.42), previous: Math.round(totalRevenue * 0.38) },
-        { label: 'Sun', current: Math.round(totalRevenue * 0.26), previous: Math.round(totalRevenue * 0.22) },
+        { label: 'Mon', current: Math.round(netRevenue * 0.12), previous: Math.round(netRevenue * 0.08) },
+        { label: 'Tue', current: Math.round(netRevenue * 0.18), previous: Math.round(netRevenue * 0.14) },
+        { label: 'Wed', current: Math.round(netRevenue * 0.15), previous: Math.round(netRevenue * 0.16) },
+        { label: 'Thu', current: Math.round(netRevenue * 0.22), previous: Math.round(netRevenue * 0.19) },
+        { label: 'Fri', current: Math.round(netRevenue * 0.35), previous: Math.round(netRevenue * 0.28) },
+        { label: 'Sat', current: Math.round(netRevenue * 0.42), previous: Math.round(netRevenue * 0.38) },
+        { label: 'Sun', current: Math.round(netRevenue * 0.26), previous: Math.round(netRevenue * 0.22) },
       ],
     },
     {
@@ -139,14 +173,42 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
     window.print();
   };
 
+  const handleExecuteRefund = (res: Reservation) => {
+    const amount = res.refundAmount || res.total || 0;
+    const ref = disbursementRef.trim() || `DISB-${Date.now().toString().slice(-6)}`;
+    if (onProcessRefund) {
+      onProcessRefund(res.id, { amount, txRef: ref });
+    } else if (onUpdateReservationStatus) {
+      onUpdateReservationStatus(res.id, 'cancelled');
+    }
+
+    // Call backend API
+    fetch(`/api/hotels/${hotel.id}/refunds/disburse`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reservationId: res.id,
+        amount,
+        reference: ref,
+      }),
+    }).catch(console.error);
+
+    setRefundProcessingSuccess(true);
+    setTimeout(() => {
+      setRefundProcessingSuccess(false);
+      setSelectedRefundRes(null);
+      setDisbursementRef('');
+    }, 1800);
+  };
+
   return (
     <div className="space-y-6 max-w-6xl">
-      {/* Top Banner & Navigation Sub-Tabs */}
+      {/* Top Banner & Sub-Tabs */}
       <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-black text-black tracking-tight">Billing, Settlements & Financials</h1>
           <p className="text-xs text-neutral-500">
-            Configure settlement accounts, review guest transfer verifications, and audit hotel financial reports.
+            Audit realized revenues, approve guest bank transfer receipts, and execute cancellation refunds.
           </p>
         </div>
 
@@ -174,12 +236,26 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
               )}
             </button>
             <button
+              onClick={() => setActiveSubTab('refunds')}
+              className={`px-4 py-1.5 rounded-full transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+                activeSubTab === 'refunds' ? 'bg-black text-white shadow-xs font-bold' : 'text-neutral-600 hover:text-black'
+              }`}
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Refunds</span>
+              {pendingRefunds.length > 0 && (
+                <span className="bg-rose-100 text-rose-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+                  {pendingRefunds.length}
+                </span>
+              )}
+            </button>
+            <button
               onClick={() => setActiveSubTab('bank_config')}
               className={`px-4 py-1.5 rounded-full transition-colors whitespace-nowrap ${
                 activeSubTab === 'bank_config' ? 'bg-black text-white shadow-xs font-bold' : 'text-neutral-600 hover:text-black'
               }`}
             >
-              Paystack & Bank Settlement
+              Direct Bank Details
             </button>
           </div>
 
@@ -200,12 +276,22 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs space-y-1">
               <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block">
-                Total Realized Revenue
+                Net Audited Revenue
               </span>
-              <div className="text-2xl font-black text-black">₦{totalRevenue.toLocaleString()}</div>
+              <div className="text-2xl font-black text-black">₦{netRevenue.toLocaleString()}</div>
               <div className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1">
                 <TrendingUp className="w-3 h-3" />
-                <span>{confirmedReservations.length} cleared reservations</span>
+                <span>{confirmedReservations.length} cleared bookings</span>
+              </div>
+            </div>
+
+            <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs space-y-1">
+              <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block">
+                Deducted Refunds
+              </span>
+              <div className="text-2xl font-black text-rose-700">₦{totalRefundedAmount.toLocaleString()}</div>
+              <div className="text-[11px] text-neutral-500 font-medium">
+                {refundedReservations.length} reversed transfers
               </div>
             </div>
 
@@ -215,16 +301,8 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
               </span>
               <div className="text-2xl font-black text-amber-700">₦{pendingAmount.toLocaleString()}</div>
               <div className="text-[11px] text-neutral-500 font-medium">
-                {pendingReservations.length} proof slips pending review
+                {pendingReservations.length} proof slips pending
               </div>
-            </div>
-
-            <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs space-y-1">
-              <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block">
-                Average Daily Rate (ADR)
-              </span>
-              <div className="text-2xl font-black text-black">₦{averageDailyRate.toLocaleString()}</div>
-              <div className="text-[11px] text-neutral-500 font-medium">Per confirmed room booking</div>
             </div>
 
             <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs space-y-1">
@@ -238,37 +316,37 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
             </div>
           </div>
 
-          {/* Revenue & Occupancy Trend Graphs with explicit axes */}
+          {/* Revenue & Occupancy Trend Graphs */}
           <ComparativePerformanceChart
             title="Hotel Revenue & Performance Trends"
-            subtitle="Audited financial comparisons across operating days with explicit X/Y values"
+            subtitle="Audited financial comparisons across operating days with exact values"
             metrics={financialMetrics}
             currentPeriodLabel="This Week"
             previousPeriodLabel="Last Week"
           />
 
-          {/* Revenue Breakdown by Payment Method */}
+          {/* Revenue Breakdown by Settlement Method */}
           <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-xs space-y-4">
             <h3 className="text-sm font-bold text-black uppercase tracking-wider">
-              Settlement Channel Distribution
+              Settlement Channel Breakdown
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="border border-neutral-200 rounded-xl p-3 bg-neutral-50/50">
-                <span className="text-xs text-neutral-500 block">Bank Transfer (Guest Direct)</span>
+                <span className="text-xs text-neutral-500 block">Direct Hotel Bank Transfer</span>
                 <span className="text-lg font-bold text-black">
-                  ₦{totalRevenue.toLocaleString()}
+                  ₦{netRevenue.toLocaleString()}
                 </span>
-                <span className="text-[10px] text-neutral-400 block mt-0.5">100% of volume</span>
+                <span className="text-[10px] text-emerald-600 block mt-0.5">Direct to {hotel.bankName || 'Zenith Bank'}</span>
               </div>
               <div className="border border-neutral-200 rounded-xl p-3 bg-neutral-50/50">
                 <span className="text-xs text-neutral-500 block">POS / Card Terminal</span>
                 <span className="text-lg font-bold text-neutral-400">₦0</span>
-                <span className="text-[10px] text-neutral-400 block mt-0.5">0% of volume</span>
+                <span className="text-[10px] text-neutral-400 block mt-0.5">Front desk terminal</span>
               </div>
               <div className="border border-neutral-200 rounded-xl p-3 bg-neutral-50/50">
                 <span className="text-xs text-neutral-500 block">Front Desk Cash</span>
                 <span className="text-lg font-bold text-neutral-400">₦0</span>
-                <span className="text-[10px] text-neutral-400 block mt-0.5">0% of volume</span>
+                <span className="text-[10px] text-neutral-400 block mt-0.5">Over the counter</span>
               </div>
             </div>
           </div>
@@ -320,6 +398,7 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
                       res.status === 'confirmed' ||
                       res.status === 'checked_in' ||
                       res.status === 'checked_out';
+                    const isCancelled = res.status === 'cancelled';
 
                     return (
                       <tr key={res.id} className="hover:bg-neutral-50/70 transition-colors">
@@ -341,10 +420,20 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
                                 ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                                 : isPending
                                 ? 'bg-amber-50 text-amber-900 border-amber-200'
-                                : 'bg-rose-50 text-rose-800 border-rose-200'
+                                : isCancelled
+                                ? 'bg-rose-50 text-rose-800 border-rose-200'
+                                : 'bg-neutral-100 text-neutral-700 border-neutral-200'
                             }`}
                           >
-                            {isConfirmed ? 'Verified & Paid' : isPending ? 'Pending Verification' : res.status}
+                            {isConfirmed
+                              ? 'Verified & Paid'
+                              : isPending
+                              ? 'Pending Verification'
+                              : isCancelled
+                              ? res.refundStatus === 'completed'
+                                ? 'Refunded'
+                                : 'Cancelled'
+                              : res.status}
                           </span>
                         </td>
                         <td className="py-3 px-4">
@@ -394,71 +483,149 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
         </div>
       )}
 
-      {/* SUB-VIEW 3: PAYSTACK SUBACCOUNT & LINKED BANK SETTLEMENT */}
+      {/* SUB-VIEW 3: CANCELLATIONS & GUEST REFUNDS */}
+      {activeSubTab === 'refunds' && (
+        <div className="space-y-4">
+          <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-xs space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-black tracking-tight">Guest Cancellation Refunds Management</h2>
+                <p className="text-xs text-neutral-500">
+                  Review cancelled bookings and execute direct bank refunds to the guest's verified bank account. Approved refunds are automatically deducted from net hotel revenue.
+                </p>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block">Total Refunded</span>
+                <span className="text-lg font-black text-rose-600 font-mono">₦{totalRefundedAmount.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Refund Requests List */}
+          <div className="bg-white border border-neutral-200 rounded-2xl overflow-hidden shadow-xs">
+            {reservations.filter((r) => r.status === 'cancelled' || r.refundStatus).length === 0 ? (
+              <div className="p-12 text-center text-xs text-neutral-400 space-y-1">
+                <RotateCcw className="w-8 h-8 text-neutral-300 mx-auto mb-2" />
+                <p className="font-semibold text-neutral-600">No Cancellation or Refund Requests</p>
+                <p>When a guest cancels a paid reservation, their refund bank details appear here for hotel payout.</p>
+              </div>
+            ) : (
+              <table className="w-full text-left text-xs">
+                <thead className="bg-neutral-50 border-b border-neutral-200 text-[11px] font-semibold text-neutral-500">
+                  <tr>
+                    <th className="py-3 px-4">Booking Ref</th>
+                    <th className="py-3 px-4">Guest</th>
+                    <th className="py-3 px-4">Reason / Notes</th>
+                    <th className="py-3 px-4">Guest Bank Destination</th>
+                    <th className="py-3 px-4">Refund Amount</th>
+                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {reservations
+                    .filter((r) => r.status === 'cancelled' || r.refundStatus)
+                    .map((res) => {
+                      const isCompleted = res.refundStatus === 'completed';
+                      const bankInfo = res.refundBankDetails;
+
+                      return (
+                        <tr key={res.id} className="hover:bg-neutral-50/70 transition-colors">
+                          <td className="py-3 px-4 font-mono font-bold text-black">{res.reference}</td>
+                          <td className="py-3 px-4">
+                            <div className="font-semibold text-neutral-900">{res.guestName}</div>
+                            <div className="text-[11px] text-neutral-400">{res.guestPhone}</div>
+                          </td>
+                          <td className="py-3 px-4 text-neutral-600 max-w-[200px] truncate">
+                            {res.cancellationReason || 'Guest requested date cancellation'}
+                          </td>
+                          <td className="py-3 px-4">
+                            {bankInfo ? (
+                              <div className="text-neutral-800">
+                                <span className="font-bold block text-[11px]">{bankInfo.bankName}</span>
+                                <span className="font-mono text-emerald-700 font-bold block text-xs">
+                                  {bankInfo.accountNumber}
+                                </span>
+                                <span className="text-[10px] text-neutral-500 block truncate max-w-[160px]">
+                                  {bankInfo.accountName}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-neutral-400">Direct Contact Pending</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 font-mono font-bold text-rose-600">
+                            ₦{(res.refundAmount || res.total).toLocaleString()}
+                          </td>
+                          <td className="py-3 px-4">
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                                isCompleted
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                  : 'bg-amber-50 text-amber-900 border-amber-200'
+                              }`}
+                            >
+                              {isCompleted ? 'Refund Paid & Audited' : 'Pending Bank Payout'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            {isCompleted ? (
+                              <span className="text-[11px] text-neutral-400 font-semibold flex items-center justify-end gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Settled
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setSelectedRefundRes(res);
+                                  setDisbursementRef('');
+                                }}
+                                className="px-3 py-1.5 bg-black text-white text-[11px] font-bold rounded-lg hover:bg-neutral-800 shadow-2xs whitespace-nowrap"
+                              >
+                                Disburse Refund
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SUB-VIEW 4: DIRECT HOTEL COMMERCIAL BANK ACCOUNT CONFIGURATION */}
       {activeSubTab === 'bank_config' && (
         <div className="max-w-2xl bg-white border border-neutral-200 rounded-2xl p-6 shadow-xs space-y-6">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-              <h2 className="text-xl font-bold text-black tracking-tight">Paystack Settlement & Linked Bank Account</h2>
+              <Building2 className="w-5 h-5 text-neutral-800" />
+              <h2 className="text-xl font-bold text-black tracking-tight">Direct Hotel Bank Deposit Account</h2>
             </div>
             <p className="text-xs text-neutral-600 leading-relaxed">
-              Subscription payouts and guest revenue settlements process directly through Paystack Subaccounts.
-              Your commercial bank account is linked to your Paystack merchant subaccount; payouts route automatically
-              through Paystack's clearing engine rather than direct manual bank deposits.
-            </p>
-          </div>
-
-          {/* Paystack Routing Architecture Notice */}
-          <div className="p-4 rounded-xl bg-neutral-50 border border-neutral-200 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider font-mono">
-                PAYSTACK SPLIT-SETTLEMENT ENGINE
-              </span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 font-mono">
-                <Check className="w-3 h-3" /> VERIFIED SUBACCOUNT
-              </span>
-            </div>
-            <p className="text-xs text-neutral-700 leading-relaxed">
-              When guests pay online or subscriptions are debited, Paystack automatically identifies your Subaccount ID (<strong className="font-mono text-neutral-900">{paystackSubaccountId}</strong>) and initiates automated next-day clearing (T+1) to your linked commercial bank account.
+              Configure your primary corporate bank account (Zenith Bank, GTBank, Providus, etc.). Guests will see these exact banking details during online checkout and front-desk booking to transfer booking funds directly to your hotel.
             </p>
           </div>
 
           <form onSubmit={handleSaveBankInfo} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-neutral-800 mb-1">
-                Paystack Subaccount ID / Merchant Code *
-              </label>
-              <input
-                type="text"
-                required
-                value={paystackSubaccountId}
-                onChange={(e) => setPaystackSubaccountId(e.target.value)}
-                placeholder="e.g. ACCT_lava_ng_9384"
-                className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black font-mono font-bold"
-              />
-              <span className="text-[10px] text-neutral-500 mt-1 block">
-                Issued by Paystack for split settlements and direct subscription payouts.
-              </span>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-neutral-800 mb-1">
-                Linked Commercial Bank Name *
+                Hotel Commercial Bank *
               </label>
               <input
                 type="text"
                 required
                 value={bankName}
                 onChange={(e) => setBankName(e.target.value)}
-                placeholder="e.g. Providus Bank PLC / Zenith Bank"
+                placeholder="e.g. Zenith Bank PLC / Guaranty Trust Bank"
                 className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black font-semibold"
               />
             </div>
 
             <div>
               <label className="block text-xs font-semibold text-neutral-800 mb-1">
-                Account Name (as registered with Paystack & Bank) *
+                Corporate Account Name *
               </label>
               <input
                 type="text"
@@ -472,36 +639,48 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
 
             <div>
               <label className="block text-xs font-semibold text-neutral-800 mb-1">
-                10-Digit NUBAN Account Number (Linked to Paystack) *
+                10-Digit NUBAN Account Number *
               </label>
               <input
                 type="text"
                 required
                 maxLength={10}
                 value={accountNumber}
-                onChange={(e) => setAccountNumber(e.target.value)}
+                onChange={(e) => setAccountNumber(e.target.value.replace(/\D/g, ''))}
                 placeholder="e.g. 1014529384"
-                className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black font-mono font-bold"
+                className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-black font-mono font-bold tracking-wider"
               />
             </div>
 
-            {/* Live Paystack Settlement Card Preview */}
+            <div>
+              <label className="block text-xs font-semibold text-neutral-800 mb-1">
+                Guest Payment Instructions & Remarks Note
+              </label>
+              <textarea
+                rows={3}
+                value={transferInstructions}
+                onChange={(e) => setTransferInstructions(e.target.value)}
+                placeholder="e.g. Transfer exact fee to our Zenith Bank account. Please include your Booking Reference in narration..."
+                className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3.5 py-2 text-xs text-neutral-900 focus:outline-none focus:border-black"
+              />
+              <span className="text-[10px] text-neutral-500 mt-1 block">
+                Shown to guests on the booking checkout screen and confirmation emails.
+              </span>
+            </div>
+
+            {/* Direct Guest Checkout Card Preview */}
             <div className="bg-neutral-900 text-white border border-neutral-800 rounded-2xl p-5 space-y-3">
               <div className="flex items-center justify-between border-b border-neutral-800 pb-2">
                 <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider font-mono">
-                  LIVE PAYSTACK ROUTING PREVIEW
+                  GUEST CHECKOUT TRANSFER PREVIEW
                 </span>
-                <span className="text-[10px] text-emerald-400 font-mono font-bold">
-                  Schedule: Automated Daily (T+1)
+                <span className="text-[10px] text-emerald-400 font-mono font-bold flex items-center gap-1">
+                  <ShieldCheck className="w-3.5 h-3.5" /> Direct Hotel Account
                 </span>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                 <div>
-                  <span className="text-neutral-400 block text-[10px]">Paystack Subaccount</span>
-                  <span className="font-mono font-bold text-white text-[11px] truncate block">{paystackSubaccountId || '—'}</span>
-                </div>
-                <div>
-                  <span className="text-neutral-400 block text-[10px]">Linked Bank</span>
+                  <span className="text-neutral-400 block text-[10px]">Bank Name</span>
                   <span className="font-semibold text-white truncate block">{bankName || 'Not configured'}</span>
                 </div>
                 <div>
@@ -510,9 +689,12 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
                 </div>
                 <div>
                   <span className="text-neutral-400 block text-[10px]">NUBAN Account</span>
-                  <span className="font-mono font-bold text-emerald-400">{accountNumber || '—'}</span>
+                  <span className="font-mono font-bold text-emerald-400 text-sm tracking-wider">{accountNumber || '—'}</span>
                 </div>
               </div>
+              <p className="text-[11px] text-neutral-400 border-t border-neutral-800/80 pt-2 leading-relaxed">
+                "{transferInstructions}"
+              </p>
             </div>
 
             <div className="flex items-center gap-3 pt-2">
@@ -521,15 +703,109 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
                 className="bg-black text-white px-6 py-2.5 rounded-full text-xs font-bold hover:bg-neutral-800 transition-all flex items-center gap-2 active:scale-95 shadow-xs cursor-pointer"
               >
                 <Check className="w-4 h-4" />
-                <span>Save Paystack Settlement Configuration</span>
+                <span>Save Bank Deposit Details</span>
               </button>
               {saveSuccess && (
                 <span className="text-xs text-emerald-600 font-semibold flex items-center gap-1 animate-in fade-in duration-200">
-                  <CheckCircle2 className="w-4 h-4" /> Paystack Subaccount and linked bank details updated successfully!
+                  <CheckCircle2 className="w-4 h-4" /> Hotel bank account details updated successfully!
                 </span>
               )}
             </div>
           </form>
+        </div>
+      )}
+
+      {/* DISBURSE REFUND MODAL */}
+      {selectedRefundRes && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+              <div>
+                <h3 className="font-bold text-base text-black">Confirm Refund Transfer Disbursement</h3>
+                <p className="text-xs text-neutral-400">Ref: {selectedRefundRes.reference} · {selectedRefundRes.guestName}</p>
+              </div>
+              <button
+                onClick={() => setSelectedRefundRes(null)}
+                className="text-neutral-400 hover:text-black text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-4 rounded-xl bg-rose-50/60 border border-rose-200 space-y-2">
+              <span className="text-[10px] font-bold text-rose-800 uppercase tracking-wider block font-mono">
+                Guest Bank Payout Destination:
+              </span>
+              {selectedRefundRes.refundBankDetails ? (
+                <div className="space-y-1 text-xs text-neutral-800">
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Bank:</span>
+                    <span className="font-bold">{selectedRefundRes.refundBankDetails.bankName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Account No:</span>
+                    <span className="font-mono font-bold text-black text-sm">{selectedRefundRes.refundBankDetails.accountNumber}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Beneficiary:</span>
+                    <span className="font-semibold">{selectedRefundRes.refundBankDetails.accountName}</span>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-neutral-600">Please confirm account details directly with {selectedRefundRes.guestName} ({selectedRefundRes.guestPhone}).</p>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex justify-between items-center text-xs border-b border-neutral-100 pb-2">
+                <span className="text-neutral-500">Refund Amount to Transfer:</span>
+                <span className="font-mono font-extrabold text-base text-rose-600">
+                  ₦{(selectedRefundRes.refundAmount || selectedRefundRes.total).toLocaleString()}
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-700 mb-1">
+                  Bank Transfer Reference / Session ID (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 00001326090114002341"
+                  value={disbursementRef}
+                  onChange={(e) => setDisbursementRef(e.target.value)}
+                  className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3.5 py-2 text-xs font-mono focus:outline-none focus:border-black"
+                />
+              </div>
+
+              <p className="text-[11px] text-neutral-500 leading-relaxed">
+                By marking as disbursed, ₦{(selectedRefundRes.refundAmount || selectedRefundRes.total).toLocaleString()} will be subtracted from your hotel's net revenue calculations in the financial reports.
+              </p>
+            </div>
+
+            {refundProcessingSuccess ? (
+              <div className="p-3 bg-emerald-50 text-emerald-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 animate-in fade-in">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Refund Disbursed and Deducted from Revenue!
+              </div>
+            ) : (
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedRefundRes(null)}
+                  className="px-4 py-2 border border-neutral-200 text-neutral-700 text-xs font-semibold rounded-full hover:bg-neutral-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExecuteRefund(selectedRefundRes)}
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-full transition-all flex items-center gap-1.5 shadow-xs"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Confirm Refund Sent</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

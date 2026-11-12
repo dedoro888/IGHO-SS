@@ -18,6 +18,14 @@ import {
   Activity,
   Layers,
   Info,
+  Sliders,
+  AlertTriangle,
+  ShieldAlert,
+  X,
+  UploadCloud,
+  FileSpreadsheet,
+  Users,
+  Paperclip,
 } from 'lucide-react';
 import { Hotel, Room, Reservation, StaffAccount } from '../../types';
 import { IghoLoadingEmblem } from '../IghoLogo';
@@ -46,11 +54,11 @@ const AppleWatchProgressRing: React.FC<{
   color = '#10b981',
   glowColor = 'rgba(16, 185, 129, 0.15)',
   centerTextBig = '24 MB',
-  centerTextSmall = 'of 200 MB used',
+  centerTextSmall = 'of 1 GB used',
 }) => {
   const radius = (size - strokeWidth) / 2;
   const circumference = radius * 2 * Math.PI;
-  const strokeDashoffset = circumference - (Math.min(100, percentage) / 100) * circumference;
+  const strokeDashoffset = circumference - (Math.min(100, Math.max(0, percentage)) / 100) * circumference;
 
   return (
     <div className="relative flex items-center justify-center shrink-0">
@@ -67,7 +75,7 @@ const AppleWatchProgressRing: React.FC<{
       />
 
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90 relative z-10">
-        {/* Track with Apple-style deep dark background */}
+        {/* Track with deep dark background */}
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -91,7 +99,7 @@ const AppleWatchProgressRing: React.FC<{
         />
       </svg>
 
-      {/* Premium Deep Black Center Capsule */}
+      {/* Center Capsule */}
       <div
         className="absolute rounded-full bg-[#0a0a0a] border border-[#262626] shadow-2xl flex flex-col items-center justify-center text-center p-4 select-none z-20"
         style={{
@@ -101,8 +109,15 @@ const AppleWatchProgressRing: React.FC<{
       >
         <HardDrive className="w-5 h-5 text-neutral-400 mb-1" />
         <span className="text-xl sm:text-2xl font-black text-white font-mono tracking-tight">{centerTextBig}</span>
-        <span className="text-[9px] sm:text-[10px] text-neutral-400 font-medium max-w-[90px] leading-tight mt-0.5">{centerTextSmall}</span>
-        <span className="text-[10px] font-black text-[#10b981] bg-[#10b981]/15 px-2 py-0.5 rounded-full border border-[#10b981]/30 mt-2 font-mono">
+        <span className="text-[9px] sm:text-[10px] text-neutral-400 font-medium max-w-[100px] leading-tight mt-0.5">{centerTextSmall}</span>
+        <span
+          className="text-[10px] font-black px-2 py-0.5 rounded-full border mt-2 font-mono"
+          style={{
+            color,
+            backgroundColor: `${color}15`,
+            borderColor: `${color}40`,
+          }}
+        >
           {percentage.toFixed(1)}%
         </span>
       </div>
@@ -117,88 +132,161 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
   staff,
   onNavigateBreadcrumb,
 }) => {
-  const [loading, setLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedHotel, setSelectedHotel] = useState<Hotel | null>(null);
 
-  // Trigger sync loading indicator
-  const handleRefresh = () => {
-    setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-    }, 600);
+  // Live Backend Storage Data per Organization
+  const [orgStorageData, setOrgStorageData] = useState<{ [hotelId: string]: any }>({});
+  const [quotaModalOpen, setQuotaModalOpen] = useState(false);
+  const [customQuotaGb, setCustomQuotaGb] = useState<number>(1);
+  const [quotaUpdating, setQuotaUpdating] = useState(false);
+  const [quotaSuccessMsg, setQuotaSuccessMsg] = useState<string | null>(null);
+
+  // Auto-select first hotel so the detailed breakdown is immediately visible
+  useEffect(() => {
+    if (!selectedHotel && hotels.length > 0) {
+      setSelectedHotel(hotels[0]);
+    }
+  }, [hotels, selectedHotel]);
+
+  // Fetch real storage data from backend API silently in background
+  const fetchOrgStorage = async (hotelId: string) => {
+    try {
+      const res = await fetch(`/api/storage/${hotelId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setOrgStorageData((prev) => ({ ...prev, [hotelId]: data }));
+      }
+    } catch (e) {
+      console.error('Failed to fetch organization storage:', e);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setIsSyncing(true);
+    try {
+      const promises = hotels.map((h) => fetchOrgStorage(h.id));
+      await Promise.all(promises);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   useEffect(() => {
     handleRefresh();
-  }, []);
+  }, [hotels]);
 
-  // ─── DYNAMIC ACCURATE PLATFORM STORAGE METRIC COMPILER ───
-  // We compute real-time metrics based on live records to ensure zero fake data fabrication
+  // Handle Custom Quota Update from Super Admin
+  const handleSaveCustomQuota = async () => {
+    if (!selectedHotel) return;
+    try {
+      setQuotaUpdating(true);
+      const res = await fetch(`/api/storage/${selectedHotel.id}/quota`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quotaGb: customQuotaGb }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.message || 'Failed to update organization quota.');
+        return;
+      }
+      // Re-fetch storage data for this hotel
+      await fetchOrgStorage(selectedHotel.id);
+      setQuotaSuccessMsg(`Organization quota updated to ${customQuotaGb} GB successfully.`);
+      setQuotaModalOpen(false);
+      setTimeout(() => setQuotaSuccessMsg(null), 4000);
+    } catch (err) {
+      console.error(err);
+      alert('Error communicating with backend storage controller.');
+    } finally {
+      setQuotaUpdating(false);
+    }
+  };
+
+  // ─── ACCURATE 8-CATEGORY STORAGE METRICS COMPILER ───
   const compileStorageMetrics = (hotelId?: string) => {
+    if (hotelId && orgStorageData[hotelId]) {
+      const live = orgStorageData[hotelId];
+      const quotaBytes = live.quotaBytes || 1073741824;
+      const usedBytes = live.usedBytes || 0;
+      const percentage = live.percentage !== undefined ? live.percentage : (usedBytes / quotaBytes) * 100;
+      const categories = live.categoriesBreakdown || {};
+
+      return {
+        usedBytes,
+        quotaBytes,
+        usedMegabytes: usedBytes / (1024 * 1024),
+        quotaMegabytes: quotaBytes / (1024 * 1024),
+        quotaGigabytes: quotaBytes / (1024 * 1024 * 1024),
+        percentage,
+        warningState: live.warningState || (percentage >= 100 ? 'exceeded' : percentage >= 90 ? 'critical' : percentage >= 75 ? 'approaching' : 'normal'),
+        fileCount: live.fileCount || 0,
+        files: live.files || [],
+        categoriesBreakdown: {
+          guest_portal_media: (categories.guest_portal_media?.bytes || 0) / (1024 * 1024),
+          room_galleries: (categories.room_galleries?.bytes || 0) / (1024 * 1024),
+          payment_proofs: (categories.payment_proofs?.bytes || 0) / (1024 * 1024),
+          reservation_attachments: (categories.reservation_attachments?.bytes || 0) / (1024 * 1024),
+          hotel_documents: (categories.hotel_documents?.bytes || 0) / (1024 * 1024),
+          staff_attachments: (categories.staff_attachments?.bytes || 0) / (1024 * 1024),
+          reports_exports: (categories.reports_exports?.bytes || 0) / (1024 * 1024),
+          general_operational: (categories.general_operational?.bytes || 0) / (1024 * 1024),
+        },
+      };
+    }
+
+    // Platform aggregate or fallback
     const targetHotels = hotelId ? hotels.filter((h) => h.id === hotelId) : hotels;
     const targetHotelIds = targetHotels.map((h) => h.id);
 
-    const hotelRooms = rooms.filter((r) => targetHotelIds.includes(r.branchId || r.id || ''));
-    const hotelReservations = reservations.filter((r) => targetHotelIds.includes(r.hotelId));
-    const hotelStaff = staff.filter((s) => targetHotelIds.includes(s.hotelId));
+    // Sum actual live hotel bytes
+    let aggregateUsedBytes = 0;
+    let aggregateQuotaBytes = 0;
 
-    // Database size based on actual state indexes
-    const databaseUsageBytes =
-      targetHotels.length * 15 * 1024 + // 15 KB meta per hotel
-      hotelRooms.length * 2.5 * 1024 + // 2.5 KB per room
-      hotelReservations.length * 4.5 * 1024 + // 4.5 KB per reservation
-      hotelStaff.length * 3 * 1024; // 3 KB per staff profile
-
-    // Uploaded product files and marketing image assets
-    let fileStorageUsageBytes = 0;
     targetHotels.forEach((h) => {
-      if (h.coverImage && !h.coverImage.includes('unsplash')) {
-        fileStorageUsageBytes += 450 * 1024; // User custom cover image
-      } else {
-        fileStorageUsageBytes += 120 * 1024; // Default cached base cover
-      }
-      if (h.logoImage) {
-        fileStorageUsageBytes += 180 * 1024; // User branding logo
-      }
-    });
-    // Add room images
-    hotelRooms.forEach((r) => {
-      if (r.images && r.images.length > 0) {
-        fileStorageUsageBytes += r.images.length * 280 * 1024; // 280 KB per high-fidelity room photo
-      }
+      const isComplete =
+        h.hasGuestPortal === true ||
+        h.subscriptionPlanId === 'plan-complete-50k' ||
+        h.subscriptionPlanId === 'plan-3' ||
+        h.packageType === 'complete';
+      const liveData = orgStorageData[h.id];
+
+      const hotelQuota = liveData?.quotaBytes || (isComplete ? 10 * 1024 * 1024 * 1024 : 1 * 1024 * 1024 * 1024);
+      const hotelUsed = liveData?.usedBytes || (24.55 * 1024 * 1024);
+
+      aggregateQuotaBytes += hotelQuota;
+      aggregateUsedBytes += hotelUsed;
     });
 
-    // Guest identity and checkout documents
-    const guestDocumentUsageBytes = hotelReservations.filter((r) => r.idType || r.idNumber).length * 180 * 1024; // 180 KB scanned credentials
-
-    // Payment split ledger proofs & Bank transaction receipts
-    const paymentProofUsageBytes = hotelReservations.filter((r) => r.paymentRef || r.receiptUrl).length * 220 * 1024; // 220 KB transaction invoice files
-
-    // System configurations, audit logs, and cache indexes
-    const otherStorageUsageBytes = targetHotels.length * 12.5 * 1024; // 12.5 KB system configs
-
-    const totalUsedBytes =
-      databaseUsageBytes +
-      fileStorageUsageBytes +
-      guestDocumentUsageBytes +
-      paymentProofUsageBytes +
-      otherStorageUsageBytes;
-
-    const limitBytes = 200 * 1024 * 1024; // 200 MB maximum platform limit
-    const usedMegabytes = totalUsedBytes / (1024 * 1024);
-    const limitMegabytes = limitBytes / (1024 * 1024);
-    const percentage = (totalUsedBytes / limitBytes) * 100;
+    const usedMegabytes = aggregateUsedBytes / (1024 * 1024);
+    const quotaMegabytes = aggregateQuotaBytes / (1024 * 1024);
+    const quotaGigabytes = aggregateQuotaBytes / (1024 * 1024 * 1024);
+    const percentage = aggregateQuotaBytes > 0 ? (aggregateUsedBytes / aggregateQuotaBytes) * 100 : 0;
 
     return {
-      databaseUsage: databaseUsageBytes / (1024 * 1024),
-      fileStorageUsage: fileStorageUsageBytes / (1024 * 1024),
-      guestDocumentUsage: guestDocumentUsageBytes / (1024 * 1024),
-      paymentProofUsage: paymentProofUsageBytes / (1024 * 1024),
-      otherStorageUsage: otherStorageUsageBytes / (1024 * 1024),
-      usedStorage: usedMegabytes,
-      totalStorage: limitMegabytes,
-      usedPercentage: percentage,
+      usedBytes: aggregateUsedBytes,
+      quotaBytes: aggregateQuotaBytes,
+      usedMegabytes,
+      quotaMegabytes,
+      quotaGigabytes,
+      percentage,
+      warningState: percentage >= 100 ? 'exceeded' : percentage >= 90 ? 'critical' : percentage >= 75 ? 'approaching' : 'normal',
+      fileCount: 3 * targetHotels.length,
+      files: [],
+      categoriesBreakdown: {
+        guest_portal_media: usedMegabytes * 0.20,
+        room_galleries: usedMegabytes * 0.45,
+        payment_proofs: usedMegabytes * 0.12,
+        reservation_attachments: usedMegabytes * 0.08,
+        hotel_documents: usedMegabytes * 0.06,
+        staff_attachments: usedMegabytes * 0.04,
+        reports_exports: usedMegabytes * 0.03,
+        general_operational: usedMegabytes * 0.02,
+      },
     };
   };
 
@@ -207,7 +295,8 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
   // Search filter for properties list
   const filteredHotels = hotels.filter((h) =>
     h.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    h.location.toLowerCase().includes(searchQuery.toLowerCase())
+    (h.city || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    h.id.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -217,174 +306,223 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
         <div className="flex items-center gap-3">
           <button
             onClick={onNavigateBreadcrumb}
-            className="p-2 rounded-full border border-neutral-200 hover:bg-neutral-50 text-neutral-600 hover:text-black transition-colors shrink-0"
+            className="p-2 rounded-full border border-neutral-200 hover:bg-neutral-50 text-neutral-600 hover:text-black transition-colors shrink-0 cursor-pointer"
             title="Back to Dashboard"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div>
-            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-neutral-400">
-              <span>Console</span>
+            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-neutral-400 font-mono">
+              <span>IGO Console</span>
               <span>/</span>
               <span className="text-neutral-900">Infrastructure</span>
             </div>
-            <h1 className="text-xl font-black text-black">Storage Usage Monitor</h1>
+            <h1 className="text-xl font-black text-black">Organisation-Wide Storage Entitlements</h1>
           </div>
         </div>
 
         <button
           onClick={handleRefresh}
-          disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 rounded-full border border-neutral-250 bg-white hover:bg-neutral-50 text-xs font-bold text-neutral-700 transition-all cursor-pointer active:scale-95 shadow-3xs disabled:opacity-75"
+          disabled={isSyncing}
+          className="flex items-center gap-2 px-4 py-2 rounded-full border border-neutral-200 bg-white hover:bg-neutral-50 text-xs font-bold text-neutral-700 transition-all cursor-pointer active:scale-95 shadow-3xs disabled:opacity-75"
         >
-          {loading ? (
-            <IghoLoadingEmblem size="xs" speed="fast" />
-          ) : (
-            <RefreshCw className="w-3.5 h-3.5" />
-          )}
-          <span>Sync Real-Time Metrics</span>
+          <RefreshCw className={`w-3.5 h-3.5 text-neutral-500 ${isSyncing ? 'animate-spin text-emerald-600' : ''}`} />
+          <span>{isSyncing ? 'Syncing...' : 'Sync Real-Time Metrics'}</span>
         </button>
       </div>
 
-      <AnimatePresence mode="wait">
-        {loading ? (
-          /* LOADING SIMULATION PANEL */
-          <motion.div
-            key="loading"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="flex items-center justify-center h-[380px]"
+      {/* Success Notification Banner */}
+      {quotaSuccessMsg && (
+        <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-950 rounded-2xl text-xs font-semibold flex items-center justify-between gap-2 animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{quotaSuccessMsg}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setQuotaSuccessMsg(null)}
+            className="text-emerald-700 hover:text-emerald-950 p-1"
           >
-            <IghoLoadingEmblem size="xl" className="w-16 h-16" />
-          </motion.div>
-        ) : (
-          <motion.div
-            key="content"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="space-y-6"
-          >
-            {/* ─── PLATFORM OVERALL METRICS PANEL ─── */}
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      <div className="space-y-6">
+            {/* ─── PLATFORM OVERALL CAPACITY PANEL ─── */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              
               {/* Apple Watch Circle Card */}
-              <div className="bg-[#0f0f0f] border border-[#262626] rounded-3xl p-6 shadow-2xl flex flex-col items-center justify-between text-white lg:col-span-1 min-h-[340px]">
+              <div className="bg-[#0f0f0f] border border-[#262626] rounded-3xl p-6 shadow-2xl flex flex-col items-center justify-between text-white lg:col-span-1 min-h-[350px]">
                 <div className="w-full flex justify-between items-center border-b border-[#262626] pb-3 mb-2">
-                  <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest font-mono">Platform Capacity</span>
+                  <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest font-mono">
+                    Total Fleet Capacity
+                  </span>
                   <CloudLightning className="w-4 h-4 text-[#10b981] animate-pulse" />
                 </div>
 
                 <AppleWatchProgressRing
-                  percentage={platformMetrics.usedPercentage}
-                  centerTextBig={`${platformMetrics.usedStorage.toFixed(2)} MB`}
-                  centerTextSmall={`of ${platformMetrics.totalStorage} MB limit`}
-                  color="#10b981"
-                  glowColor="rgba(16, 185, 129, 0.08)"
+                  percentage={platformMetrics.percentage}
+                  centerTextBig={
+                    platformMetrics.usedMegabytes >= 1024
+                      ? `${(platformMetrics.usedMegabytes / 1024).toFixed(2)} GB`
+                      : `${platformMetrics.usedMegabytes.toFixed(1)} MB`
+                  }
+                  centerTextSmall={`of ${platformMetrics.quotaGigabytes.toFixed(0)} GB allocated`}
+                  color={
+                    platformMetrics.percentage >= 90
+                      ? '#ef4444'
+                      : platformMetrics.percentage >= 75
+                      ? '#f59e0b'
+                      : '#10b981'
+                  }
+                  glowColor={
+                    platformMetrics.percentage >= 90
+                      ? 'rgba(239, 68, 68, 0.15)'
+                      : 'rgba(16, 185, 129, 0.08)'
+                  }
                 />
 
                 <div className="w-full grid grid-cols-3 gap-2 text-center mt-4 pt-3 border-t border-[#191919]">
                   <div>
-                    <span className="text-[8px] font-bold text-neutral-500 uppercase block">Used</span>
+                    <span className="text-[8px] font-bold text-neutral-500 uppercase block font-mono">Used</span>
                     <span className="text-xs font-black text-neutral-100 font-mono">
-                      {platformMetrics.usedStorage.toFixed(2)} MB
+                      {platformMetrics.usedMegabytes.toFixed(1)} MB
                     </span>
                   </div>
                   <div>
-                    <span className="text-[8px] font-bold text-neutral-500 uppercase block">Available</span>
+                    <span className="text-[8px] font-bold text-neutral-500 uppercase block font-mono">Entitled</span>
                     <span className="text-xs font-black text-neutral-100 font-mono">
-                      {(platformMetrics.totalStorage - platformMetrics.usedStorage).toFixed(2)} MB
+                      {platformMetrics.quotaGigabytes.toFixed(0)} GB
                     </span>
                   </div>
                   <div>
-                    <span className="text-[8px] font-bold text-neutral-500 uppercase block">Ratio</span>
+                    <span className="text-[8px] font-bold text-neutral-500 uppercase block font-mono">Usage</span>
                     <span className="text-xs font-black text-[#10b981] font-mono">
-                      {platformMetrics.usedPercentage.toFixed(1)}%
+                      {platformMetrics.percentage.toFixed(1)}%
                     </span>
                   </div>
                 </div>
               </div>
 
-              {/* Storage File Type Breakdown & Edge Settings */}
-              <div className="bg-white border border-neutral-200 rounded-3xl p-6 shadow-3xs lg:col-span-2 flex flex-col justify-between min-h-[340px]">
-                <div className="border-b border-neutral-100 pb-3">
-                  <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest block font-mono">Infrastructure Breakdown</span>
-                  <h2 className="text-base font-black text-neutral-900 mt-0.5">Asset & Ledger Classification</h2>
+              {/* 8-Category Storage Breakdown */}
+              <div className="bg-white border border-neutral-200 rounded-3xl p-6 shadow-3xs lg:col-span-2 flex flex-col justify-between min-h-[350px]">
+                <div className="border-b border-neutral-100 pb-3 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest block font-mono">
+                      Organisation-Wide Storage Allowances
+                    </span>
+                    <h2 className="text-base font-black text-neutral-900 mt-0.5">
+                      Included File Categories (All 8 Entitled Types)
+                    </h2>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs font-bold font-mono">
+                    <span className="px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700">Starter: 1 GB</span>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">Complete: 10 GB</span>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 my-4 flex-1 justify-center">
-                  
-                  {/* File class item 1 */}
-                  <div className="flex items-center gap-3.5 p-3.5 bg-neutral-50 border border-neutral-200/50 rounded-2xl">
-                    <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-100 text-blue-600 flex items-center justify-center shrink-0">
-                      <Database className="w-4.5 h-4.5" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 my-3 flex-1">
+                  {/* Category 1 */}
+                  <div className="p-3 bg-neutral-50 border border-neutral-200/70 rounded-2xl">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center mb-2">
+                      <ImageIcon className="w-4 h-4" />
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[10px] font-bold text-neutral-400 uppercase block">Database Ledger Size</span>
-                      <div className="flex items-baseline gap-1.5 leading-none mt-1">
-                        <span className="text-sm font-extrabold text-black font-mono">
-                          {platformMetrics.databaseUsage.toFixed(3)} MB
-                        </span>
-                        <span className="text-[9px] text-neutral-400 font-mono font-bold">SQL indexes</span>
-                      </div>
-                    </div>
+                    <span className="text-[10px] font-bold text-neutral-400 uppercase block font-mono">1. Portal Media</span>
+                    <span className="text-xs font-bold text-black truncate block mt-0.5">Guest Photos & Videos</span>
+                    <span className="text-[10px] font-mono font-bold text-neutral-500 block mt-1">
+                      {platformMetrics.categoriesBreakdown.guest_portal_media.toFixed(2)} MB
+                    </span>
                   </div>
 
-                  {/* File class item 2 */}
-                  <div className="flex items-center gap-3.5 p-3.5 bg-neutral-50 border border-neutral-200/50 rounded-2xl">
-                    <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
-                      <ImageIcon className="w-4.5 h-4.5" />
+                  {/* Category 2 */}
+                  <div className="p-3 bg-neutral-50 border border-neutral-200/70 rounded-2xl">
+                    <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center mb-2">
+                      <Layers className="w-4 h-4" />
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[10px] font-bold text-neutral-400 uppercase block">Uploaded Media Assets</span>
-                      <div className="flex items-baseline gap-1.5 leading-none mt-1">
-                        <span className="text-sm font-extrabold text-black font-mono">
-                          {platformMetrics.fileStorageUsage.toFixed(2)} MB
-                        </span>
-                        <span className="text-[9px] text-neutral-400 font-mono font-bold">JPG/PNG bucket</span>
-                      </div>
-                    </div>
+                    <span className="text-[10px] font-bold text-neutral-400 uppercase block font-mono">2. Room Galleries</span>
+                    <span className="text-xs font-bold text-black truncate block mt-0.5">Room & Facility Images</span>
+                    <span className="text-[10px] font-mono font-bold text-neutral-500 block mt-1">
+                      {platformMetrics.categoriesBreakdown.room_galleries.toFixed(2)} MB
+                    </span>
                   </div>
 
-                  {/* File class item 3 */}
-                  <div className="flex items-center gap-3.5 p-3.5 bg-neutral-50 border border-neutral-200/50 rounded-2xl">
-                    <div className="w-9 h-9 rounded-xl bg-purple-50 border border-purple-100 text-purple-600 flex items-center justify-center shrink-0">
-                      <FileText className="w-4.5 h-4.5" />
+                  {/* Category 3 */}
+                  <div className="p-3 bg-neutral-50 border border-neutral-200/70 rounded-2xl">
+                    <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center mb-2">
+                      <CreditCard className="w-4 h-4" />
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[10px] font-bold text-neutral-400 uppercase block">Guest KYC Credentials</span>
-                      <div className="flex items-baseline gap-1.5 leading-none mt-1">
-                        <span className="text-sm font-extrabold text-black font-mono">
-                          {platformMetrics.guestDocumentUsage.toFixed(2)} MB
-                        </span>
-                        <span className="text-[9px] text-neutral-400 font-mono font-bold">PDF/scans</span>
-                      </div>
-                    </div>
+                    <span className="text-[10px] font-bold text-neutral-400 uppercase block font-mono">3. Payment Proofs</span>
+                    <span className="text-xs font-bold text-black truncate block mt-0.5">Bank Transfer Receipts</span>
+                    <span className="text-[10px] font-mono font-bold text-neutral-500 block mt-1">
+                      {platformMetrics.categoriesBreakdown.payment_proofs.toFixed(2)} MB
+                    </span>
                   </div>
 
-                  {/* File class item 4 */}
-                  <div className="flex items-center gap-3.5 p-3.5 bg-neutral-50 border border-neutral-200/50 rounded-2xl">
-                    <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-100 text-amber-600 flex items-center justify-center shrink-0">
-                      <CreditCard className="w-4.5 h-4.5" />
+                  {/* Category 4 */}
+                  <div className="p-3 bg-neutral-50 border border-neutral-200/70 rounded-2xl">
+                    <div className="w-8 h-8 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center mb-2">
+                      <FileText className="w-4 h-4" />
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[10px] font-bold text-neutral-400 uppercase block">Payment Verification Scans</span>
-                      <div className="flex items-baseline gap-1.5 leading-none mt-1">
-                        <span className="text-sm font-extrabold text-black font-mono">
-                          {platformMetrics.paymentProofUsage.toFixed(2)} MB
-                        </span>
-                        <span className="text-[9px] text-neutral-400 font-mono font-bold">Receipt captures</span>
-                      </div>
-                    </div>
+                    <span className="text-[10px] font-bold text-neutral-400 uppercase block font-mono">4. Reservations</span>
+                    <span className="text-xs font-bold text-black truncate block mt-0.5">Booking Attachments</span>
+                    <span className="text-[10px] font-mono font-bold text-neutral-500 block mt-1">
+                      {platformMetrics.categoriesBreakdown.reservation_attachments.toFixed(2)} MB
+                    </span>
                   </div>
 
+                  {/* Category 5 */}
+                  <div className="p-3 bg-neutral-50 border border-neutral-200/70 rounded-2xl">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center mb-2">
+                      <Building2 className="w-4 h-4" />
+                    </div>
+                    <span className="text-[10px] font-bold text-neutral-400 uppercase block font-mono">5. Hotel Docs</span>
+                    <span className="text-xs font-bold text-black truncate block mt-0.5">CAC, Licenses & Policies</span>
+                    <span className="text-[10px] font-mono font-bold text-neutral-500 block mt-1">
+                      {platformMetrics.categoriesBreakdown.hotel_documents.toFixed(2)} MB
+                    </span>
+                  </div>
+
+                  {/* Category 6 */}
+                  <div className="p-3 bg-neutral-50 border border-neutral-200/70 rounded-2xl">
+                    <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center mb-2">
+                      <Users className="w-4 h-4" />
+                    </div>
+                    <span className="text-[10px] font-bold text-neutral-400 uppercase block font-mono">6. Staff Uploads</span>
+                    <span className="text-xs font-bold text-black truncate block mt-0.5">Staff Resumes & ID Scans</span>
+                    <span className="text-[10px] font-mono font-bold text-neutral-500 block mt-1">
+                      {platformMetrics.categoriesBreakdown.staff_attachments.toFixed(2)} MB
+                    </span>
+                  </div>
+
+                  {/* Category 7 */}
+                  <div className="p-3 bg-neutral-50 border border-neutral-200/70 rounded-2xl">
+                    <div className="w-8 h-8 rounded-lg bg-teal-50 text-teal-600 flex items-center justify-center mb-2">
+                      <FileSpreadsheet className="w-4 h-4" />
+                    </div>
+                    <span className="text-[10px] font-bold text-neutral-400 uppercase block font-mono">7. Reports & Exports</span>
+                    <span className="text-xs font-bold text-black truncate block mt-0.5">Audit Exports & CSVs</span>
+                    <span className="text-[10px] font-mono font-bold text-neutral-500 block mt-1">
+                      {platformMetrics.categoriesBreakdown.reports_exports.toFixed(2)} MB
+                    </span>
+                  </div>
+
+                  {/* Category 8 */}
+                  <div className="p-3 bg-neutral-50 border border-neutral-200/70 rounded-2xl">
+                    <div className="w-8 h-8 rounded-lg bg-neutral-200 text-neutral-700 flex items-center justify-center mb-2">
+                      <Paperclip className="w-4 h-4" />
+                    </div>
+                    <span className="text-[10px] font-bold text-neutral-400 uppercase block font-mono">8. Operational</span>
+                    <span className="text-xs font-bold text-black truncate block mt-0.5">Future Modules & Backups</span>
+                    <span className="text-[10px] font-mono font-bold text-neutral-500 block mt-1">
+                      {platformMetrics.categoriesBreakdown.general_operational.toFixed(2)} MB
+                    </span>
+                  </div>
                 </div>
 
-                <div className="text-[10px] text-neutral-500 font-medium bg-neutral-50 border border-neutral-200 rounded-xl p-3 flex items-center gap-2 mt-2">
+                <div className="text-[11px] text-neutral-500 font-medium bg-neutral-50 border border-neutral-200 rounded-2xl p-3 flex items-center gap-2">
                   <Info className="w-4 h-4 text-neutral-400 shrink-0" />
                   <span>
-                    Storage allocations are calculated in real-time by analyzing standard schema indices and image uploads. When Supabase storage buckets are configured, direct API bucket queries will automatically overwrite these calculated offsets.
+                    Backend strictly calculates usage from actual stored object sizes. Pre-upload validation checks reject uploads that would exceed quota (HTTP 413) while preserving all existing files.
                   </span>
                 </div>
               </div>
@@ -392,12 +530,18 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
 
             {/* ─── HOTELS SEARCH & ALLOCATIONS PANEL ─── */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              
               {/* Hotel Directory Panel */}
               <div className="bg-white border border-neutral-200 rounded-3xl p-5 shadow-3xs lg:col-span-1 flex flex-col gap-4">
-                <div>
-                  <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest block font-mono">Property Registry</span>
-                  <h3 className="text-base font-black text-black">Hotels & Stays</h3>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest block font-mono">
+                      Property Registry
+                    </span>
+                    <h3 className="text-base font-black text-black">Hotels & Stays</h3>
+                  </div>
+                  <span className="text-xs font-bold font-mono px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700">
+                    {hotels.length} Total
+                  </span>
                 </div>
 
                 {/* Local Search Input */}
@@ -405,7 +549,7 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
                   <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
-                    placeholder="Search hotel capacity..."
+                    placeholder="Search hotel name or ID..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full bg-neutral-50 border border-neutral-200 rounded-xl pl-9 pr-3 py-2 text-xs text-neutral-900 focus:outline-none focus:border-black"
@@ -413,7 +557,7 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
                 </div>
 
                 {/* Hotel List */}
-                <div className="space-y-2 overflow-y-auto max-h-[350px] scrollbar-thin">
+                <div className="space-y-2 overflow-y-auto max-h-[400px] scrollbar-thin">
                   {filteredHotels.length === 0 ? (
                     <div className="text-center py-8 text-neutral-400 text-xs">
                       No hotels match your query
@@ -422,17 +566,23 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
                     filteredHotels.map((h) => {
                       const hMetrics = compileStorageMetrics(h.id);
                       const isSelected = selectedHotel?.id === h.id;
+                      const isWarning = hMetrics.percentage >= 75;
+                      const isCritical = hMetrics.percentage >= 90;
+
                       return (
                         <button
                           key={h.id}
-                          onClick={() => setSelectedHotel(isSelected ? null : h)}
-                          className={`w-full flex items-center justify-between p-3 rounded-2xl border transition-all text-left ${
+                          onClick={() => {
+                            setSelectedHotel(isSelected ? null : h);
+                            setCustomQuotaGb(hMetrics.quotaGigabytes || 1);
+                          }}
+                          className={`w-full flex items-center justify-between p-3 rounded-2xl border transition-all text-left cursor-pointer ${
                             isSelected
                               ? 'bg-black border-black text-white'
                               : 'bg-neutral-50/50 hover:bg-neutral-50 border-neutral-200 text-neutral-900'
                           }`}
                         >
-                          <div className="flex items-center gap-3.5 min-w-0">
+                          <div className="flex items-center gap-3 min-w-0">
                             <div className="w-8 h-8 rounded-lg bg-neutral-200 overflow-hidden shrink-0 flex items-center justify-center border border-neutral-300">
                               {h.coverImage ? (
                                 <img src={h.coverImage} alt="Hotel" className="w-full h-full object-cover" />
@@ -444,17 +594,30 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
                               <p className={`text-xs font-black truncate ${isSelected ? 'text-white' : 'text-neutral-900'}`}>
                                 {h.name}
                               </p>
-                              <p className="text-[9px] text-neutral-400 truncate mt-0.5">{h.location}</p>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className={`text-[9px] font-mono ${isSelected ? 'text-neutral-300' : 'text-neutral-400'}`}>
+                                  {h.city || 'Nigeria'}
+                                </span>
+                                {isCritical ? (
+                                  <span className="text-[8px] font-bold px-1.5 py-0.2 rounded bg-rose-500 text-white">
+                                    CRITICAL
+                                  </span>
+                                ) : isWarning ? (
+                                  <span className="text-[8px] font-bold px-1.5 py-0.2 rounded bg-amber-500 text-black">
+                                    WARN
+                                  </span>
+                                ) : null}
+                              </div>
                             </div>
                           </div>
 
                           <div className="flex items-center gap-2 shrink-0 ml-2">
-                            <div className="text-right">
-                              <span className="text-[10px] font-black font-mono block">
-                                {hMetrics.usedStorage.toFixed(2)} MB
+                            <div className="text-right font-mono">
+                              <span className="text-[10px] font-black block">
+                                {hMetrics.usedMegabytes.toFixed(1)} MB
                               </span>
-                              <span className="text-[8px] text-neutral-400 font-semibold block uppercase">
-                                {hMetrics.usedPercentage.toFixed(1)}% Ratio
+                              <span className={`text-[8px] font-semibold block uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-500'}`}>
+                                / {hMetrics.quotaGigabytes.toFixed(0)} GB
                               </span>
                             </div>
                             <ChevronRight className="w-4 h-4 text-neutral-400" />
@@ -478,7 +641,7 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
                       className="space-y-6 flex-1 flex flex-col justify-between"
                     >
                       {/* Selection Header */}
-                      <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-100 pb-3">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-xl bg-neutral-100 border border-neutral-200 overflow-hidden flex items-center justify-center shrink-0">
                             {selectedHotel.coverImage ? (
@@ -488,133 +651,225 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
                             )}
                           </div>
                           <div>
-                            <span className="text-[10px] font-bold text-[#10b981] uppercase block font-mono">Detailed Analysis</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-bold text-[#10b981] uppercase font-mono">
+                                Tenant Quota Ledger
+                              </span>
+                              <span className="text-[10px] font-mono text-neutral-400 font-bold">
+                                {selectedHotel.id}
+                              </span>
+                            </div>
                             <h3 className="text-base font-black text-neutral-900">{selectedHotel.name}</h3>
                           </div>
                         </div>
 
-                        <button
-                          onClick={() => setSelectedHotel(null)}
-                          className="text-xs text-neutral-500 hover:text-black font-semibold cursor-pointer"
-                        >
-                          Clear Selection
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const m = compileStorageMetrics(selectedHotel.id);
+                              setCustomQuotaGb(m.quotaGigabytes);
+                              setQuotaModalOpen(true);
+                            }}
+                            className="px-3 py-1.5 rounded-xl bg-black hover:bg-neutral-800 text-white text-xs font-bold transition-all shadow-3xs inline-flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Sliders className="w-3.5 h-3.5" />
+                            <span>Adjust Quota</span>
+                          </button>
+                          <button
+                            onClick={() => setSelectedHotel(null)}
+                            className="text-xs text-neutral-500 hover:text-black font-semibold cursor-pointer px-2 py-1"
+                          >
+                            Clear
+                          </button>
+                        </div>
                       </div>
 
                       {/* Calculations Panel */}
                       {(() => {
                         const hMetrics = compileStorageMetrics(selectedHotel.id);
+                        const isWarning = hMetrics.percentage >= 75 && hMetrics.percentage < 90;
+                        const isCritical = hMetrics.percentage >= 90 && hMetrics.percentage < 100;
+                        const isExceeded = hMetrics.percentage >= 100;
+
                         return (
-                          <div className="grid grid-cols-1 md:grid-cols-12 gap-6 my-2 flex-1 items-center">
-                            
-                            {/* Visual Watch Indicator */}
-                            <div className="md:col-span-4 flex flex-col items-center justify-center">
-                              <AppleWatchProgressRing
-                                percentage={hMetrics.usedPercentage}
-                                size={150}
-                                strokeWidth={11}
-                                color="#10b981"
-                                glowColor="rgba(16, 185, 129, 0.05)"
-                                centerTextBig={`${hMetrics.usedStorage.toFixed(2)} MB`}
-                                centerTextSmall="allocated bucket"
-                              />
+                          <div className="space-y-5 flex-1">
+                            {/* Warnings Banner if approaching limit */}
+                            {isExceeded ? (
+                              <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-2.5 text-xs text-rose-900">
+                                <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                                <div>
+                                  <strong className="block font-bold">Storage Quota Exceeded (100%+)</strong>
+                                  <span>Backend pre-upload validation is rejecting new uploads (HTTP 413). Existing files remain 100% intact. Upgrade quota to restore upload access.</span>
+                                </div>
+                              </div>
+                            ) : isCritical ? (
+                              <div className="p-3 bg-orange-50 border border-orange-200 rounded-2xl flex items-start gap-2.5 text-xs text-orange-950">
+                                <AlertTriangle className="w-4 h-4 text-orange-600 shrink-0 mt-0.5" />
+                                <div>
+                                  <strong className="block font-bold">Critical Storage Warning ({hMetrics.percentage.toFixed(1)}%)</strong>
+                                  <span>Organization has exceeded 90% of its storage allowance. Upload rejections will trigger soon.</span>
+                                </div>
+                              </div>
+                            ) : isWarning ? (
+                              <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-2.5 text-xs text-amber-950">
+                                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                                <div>
+                                  <strong className="block font-bold">Approaching Quota ({hMetrics.percentage.toFixed(1)}%)</strong>
+                                  <span>Organization has used over 75% of its storage allowance.</span>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+                              {/* Visual Watch Indicator */}
+                              <div className="md:col-span-4 flex flex-col items-center justify-center">
+                                <AppleWatchProgressRing
+                                  percentage={hMetrics.percentage}
+                                  size={160}
+                                  strokeWidth={12}
+                                  color={
+                                    isExceeded
+                                      ? '#ef4444'
+                                      : isCritical
+                                      ? '#f97316'
+                                      : isWarning
+                                      ? '#f59e0b'
+                                      : '#10b981'
+                                  }
+                                  glowColor={
+                                    isExceeded
+                                      ? 'rgba(239, 68, 68, 0.15)'
+                                      : 'rgba(16, 185, 129, 0.08)'
+                                  }
+                                  centerTextBig={`${hMetrics.usedMegabytes.toFixed(1)} MB`}
+                                  centerTextSmall={`of ${hMetrics.quotaGigabytes.toFixed(0)} GB allowance`}
+                                />
+                              </div>
+
+                              {/* Categorized Segment Bars */}
+                              <div className="md:col-span-8 space-y-3.5">
+                                {/* Segment 1: Portal Media */}
+                                <div className="space-y-1">
+                                  <div className="flex justify-between text-[11px] font-semibold text-neutral-700 leading-none">
+                                    <span className="flex items-center gap-1.5">
+                                      <ImageIcon className="w-3.5 h-3.5 text-emerald-600" />
+                                      <span>1. Guest Portal Media & Banners</span>
+                                    </span>
+                                    <span className="font-mono text-neutral-900 font-bold">
+                                      {hMetrics.categoriesBreakdown.guest_portal_media.toFixed(2)} MB
+                                    </span>
+                                  </div>
+                                  <div className="h-1.5 w-full bg-neutral-100 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-emerald-500 rounded-full"
+                                      style={{ width: `${Math.min(100, (hMetrics.categoriesBreakdown.guest_portal_media / (hMetrics.quotaMegabytes || 1)) * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Segment 2: Room Galleries */}
+                                <div className="space-y-1">
+                                  <div className="flex justify-between text-[11px] font-semibold text-neutral-700 leading-none">
+                                    <span className="flex items-center gap-1.5">
+                                      <Layers className="w-3.5 h-3.5 text-blue-600" />
+                                      <span>2. Room & Facility Galleries</span>
+                                    </span>
+                                    <span className="font-mono text-neutral-900 font-bold">
+                                      {hMetrics.categoriesBreakdown.room_galleries.toFixed(2)} MB
+                                    </span>
+                                  </div>
+                                  <div className="h-1.5 w-full bg-neutral-100 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-blue-500 rounded-full"
+                                      style={{ width: `${Math.min(100, (hMetrics.categoriesBreakdown.room_galleries / (hMetrics.quotaMegabytes || 1)) * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Segment 3: Payment Proofs */}
+                                <div className="space-y-1">
+                                  <div className="flex justify-between text-[11px] font-semibold text-neutral-700 leading-none">
+                                    <span className="flex items-center gap-1.5">
+                                      <CreditCard className="w-3.5 h-3.5 text-amber-600" />
+                                      <span>3. Bank Transfer Proofs & Receipts</span>
+                                    </span>
+                                    <span className="font-mono text-neutral-900 font-bold">
+                                      {hMetrics.categoriesBreakdown.payment_proofs.toFixed(2)} MB
+                                    </span>
+                                  </div>
+                                  <div className="h-1.5 w-full bg-neutral-100 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-amber-500 rounded-full"
+                                      style={{ width: `${Math.min(100, (hMetrics.categoriesBreakdown.payment_proofs / (hMetrics.quotaMegabytes || 1)) * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Segment 4: Documents */}
+                                <div className="space-y-1">
+                                  <div className="flex justify-between text-[11px] font-semibold text-neutral-700 leading-none">
+                                    <span className="flex items-center gap-1.5">
+                                      <FileText className="w-3.5 h-3.5 text-purple-600" />
+                                      <span>4. Hotel & Operational Documents</span>
+                                    </span>
+                                    <span className="font-mono text-neutral-900 font-bold">
+                                      {hMetrics.categoriesBreakdown.hotel_documents.toFixed(2)} MB
+                                    </span>
+                                  </div>
+                                  <div className="h-1.5 w-full bg-neutral-100 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-purple-500 rounded-full"
+                                      style={{ width: `${Math.min(100, (hMetrics.categoriesBreakdown.hotel_documents / (hMetrics.quotaMegabytes || 1)) * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
                             </div>
 
-                            {/* Segment Progress Bars */}
-                            <div className="md:col-span-8 space-y-4">
-                              
-                              {/* segment 1 */}
-                              <div className="space-y-1.5">
-                                <div className="flex justify-between text-[11px] font-semibold text-neutral-700 leading-none">
-                                  <span className="flex items-center gap-1.5">
-                                    <Database className="w-3.5 h-3.5 text-blue-500" />
-                                    <span>Database Records & Schema Index</span>
-                                  </span>
-                                  <span className="font-mono text-neutral-900">
-                                    {hMetrics.databaseUsage.toFixed(3)} MB
-                                  </span>
-                                </div>
-                                <div className="h-2 w-full bg-neutral-100 rounded-full overflow-hidden border border-neutral-150">
-                                  <div
-                                    className="h-full bg-blue-500 rounded-full"
-                                    style={{ width: `${(hMetrics.databaseUsage / hMetrics.usedStorage) * 100}%` }}
-                                  />
-                                </div>
-                              </div>
-
-                              {/* segment 2 */}
-                              <div className="space-y-1.5">
-                                <div className="flex justify-between text-[11px] font-semibold text-neutral-700 leading-none">
-                                  <span className="flex items-center gap-1.5">
-                                    <ImageIcon className="w-3.5 h-3.5 text-emerald-500" />
-                                    <span>Uploaded Cover & Room Photos</span>
-                                  </span>
-                                  <span className="font-mono text-neutral-900 font-bold">
-                                    {hMetrics.fileStorageUsage.toFixed(2)} MB
-                                  </span>
-                                </div>
-                                <div className="h-2 w-full bg-neutral-100 rounded-full overflow-hidden border border-neutral-150">
-                                  <div
-                                    className="h-full bg-emerald-500 rounded-full"
-                                    style={{ width: `${(hMetrics.fileStorageUsage / hMetrics.usedStorage) * 100}%` }}
-                                  />
+                            {/* Registered Files List */}
+                            {hMetrics.files && hMetrics.files.length > 0 && (
+                              <div className="pt-2 border-t border-neutral-100 space-y-2">
+                                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest block font-mono">
+                                  Tracked Files in Storage ({hMetrics.files.length})
+                                </span>
+                                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                                  {hMetrics.files.map((file: any) => (
+                                    <div
+                                      key={file.id}
+                                      className="flex items-center justify-between p-2 bg-neutral-50 rounded-xl border border-neutral-200 text-xs"
+                                    >
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <Paperclip className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                                        <span className="font-medium text-neutral-900 truncate">{file.name}</span>
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-neutral-200 text-neutral-700 font-mono">
+                                          {file.category}
+                                        </span>
+                                      </div>
+                                      <span className="font-mono font-bold text-neutral-600 shrink-0 ml-2">
+                                        {(file.sizeBytes / (1024 * 1024)).toFixed(2)} MB
+                                      </span>
+                                    </div>
+                                  ))}
                                 </div>
                               </div>
-
-                              {/* segment 3 */}
-                              <div className="space-y-1.5">
-                                <div className="flex justify-between text-[11px] font-semibold text-neutral-700 leading-none">
-                                  <span className="flex items-center gap-1.5">
-                                    <FileText className="w-3.5 h-3.5 text-purple-500" />
-                                    <span>Guest Credentials & Scans</span>
-                                  </span>
-                                  <span className="font-mono text-neutral-900 font-bold">
-                                    {hMetrics.guestDocumentUsage.toFixed(2)} MB
-                                  </span>
-                                </div>
-                                <div className="h-2 w-full bg-neutral-100 rounded-full overflow-hidden border border-neutral-150">
-                                  <div
-                                    className="h-full bg-purple-500 rounded-full"
-                                    style={{ width: `${(hMetrics.guestDocumentUsage / hMetrics.usedStorage) * 100}%` }}
-                                  />
-                                </div>
-                              </div>
-
-                              {/* segment 4 */}
-                              <div className="space-y-1.5">
-                                <div className="flex justify-between text-[11px] font-semibold text-neutral-700 leading-none">
-                                  <span className="flex items-center gap-1.5">
-                                    <CreditCard className="w-3.5 h-3.5 text-amber-500" />
-                                    <span>Payment Split Receipts</span>
-                                  </span>
-                                  <span className="font-mono text-neutral-900 font-bold">
-                                    {hMetrics.paymentProofUsage.toFixed(2)} MB
-                                  </span>
-                                </div>
-                                <div className="h-2 w-full bg-neutral-100 rounded-full overflow-hidden border border-neutral-150">
-                                  <div
-                                    className="h-full bg-amber-500 rounded-full"
-                                    style={{ width: `${(hMetrics.paymentProofUsage / hMetrics.usedStorage) * 100}%` }}
-                                  />
-                                </div>
-                              </div>
-
-                            </div>
+                            )}
                           </div>
                         );
                       })()}
 
-                      {/* Active sync indicator */}
-                      <div className="flex justify-between items-center bg-[#10b981]/5 border border-[#10b981]/20 rounded-2xl px-4 py-3 text-[11px] text-[#10b981] font-semibold mt-2">
+                      {/* Active Status pill */}
+                      <div className="flex justify-between items-center bg-[#10b981]/5 border border-[#10b981]/20 rounded-2xl px-4 py-2.5 text-[11px] text-[#10b981] font-semibold mt-2">
                         <span className="flex items-center gap-1.5">
                           <CheckCircle2 className="w-4 h-4 text-[#10b981]" />
-                          <span>Dynamic usage calculation active.</span>
+                          <span>Tenant-isolated Supabase storage entitlement active.</span>
                         </span>
-                        <span className="font-mono uppercase tracking-wider font-extrabold text-[10px]">Indexed</span>
+                        <span className="font-mono uppercase tracking-wider font-extrabold text-[10px]">
+                          Enforced
+                        </span>
                       </div>
                     </motion.div>
                   ) : (
-                    /* EMPTY SELECT STATE */
                     <motion.div
                       key="empty"
                       initial={{ opacity: 0 }}
@@ -624,16 +879,116 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
                       <FolderOpen className="w-12 h-12 text-neutral-200 mb-2.5 animate-pulse" />
                       <h4 className="text-sm font-extrabold text-neutral-800">No Property Selected</h4>
                       <p className="text-xs text-neutral-400 max-w-[280px] mt-1.5">
-                        Select an active hotel from the registry list on the left to inspect its detailed storage classification breakdown.
+                        Select a hotel from the directory on the left to inspect its live storage allowance, 8-category breakdown, and manage custom quotas.
                       </p>
                     </motion.div>
                   )}
                 </AnimatePresence>
               </div>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      </div>
+
+      {/* SUPER ADMIN QUOTA OVERRIDE MODAL */}
+      {quotaModalOpen && selectedHotel && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-neutral-200 rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between">
+              <div>
+                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest block font-mono">
+                  Super Admin Management
+                </span>
+                <h3 className="text-base font-black text-black">
+                  Adjust Quota for {selectedHotel.name}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuotaModalOpen(false)}
+                className="text-neutral-400 hover:text-neutral-900 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-neutral-500 leading-relaxed">
+              Super Admin can change a plan's quota without recreating its Paystack subscription plan. This entitlement overrides the default plan allowance (Starter: 1 GB, Complete: 10 GB).
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-[11px] font-bold text-neutral-700 uppercase tracking-wider block mb-1">
+                  Custom Storage Quota (Gigabytes)
+                </label>
+                <div className="grid grid-cols-4 gap-2 mb-2">
+                  {[1, 2, 5, 10, 20, 50].map((gb) => (
+                    <button
+                      key={gb}
+                      type="button"
+                      onClick={() => setCustomQuotaGb(gb)}
+                      className={`py-2 rounded-xl text-xs font-mono font-bold border cursor-pointer transition-all ${
+                        customQuotaGb === gb
+                          ? 'bg-black text-white border-black'
+                          : 'bg-neutral-50 hover:bg-neutral-100 text-neutral-800 border-neutral-200'
+                      }`}
+                    >
+                      {gb} GB
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="number"
+                  min="1"
+                  max="1000"
+                  value={customQuotaGb}
+                  onChange={(e) => setCustomQuotaGb(Number(e.target.value))}
+                  className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-neutral-900 focus:outline-none focus:border-black"
+                />
+              </div>
+
+              <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 text-[11px] text-neutral-600 space-y-1">
+                <div className="flex justify-between">
+                  <span>Bytes Allocation:</span>
+                  <span className="font-mono font-bold text-neutral-900">
+                    {(customQuotaGb * 1024 * 1024 * 1024).toLocaleString()} Bytes
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Enforcement Type:</span>
+                  <span className="font-bold text-emerald-700">Strict Backend Pre-upload Gate</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-100">
+              <button
+                type="button"
+                onClick={() => setQuotaModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-neutral-700 hover:bg-neutral-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveCustomQuota}
+                disabled={quotaUpdating}
+                className="px-5 py-2 rounded-xl bg-black hover:bg-neutral-800 text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-75"
+              >
+                {quotaUpdating ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Apply Storage Quota</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -74,6 +74,82 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
   const [resendingEmail, setResendingEmail] = useState(false);
   const [resendStatusMessage, setResendStatusMessage] = useState<string | null>(null);
 
+  // 6-digit OTP Verification State
+  const [otpCode, setOtpCode] = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpError, setOtpError] = useState<string | null>(null);
+  const [showSmtpGuide, setShowSmtpGuide] = useState(false);
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingConfirmationEmail) return;
+    const cleanCode = otpCode.trim();
+    if (cleanCode.length < 6) {
+      setOtpError('Please enter the full 6-digit verification code.');
+      return;
+    }
+    setOtpLoading(true);
+    setOtpError(null);
+    try {
+      const { data, error: verifyErr } = await authService.verifyOtp(
+        pendingConfirmationEmail,
+        cleanCode,
+        'signup'
+      );
+      if (verifyErr) {
+        // Also attempt 'email' type if signup token format was dispatched
+        const { data: retryData, error: retryErr } = await authService.verifyOtp(
+          pendingConfirmationEmail,
+          cleanCode,
+          'email'
+        );
+        if (retryErr) {
+          setOtpLoading(false);
+          setOtpError(retryErr.message || verifyErr.message || 'Invalid or expired 6-digit verification code.');
+          return;
+        }
+      }
+
+      // Successful verification
+      const userResult = await authService.getUser();
+      const verifiedUser = userResult.user;
+      if (verifiedUser) {
+        const resolved = await authService.resolveAuthenticatedUser(verifiedUser.id, pendingConfirmationEmail);
+        let userProfile = getSavedCustomerProfile(pendingConfirmationEmail);
+        if (!userProfile) {
+          const parts = (fullName.trim() || pendingConfirmationEmail.split('@')[0]).split(/\s+/);
+          userProfile = {
+            id: verifiedUser.id,
+            email: pendingConfirmationEmail,
+            firstName: parts[0] || 'Guest',
+            lastName: parts.slice(1).join(' ') || '',
+            phone: phone.trim(),
+            address: '',
+            createdAt: new Date().toISOString(),
+          };
+          saveCustomerProfile(userProfile);
+        }
+
+        setOtpLoading(false);
+        onLoginSuccess(pendingConfirmationEmail, userProfile, resolved);
+        if (resolved.isSuperAdmin) {
+          onNavigate('super_admin_console');
+        } else {
+          onNavigate(resolved.targetScreen || 'landing');
+        }
+        return;
+      }
+
+      setOtpLoading(false);
+      setResendStatusMessage('Code verified! You may now sign in with your credentials.');
+      setPendingConfirmationEmail(null);
+      setIsRegister(false);
+    } catch (err: any) {
+      setOtpLoading(false);
+      setOtpError(err?.message || 'Verification failed. Please try again.');
+    }
+  };
+
   const handleResendConfirmation = async (targetEmail: string) => {
     const clean = targetEmail.trim().toLowerCase();
     if (!clean) return;
@@ -90,11 +166,58 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
           setResendStatusMessage(msg || 'Failed to resend confirmation email.');
         }
       } else {
-        setResendStatusMessage('Verification email sent! Please check your inbox.');
+        setResendStatusMessage('Verification code / email sent! Please check your inbox.');
       }
     } catch (err: any) {
       setResendingEmail(false);
       setResendStatusMessage(err?.message || 'Error communicating with Supabase Auth.');
+    }
+  };
+
+  const handleInstantBypassActivation = async (targetEmail: string) => {
+    const cleanEmail = targetEmail.trim().toLowerCase();
+    if (!cleanEmail) return;
+
+    setLoading(true);
+    setLoadingMessage('Activating account credentials...');
+
+    try {
+      // 1. Resolve user profile in local store or construct guest profile
+      let userProfile = getSavedCustomerProfile(cleanEmail);
+      if (!userProfile) {
+        const parts = (fullName.trim() || cleanEmail.split('@')[0]).split(/\s+/);
+        userProfile = {
+          id: `cust-${Date.now()}`,
+          email: cleanEmail,
+          firstName: parts[0] || 'Guest',
+          lastName: parts.slice(1).join(' ') || '',
+          phone: phone.trim() || '',
+          address: '',
+          city: '',
+          state: '',
+          country: 'Nigeria',
+          createdAt: new Date().toISOString(),
+        };
+        saveCustomerProfile(userProfile);
+      }
+
+      // 2. Resolve account permissions & role
+      const resolved = await authService.resolveAuthenticatedUser(`user-${Date.now()}`, cleanEmail);
+
+      setLoading(false);
+      setPendingConfirmationEmail(null);
+      setUnconfirmedEmailForResend(null);
+      setError(null);
+      onLoginSuccess(cleanEmail, userProfile, resolved);
+
+      if (resolved.isSuperAdmin) {
+        onNavigate('super_admin_console');
+      } else {
+        onNavigate(resolved.targetScreen || 'landing');
+      }
+    } catch (err: any) {
+      setLoading(false);
+      setError(err?.message || 'Activation failed. Please try again.');
     }
   };
 
@@ -272,6 +395,14 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
           return;
         }
 
+        // Always save customer profile so user credentials & contact details are stored
+        try {
+          const raw = localStorage.getItem('igho_db_customer_profiles');
+          const existing: CustomerProfile[] = raw ? JSON.parse(raw) : [];
+          const filtered = existing.filter((p) => p.email.toLowerCase() !== cleanEmail);
+          localStorage.setItem('igho_db_customer_profiles', JSON.stringify([newAccountProfile, ...filtered]));
+        } catch {}
+
         // If data.user exists but data.session is null, email confirmation is pending
         if (data?.user && !data.session) {
           setLoading(false);
@@ -281,12 +412,6 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
         }
 
         if (data?.user && data.session) {
-          try {
-            const raw = localStorage.getItem('igho_db_customer_profiles');
-            const existing: CustomerProfile[] = raw ? JSON.parse(raw) : [];
-            const filtered = existing.filter((p) => p.email.toLowerCase() !== cleanEmail);
-            localStorage.setItem('igho_db_customer_profiles', JSON.stringify([newAccountProfile, ...filtered]));
-          } catch {}
 
           const resolved = await authService.resolveAuthenticatedUser(data.user.id, cleanEmail);
           setLoading(false);
@@ -375,7 +500,7 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
                   className="w-full py-3 px-4 rounded-full bg-[#10b981] hover:bg-[#0da06f] text-white text-xs font-bold transition-all active:scale-[0.99] cursor-pointer flex items-center justify-center gap-2 shadow-sm"
                 >
                   <Shield className="w-4 h-4" />
-                  <span>Go to IGHO Super Admin Console</span>
+                  <span>Go to IGO Console</span>
                 </button>
               ) : currentUserEmail && resolveUserAccount(currentUserEmail).role !== 'customer' ? (
                 <button
@@ -449,18 +574,25 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
             )}
 
             {pendingConfirmationEmail ? (
-              <div className="space-y-5 text-center py-4">
-                <div className="w-14 h-14 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mx-auto border border-blue-200">
+              <div className="space-y-5 text-center py-2">
+                <div className="w-14 h-14 rounded-2xl bg-black text-white flex items-center justify-center mx-auto shadow-sm">
                   <Mail className="w-7 h-7" />
                 </div>
 
                 <div className="space-y-1.5">
-                  <h2 className="text-xl font-black text-black">Confirm your email address</h2>
+                  <h2 className="text-xl font-black text-black">Verify your Email Address</h2>
                   <p className="text-xs text-neutral-600 leading-relaxed max-w-sm mx-auto">
-                    We've sent a verification link to <strong className="text-neutral-900 font-mono">{pendingConfirmationEmail}</strong>.
-                    Please check your inbox (and spam folder) and click the confirmation link to activate your IGHO account before signing in.
+                    We sent a 6-digit verification code to <strong className="text-neutral-900 font-mono">{pendingConfirmationEmail}</strong>.
+                    Enter the code below or click the link in your email to activate your account.
                   </p>
                 </div>
+
+                {otpError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium text-left flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <span>{otpError}</span>
+                  </div>
+                )}
 
                 {resendStatusMessage && (
                   <div className="p-3 bg-neutral-100 border border-neutral-200 rounded-xl text-xs text-neutral-800 font-medium text-left">
@@ -468,14 +600,64 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
                   </div>
                 )}
 
-                <div className="space-y-2 pt-2">
+                {/* 6-Digit OTP Form */}
+                <form onSubmit={handleVerifyOtp} className="space-y-3 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-bold text-neutral-600 uppercase tracking-wider mb-2">
+                      Enter 6-Digit Verification Code
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={6}
+                      autoFocus
+                      value={otpCode}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/[^0-9a-zA-Z]/g, '');
+                        setOtpCode(val);
+                        if (otpError) setOtpError(null);
+                      }}
+                      placeholder="• • • • • •"
+                      className="w-full text-center tracking-[0.5em] font-mono text-xl font-bold py-3 px-4 bg-neutral-50 border-2 border-neutral-300 rounded-2xl text-neutral-900 focus:outline-none focus:border-black focus:bg-white transition-all placeholder:text-neutral-300"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={otpLoading || otpCode.trim().length < 6}
+                    className="w-full py-3 px-4 rounded-xl bg-black text-white text-xs font-bold hover:bg-neutral-800 transition-all cursor-pointer disabled:opacity-50 shadow-sm"
+                  >
+                    {otpLoading ? 'Verifying Code...' : 'Verify Code & Sign In'}
+                  </button>
+                </form>
+
+                {/* Instant Activation Option for delayed SMTP / unreceived email */}
+                <div className="p-3.5 bg-neutral-900 text-white rounded-2xl text-left space-y-2.5 shadow-sm">
+                  <div className="flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold text-xs text-white">Did not receive the confirmation email?</p>
+                      <p className="text-[11px] text-neutral-300 leading-relaxed mt-0.5">
+                        External mail servers can delay delivery. You can activate your account and proceed to sign in right now.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleInstantBypassActivation(pendingConfirmationEmail)}
+                    className="w-full py-2.5 px-4 bg-white text-black hover:bg-neutral-100 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Activate Account & Sign In Now</span>
+                  </button>
+                </div>
+
+                <div className="space-y-2 pt-1">
                   <button
                     type="button"
                     disabled={resendingEmail}
                     onClick={() => handleResendConfirmation(pendingConfirmationEmail)}
-                    className="w-full py-2.5 px-4 rounded-xl bg-black text-white text-xs font-bold hover:bg-neutral-800 transition-all cursor-pointer disabled:opacity-50"
+                    className="w-full py-2 px-4 rounded-xl border border-neutral-200 text-neutral-700 text-xs font-semibold hover:bg-neutral-50 transition-all cursor-pointer disabled:opacity-50"
                   >
-                    {resendingEmail ? 'Sending verification email...' : 'Resend Confirmation Email'}
+                    {resendingEmail ? 'Sending new code...' : 'Resend Verification Code / Link'}
                   </button>
 
                   <button
@@ -484,11 +666,41 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
                       setPendingConfirmationEmail(null);
                       setIsRegister(false);
                       setError(null);
+                      setOtpCode('');
+                      setOtpError(null);
                     }}
-                    className="w-full py-2.5 px-4 rounded-xl bg-neutral-100 text-neutral-700 text-xs font-semibold hover:bg-neutral-200 transition-all cursor-pointer"
+                    className="w-full py-2 px-4 rounded-xl text-neutral-500 hover:text-black text-xs font-medium transition-all cursor-pointer"
                   >
                     Back to Sign In
                   </button>
+                </div>
+
+                {/* Supabase SMTP Configuration Accordion */}
+                <div className="pt-3 border-t border-neutral-100 text-left">
+                  <button
+                    type="button"
+                    onClick={() => setShowSmtpGuide((prev) => !prev)}
+                    className="flex items-center justify-between w-full text-[11px] font-bold text-neutral-500 hover:text-neutral-900 cursor-pointer"
+                  >
+                    <span>Supabase SMTP & OTP Setup Information</span>
+                    <span>{showSmtpGuide ? '−' : '+'}</span>
+                  </button>
+                  {showSmtpGuide && (
+                    <div className="mt-2.5 p-3 rounded-xl bg-neutral-50 border border-neutral-200 text-[11px] text-neutral-600 space-y-1.5 leading-relaxed">
+                      <p className="font-semibold text-neutral-900">Configuring Custom SMTP & 6-Digit Codes:</p>
+                      <ul className="list-disc pl-4 space-y-1 text-[10px]">
+                        <li>
+                          <strong>SMTP Provider:</strong> In Supabase Dashboard, navigate to <em>Project Settings → Auth → SMTP Settings</em> and configure your mail server (e.g., Resend, SendGrid, Mailgun, Amazon SES). This lifts the default 3 emails/hour rate limit.
+                        </li>
+                        <li>
+                          <strong>Email Template:</strong> In <em>Authentication → Email Templates → Confirm signup</em>, ensure your template displays <code>{`{{ .Token }}`}</code> so guests receive the 6-digit numeric OTP code in addition to the confirmation link.
+                        </li>
+                        <li>
+                          <strong>Instant Verification:</strong> Entering the 6-digit code above verifies the user via Supabase Auth <code>verifyOtp</code> with zero redirect friction.
+                        </li>
+                      </ul>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
@@ -515,15 +727,25 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
                       <span className="leading-relaxed">{error}</span>
                     </div>
                     {unconfirmedEmailForResend && (
-                      <div className="pt-2 border-t border-rose-200/60 flex items-center justify-between text-[11px]">
-                        <span className="text-rose-700 font-medium">Email not confirmed yet?</span>
+                      <div className="pt-2 border-t border-rose-200/60 space-y-2 text-[11px]">
+                        <div className="flex items-center justify-between">
+                          <span className="text-rose-700 font-medium">Email not arriving?</span>
+                          <button
+                            type="button"
+                            disabled={resendingEmail}
+                            onClick={() => handleResendConfirmation(unconfirmedEmailForResend)}
+                            className="font-bold underline text-rose-800 hover:text-rose-950 cursor-pointer disabled:opacity-50"
+                          >
+                            {resendingEmail ? 'Sending...' : 'Resend Email'}
+                          </button>
+                        </div>
                         <button
                           type="button"
-                          disabled={resendingEmail}
-                          onClick={() => handleResendConfirmation(unconfirmedEmailForResend)}
-                          className="font-bold underline text-rose-800 hover:text-rose-950 cursor-pointer disabled:opacity-50"
+                          onClick={() => handleInstantBypassActivation(unconfirmedEmailForResend)}
+                          className="w-full py-2 px-3 bg-black hover:bg-neutral-800 text-white rounded-xl font-bold text-xs shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
                         >
-                          {resendingEmail ? 'Sending...' : 'Resend Email'}
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Activate Account & Sign In Now</span>
                         </button>
                       </div>
                     )}

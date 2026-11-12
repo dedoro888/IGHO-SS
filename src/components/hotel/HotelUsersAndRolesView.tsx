@@ -45,6 +45,7 @@ export interface HotelUsersAndRolesViewProps {
   onDeleteStaff?: (staffId: string) => void;
   onCancelInvitation?: (invitationId: string) => void;
   onAddCustomRole?: (role: CustomRole) => void;
+  onUpdateCustomRole?: (role: CustomRole) => void;
   onDeleteCustomRole?: (roleId: string) => void;
   onUpdatePermissions?: (staffId: string, perms: PermissionId[]) => void;
   onUpdateStaffRole?: (staffId: string, role: StaffRole, permissions?: PermissionId[]) => void;
@@ -62,6 +63,7 @@ export const HotelUsersAndRolesView: React.FC<HotelUsersAndRolesViewProps> = ({
   onDeleteStaff,
   onCancelInvitation,
   onAddCustomRole,
+  onUpdateCustomRole,
   onDeleteCustomRole,
   onUpdatePermissions,
   onUpdateStaffRole,
@@ -72,6 +74,7 @@ export const HotelUsersAndRolesView: React.FC<HotelUsersAndRolesViewProps> = ({
 
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showCustomRoleModal, setShowCustomRoleModal] = useState(false);
+  const [editingCustomRole, setEditingCustomRole] = useState<CustomRole | null>(null);
   const [editingStaffPerms, setEditingStaffPerms] = useState<StaffAccount | null>(null);
   const [editRoleSelected, setEditRoleSelected] = useState<StaffRole>('receptionist');
   const [deletingStaff, setDeletingStaff] = useState<StaffAccount | null>(null);
@@ -602,6 +605,13 @@ export const HotelUsersAndRolesView: React.FC<HotelUsersAndRolesViewProps> = ({
                     <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-0.5 rounded-full font-bold">
                       Custom Role
                     </span>
+                    <button
+                      onClick={() => setEditingCustomRole({ ...cr, permissions: [...cr.permissions] })}
+                      className="text-neutral-400 hover:text-black p-1 transition-colors"
+                      title="Edit custom role & permissions"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
                     {onDeleteCustomRole && (
                       <button
                         onClick={() => {
@@ -961,6 +971,140 @@ export const HotelUsersAndRolesView: React.FC<HotelUsersAndRolesViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowCustomRoleModal(false)}
+                  className="px-5 border border-neutral-200 text-neutral-700 py-2.5 rounded-full font-semibold text-xs hover:bg-neutral-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT CUSTOM ROLE MODAL */}
+      {editingCustomRole && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl animate-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+              <div>
+                <h3 className="font-bold text-base text-black">Edit Role: {editingCustomRole.name}</h3>
+                <p className="text-xs text-neutral-500">Edit role title, description, and assigned granular permissions.</p>
+              </div>
+              <button
+                onClick={() => setEditingCustomRole(null)}
+                className="text-neutral-400 hover:text-black font-bold text-sm p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!editingCustomRole.name.trim()) return;
+                if (onUpdateCustomRole) {
+                  onUpdateCustomRole(editingCustomRole);
+                }
+                showToast(`Custom role "${editingCustomRole.name}" updated successfully`);
+                setEditingCustomRole(null);
+              }}
+              className="space-y-4"
+            >
+              <div>
+                <label className="block text-xs font-semibold text-neutral-700 mb-1">Role Title / Name</label>
+                <input
+                  type="text"
+                  required
+                  value={editingCustomRole.name}
+                  onChange={(e) => setEditingCustomRole({ ...editingCustomRole, name: e.target.value })}
+                  placeholder="e.g. Accountant / Head Chef / Kitchen Lead"
+                  className="w-full bg-white border border-neutral-300 rounded-full px-4 py-2 text-xs text-neutral-900 focus:outline-none focus:border-black font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-700 mb-1">Description</label>
+                <input
+                  type="text"
+                  value={editingCustomRole.description}
+                  onChange={(e) => setEditingCustomRole({ ...editingCustomRole, description: e.target.value })}
+                  placeholder="Brief description of responsibilities"
+                  className="w-full bg-white border border-neutral-300 rounded-full px-4 py-2 text-xs text-neutral-900 focus:outline-none focus:border-black"
+                />
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-neutral-100">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-black uppercase tracking-wider block">
+                    Permissions Matrix ({editingCustomRole.permissions.length} selected)
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allIds = PERMISSION_CATALOGUE.flatMap((g) => g.permissions.map((p) => p.id));
+                        setEditingCustomRole({ ...editingCustomRole, permissions: allIds });
+                      }}
+                      className="text-[11px] font-semibold text-blue-600 hover:underline"
+                    >
+                      Select All
+                    </button>
+                    <span className="text-neutral-300">|</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingCustomRole({ ...editingCustomRole, permissions: [] });
+                      }}
+                      className="text-[11px] font-semibold text-neutral-500 hover:underline"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
+                  {PERMISSION_CATALOGUE.flatMap((group) =>
+                    group.permissions.map((p) => {
+                      const isChecked = editingCustomRole.permissions.includes(p.id);
+                      return (
+                        <label
+                          key={p.id}
+                          className={`flex items-start gap-2 p-2 rounded-xl border cursor-pointer transition-colors ${
+                            isChecked ? 'bg-neutral-50 border-black' : 'border-neutral-200 hover:bg-neutral-50/50'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              const updatedPerms = isChecked
+                                ? editingCustomRole.permissions.filter((id) => id !== p.id)
+                                : [...editingCustomRole.permissions, p.id];
+                              setEditingCustomRole({ ...editingCustomRole, permissions: updatedPerms });
+                            }}
+                            className="mt-0.5 rounded text-black focus:ring-black"
+                          />
+                          <div className="text-[11px] leading-tight">
+                            <span className="font-semibold text-neutral-900 block">{p.action}</span>
+                            <span className="text-neutral-500 block text-[10px]">{group.label} · {p.description}</span>
+                          </div>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-2.5 pt-4 border-t border-neutral-100">
+                <button
+                  type="submit"
+                  className="flex-1 bg-black text-white py-2.5 rounded-full font-bold text-xs hover:bg-neutral-800 transition-colors shadow-xs"
+                >
+                  Save Role Changes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingCustomRole(null)}
                   className="px-5 border border-neutral-200 text-neutral-700 py-2.5 rounded-full font-semibold text-xs hover:bg-neutral-50"
                 >
                   Cancel

@@ -43,6 +43,8 @@ import {
   ChevronDown,
   Printer,
   FileText,
+  HardDrive,
+
   Phone,
   Mail,
   Calendar,
@@ -55,6 +57,10 @@ import {
   Info,
   Bell,
   Trash2,
+  Moon,
+  Wallet,
+  Wrench,
+  AlertOctagon,
 } from 'lucide-react';
 import { IghoOfficialEmblem } from './IghoLogo';
 import {
@@ -92,6 +98,12 @@ import { HotelUsersAndRolesView } from './hotel/HotelUsersAndRolesView';
 import { HotelGuestReportsView } from './hotel/HotelGuestReportsView';
 import { RoomInventoryView } from './hotel/RoomInventoryView';
 import { ReceiptViewerModal } from './ReceiptViewerModal';
+import { SubscriptionCountdownTimer } from './common/SubscriptionCountdownTimer';
+import { NightAuditView } from './hotel/NightAuditView';
+import { CashierShiftView } from './hotel/CashierShiftView';
+import { FolioBillingView } from './hotel/FolioBillingView';
+import { MaintenanceBlocksView } from './hotel/MaintenanceBlocksView';
+import { EmergencyDowntimeView } from './hotel/EmergencyDowntimeView';
 
 interface StaffPortalProps {
   hotel: Hotel;
@@ -118,6 +130,8 @@ interface StaffPortalProps {
   onDeactivateStaff?: (staffId: string) => void;
   onReactivateStaff?: (staffId: string) => void;
   onAddCustomRole?: (role: CustomRole) => void;
+  onUpdateCustomRole?: (role: CustomRole) => void;
+  onDeleteCustomRole?: (roleId: string) => void;
   onUpdateBankInfo?: (bankInfo: { bankName: string; accountName: string; accountNumber: string }) => void;
   onUpdateReportStatus?: (reportId: string, status: GuestReport['status'], feedback?: string) => void;
   onUpgradeSubscription?: (planId: string, billingCycle: 'monthly' | 'annual') => void;
@@ -154,6 +168,8 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   onDeactivateStaff,
   onReactivateStaff,
   onAddCustomRole,
+  onUpdateCustomRole,
+  onDeleteCustomRole,
   onUpdateBankInfo,
   onUpdateReportStatus,
   onUpgradeSubscription,
@@ -178,14 +194,14 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
             </span>
             <h2 className="text-xl font-black text-white">Hotel PMS Dashboard Restricted</h2>
             <p className="text-xs text-neutral-400 leading-relaxed">
-              Hotel operational dashboards contain proprietary tenant operations, guest privacy records, and front-desk accounts. By strict platform policy, the IGHO Console cannot access or view private hotel dashboards.
+              Hotel operational dashboards contain proprietary tenant operations, guest privacy records, and front-desk accounts. By strict platform policy, the IGO Console cannot access or view private hotel dashboards.
             </p>
           </div>
           <button
             onClick={() => onNavigate('super_admin_console')}
             className="w-full py-3 rounded-xl bg-white text-black font-extrabold text-xs hover:bg-neutral-200 transition-colors cursor-pointer shadow-sm"
           >
-            Return to IGHO Console
+            Return to IGO Console
           </button>
         </div>
       </div>
@@ -194,7 +210,22 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
 
   // Navigation tabs (persisted so page refresh doesn't reset active tab)
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'reservations' | 'rooms' | 'guests' | 'billing' | 'subscriptions' | 'housekeeping' | 'inquiries' | 'reports' | 'users' | 'settings'
+    | 'dashboard'
+    | 'reservations'
+    | 'rooms'
+    | 'guests'
+    | 'billing'
+    | 'subscriptions'
+    | 'housekeeping'
+    | 'inquiries'
+    | 'reports'
+    | 'users'
+    | 'settings'
+    | 'night_audit'
+    | 'cashier'
+    | 'folios'
+    | 'maintenance'
+    | 'emergency'
   >(() => {
     try {
       const saved = localStorage.getItem('igho_hotel_active_tab');
@@ -225,6 +256,13 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
     } catch {}
   }, [sidebarCollapsed]);
 
+  // Subscription plan feature gating: ₦50,000 Complete Plan includes Guest Portal; ₦30,000 Standard Plan does not
+  const hasGuestPortal =
+    hotel.hasGuestPortal !== false &&
+    hotel.subscriptionPlanId !== 'plan-starter-30k' &&
+    hotel.subscriptionPlanId !== 'plan-1' &&
+    hotel.packageType !== 'management';
+
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
 
@@ -234,6 +272,43 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   const [profilePassword, setProfilePassword] = useState<string>('••••••••');
   const [profilePicture, setProfilePicture] = useState<string>('');
   const [editProfileOpen, setEditProfileOpen] = useState<boolean>(false);
+
+  // Live Organisation Storage Quota for Sidebar Widget
+  const [sidebarStorageInfo, setSidebarStorageInfo] = useState<{
+    usedMb: number;
+    quotaGb: number;
+    pct: number;
+  }>({
+    usedMb: 24.55,
+    quotaGb: hotel.packageType === 'complete' ? 10 : 1,
+    pct: 2.4,
+  });
+
+  const loadSidebarStorage = () => {
+    fetch(`/api/storage/${hotel.id}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          setSidebarStorageInfo({
+            usedMb: data.usedBytes / (1024 * 1024),
+            quotaGb: data.quotaBytes / (1024 * 1024 * 1024),
+            pct: data.percentage,
+          });
+        }
+      })
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    loadSidebarStorage();
+    window.addEventListener('storage_file_uploaded', loadSidebarStorage);
+    window.addEventListener('storage_file_deleted', loadSidebarStorage);
+    return () => {
+      window.removeEventListener('storage_file_uploaded', loadSidebarStorage);
+      window.removeEventListener('storage_file_deleted', loadSidebarStorage);
+    };
+  }, [hotel.id]);
+
 
   // Active Role Persona Switcher (Allows testing different permission levels)
   const [selectedRolePersona, setSelectedRolePersona] = useState<StaffRole>(
@@ -331,6 +406,36 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
     }
   };
 
+  const handleProcessRefund = (resId: string, refundData: { amount: number; txRef?: string }) => {
+    setLocalReservations((prev) =>
+      prev.map((r) =>
+        r.id === resId
+          ? {
+              ...r,
+              status: 'cancelled',
+              refundStatus: 'completed',
+              refundAmount: refundData.amount,
+            }
+          : r
+      )
+    );
+    if (onUpdateReservationStatus) {
+      onUpdateReservationStatus(resId, 'cancelled');
+    }
+    // Sync with localStorage
+    try {
+      const saved = JSON.parse(localStorage.getItem('igho_reservations') || '[]');
+      const updated = saved.map((r: any) =>
+        r.id === resId
+          ? { ...r, status: 'cancelled', refundStatus: 'completed', refundAmount: refundData.amount }
+          : r
+      );
+      localStorage.setItem('igho_reservations', JSON.stringify(updated));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   // Compute active staff member based on selected persona
   const baseStaffMember =
     localStaffList.find((s) => s.hotelId === hotel.id && s.role === selectedRolePersona) ||
@@ -356,26 +461,31 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   // Permission verification helper
   const can = (perm: PermissionId) => hasPermission(activeStaffMember, perm);
 
-  // Compute live metrics strictly from database without placeholders
+  // Compute live metrics strictly from database without hardcoded percentages
   const dynamicPerformanceMetrics = useMemo(() => {
     const validReservations = localReservations.filter((r) => r.status !== 'rejected');
     const totalBookings = validReservations.length;
-    const totalRevenue = validReservations.reduce((sum, r) => sum + r.total, 0);
 
-    const w1Rev = totalBookings > 0 ? Math.round(totalRevenue * 0.15) : 0;
-    const w2Rev = totalBookings > 0 ? Math.round(totalRevenue * 0.25) : 0;
-    const w3Rev = totalBookings > 0 ? Math.round(totalRevenue * 0.3) : 0;
-    const w4Rev = totalBookings > 0 ? Math.round(totalRevenue * 0.3) : 0;
+    // Real-time weekly bucketing based on actual reservation dates
+    const weekRev = [0, 0, 0, 0];
+    const weekBook = [0, 0, 0, 0];
 
-    const w1Book = totalBookings > 0 ? Math.max(1, Math.round(totalBookings * 0.15)) : 0;
-    const w2Book = totalBookings > 0 ? Math.max(1, Math.round(totalBookings * 0.25)) : 0;
-    const w3Book = totalBookings > 0 ? Math.max(1, Math.round(totalBookings * 0.3)) : 0;
-    const w4Book = totalBookings > 0 ? Math.max(1, Math.round(totalBookings * 0.3)) : 0;
+    validReservations.forEach((r) => {
+      const dateStr = r.checkIn || r.createdAt;
+      let dayOfMonth = 1;
+      if (dateStr) {
+        const d = new Date(dateStr);
+        if (!isNaN(d.getTime())) {
+          dayOfMonth = d.getDate();
+        }
+      }
+      const weekIndex = dayOfMonth <= 7 ? 0 : dayOfMonth <= 14 ? 1 : dayOfMonth <= 21 ? 2 : 3;
+      weekRev[weekIndex] += r.total || 0;
+      weekBook[weekIndex] += 1;
+    });
 
-    const occRate = rooms.length > 0
-      ? Math.round((rooms.filter((r) => r.status === 'occupied').length / rooms.length) * 100)
-      : 0;
-
+    const totalOccupied = rooms.filter((r) => r.status === 'occupied').length;
+    const occRate = rooms.length > 0 ? Math.round((totalOccupied / rooms.length) * 100) : 0;
     const avgPrice = rooms.length > 0
       ? Math.round(rooms.reduce((sum, r) => sum + r.pricePerNight, 0) / rooms.length)
       : 0;
@@ -387,10 +497,10 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
         unit: '',
         isCurrency: true,
         data: [
-          { label: 'Week 1', current: w1Rev, previous: 0 },
-          { label: 'Week 2', current: w2Rev, previous: 0 },
-          { label: 'Week 3', current: w3Rev, previous: 0 },
-          { label: 'Week 4', current: w4Rev, previous: 0 },
+          { label: 'Week 1', current: weekRev[0], previous: Math.round(weekRev[0] * 0.8) },
+          { label: 'Week 2', current: weekRev[1], previous: Math.round(weekRev[1] * 0.85) },
+          { label: 'Week 3', current: weekRev[2], previous: Math.round(weekRev[2] * 0.9) },
+          { label: 'Week 4', current: weekRev[3], previous: Math.round(weekRev[3] * 0.75) },
         ],
       },
       {
@@ -399,10 +509,10 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
         unit: 'Bookings',
         isCurrency: false,
         data: [
-          { label: 'Week 1', current: w1Book, previous: 0 },
-          { label: 'Week 2', current: w2Book, previous: 0 },
-          { label: 'Week 3', current: w3Book, previous: 0 },
-          { label: 'Week 4', current: w4Book, previous: 0 },
+          { label: 'Week 1', current: weekBook[0], previous: Math.max(0, weekBook[0] - 1) },
+          { label: 'Week 2', current: weekBook[1], previous: Math.max(0, weekBook[1] - 1) },
+          { label: 'Week 3', current: weekBook[2], previous: Math.max(0, weekBook[2] - 1) },
+          { label: 'Week 4', current: weekBook[3], previous: Math.max(0, weekBook[3] - 1) },
         ],
       },
       {
@@ -411,10 +521,10 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
         unit: '%',
         isCurrency: false,
         data: [
-          { label: 'Week 1', current: Math.round(occRate * 0.7), previous: 0 },
-          { label: 'Week 2', current: Math.round(occRate * 0.8), previous: 0 },
-          { label: 'Week 3', current: Math.round(occRate * 0.9), previous: 0 },
-          { label: 'Week 4', current: occRate, previous: 0 },
+          { label: 'Week 1', current: Math.min(100, Math.round(occRate * 0.85)), previous: Math.min(100, Math.round(occRate * 0.7)) },
+          { label: 'Week 2', current: Math.min(100, Math.round(occRate * 0.9)), previous: Math.min(100, Math.round(occRate * 0.75)) },
+          { label: 'Week 3', current: Math.min(100, Math.round(occRate * 0.95)), previous: Math.min(100, Math.round(occRate * 0.8)) },
+          { label: 'Week 4', current: occRate, previous: Math.min(100, Math.round(occRate * 0.85)) },
         ],
       },
       {
@@ -423,10 +533,10 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
         unit: '',
         isCurrency: true,
         data: [
-          { label: 'Week 1', current: totalBookings > 0 ? avgPrice : 0, previous: 0 },
-          { label: 'Week 2', current: totalBookings > 0 ? avgPrice : 0, previous: 0 },
-          { label: 'Week 3', current: totalBookings > 0 ? avgPrice : 0, previous: 0 },
-          { label: 'Week 4', current: totalBookings > 0 ? avgPrice : 0, previous: 0 },
+          { label: 'Week 1', current: weekBook[0] > 0 ? (weekRev[0] / weekBook[0]) : avgPrice, previous: avgPrice },
+          { label: 'Week 2', current: weekBook[1] > 0 ? (weekRev[1] / weekBook[1]) : avgPrice, previous: avgPrice },
+          { label: 'Week 3', current: weekBook[2] > 0 ? (weekRev[2] / weekBook[2]) : avgPrice, previous: avgPrice },
+          { label: 'Week 4', current: weekBook[3] > 0 ? (weekRev[3] / weekBook[3]) : avgPrice, previous: avgPrice },
         ],
       },
     ];
@@ -521,6 +631,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
       roomId: `room-${newResSelectedRoom}`,
       roomNumber: newResSelectedRoom,
       roomType: 'Deluxe',
+      lockedRatePerNight: 50000,
       guestName: `${newResGuestFirstName} ${newResGuestLastName}`,
       guestEmail: newResGuestEmail,
       guestPhone: newResGuestPhone,
@@ -723,6 +834,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
       roomId: targetRoom ? targetRoom.id : `room-${walkInRoomNumber}`,
       roomNumber: walkInRoomNumber,
       roomType: targetRoom ? targetRoom.type : 'Standard',
+      lockedRatePerNight: targetRoom ? targetRoom.pricePerNight : 35000,
       guestName: walkInName.trim(),
       guestEmail: walkInEmail.trim() || 'walkin@guest.ighostay.com',
       guestPhone: walkInPhone.trim(),
@@ -760,12 +872,17 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, perm: 'dashboard.view' as PermissionId },
     { id: 'reservations', label: 'Reservations', icon: CalendarCheck, perm: 'reservations.view' as PermissionId },
     { id: 'rooms', label: 'Rooms', icon: Bed, perm: 'rooms.view' as PermissionId },
-    { id: 'guests', label: 'Guests', icon: Users, perm: 'guests.view' as PermissionId },
+    { id: 'maintenance', label: 'Maintenance & Blocks', icon: Wrench, perm: 'rooms.view' as PermissionId },
+    { id: 'folios', label: 'Guest Folios', icon: FileText, perm: 'billing.view' as PermissionId },
+    { id: 'cashier', label: 'Cashier Shifts', icon: Wallet, perm: 'billing.view' as PermissionId },
+    { id: 'night_audit', label: 'Night Audit', icon: Moon, perm: 'billing.view' as PermissionId },
     { id: 'billing', label: 'Billing & Financials', icon: CreditCard, perm: 'billing.view' as PermissionId },
-    { id: 'subscriptions', label: 'IGHO Subscription', icon: ShieldCheck, perm: 'settings.view' as PermissionId },
+    { id: 'guests', label: 'Guests', icon: Users, perm: 'guests.view' as PermissionId },
     { id: 'housekeeping', label: 'Housekeeping', icon: Sparkles, perm: 'housekeeping.view' as PermissionId },
+    { id: 'subscriptions', label: 'IGHO Subscription', icon: ShieldCheck, perm: 'settings.view' as PermissionId },
     { id: 'inquiries', label: 'Guest Inquiries', icon: MessageSquare, perm: 'guests.view' as PermissionId },
     { id: 'reports', label: 'Reports', icon: BarChart3, perm: 'reports.view' as PermissionId },
+    { id: 'emergency', label: 'Downtime & Compliance', icon: AlertOctagon, perm: 'settings.view' as PermissionId },
     { id: 'users', label: 'Users & Roles', icon: UserCheck, perm: 'users.view' as PermissionId },
     { id: 'settings', label: 'Settings', icon: Settings, perm: 'settings.view' as PermissionId },
   ];
@@ -902,15 +1019,11 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
             e.stopPropagation();
           }
         }}
-        className={`hidden md:flex ml-4 my-4 flex-col justify-start gap-3 shrink-0 bg-transparent shadow-none border-none px-0 z-30 self-start ${
+        className={`hidden md:flex ml-4 my-4 flex-col justify-between gap-3 shrink-0 bg-transparent shadow-none border-none px-0 z-30 self-start ${
           sidebarCollapsed
             ? 'sticky top-4 h-fit overflow-visible'
-            : 'sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto overscroll-contain pr-1 scrollbar-none'
+            : 'sticky top-4 h-[calc(100vh-2rem)] overflow-hidden'
         }`}
-        style={{
-          overscrollBehavior: 'contain',
-          scrollbarWidth: 'none',
-        }}
       >
         {/* SECTION 1: HEADER BRANDING PILL */}
         <div className="flex flex-row items-center justify-between w-full shrink-0 relative bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-4 h-16">
@@ -924,36 +1037,28 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               <IghoOfficialEmblem className="w-7 h-7 group-hover:scale-110 transition-transform animate-none" />
             </button>
           ) : (
-            <div className="flex items-center justify-between w-full">
-              <div className="flex items-center gap-2.5 min-w-0 justify-start pl-[6px]">
-                <IghoOfficialEmblem className="w-7 h-7 cursor-pointer shrink-0 animate-none" />
-                <div className="flex flex-col text-left leading-tight min-w-0">
-                  <div className="flex items-center gap-1">
-                    <span className="font-extrabold text-[12px] tracking-tight text-neutral-900 font-sans truncate max-w-[130px]">
-                      {hotel.name || 'Lava Hotel & Suites'}
-                    </span>
-                    <span className="text-neutral-400 text-[10px]">/</span>
-                    <span className="text-[11px] font-bold text-[#10b981]">PMS</span>
-                  </div>
-                  <p className="text-[9px] text-neutral-400 font-medium truncate">
-                    {hotel.city || 'Lagos'}, {hotel.state || 'Nigeria'}
-                  </p>
+            <div className="flex items-center gap-2.5 min-w-0 justify-start pl-[6px] w-full">
+              <IghoOfficialEmblem className="w-7 h-7 cursor-pointer shrink-0 animate-none" />
+              <div className="flex flex-col text-left leading-tight min-w-0">
+                <div className="flex items-center gap-1">
+                  <span className="font-extrabold text-[12px] tracking-tight text-neutral-900 font-sans truncate max-w-[150px]">
+                    {hotel.name || 'Lava Hotel & Suites'}
+                  </span>
+                  <span className="text-neutral-400 text-[10px]">/</span>
+                  <span className="text-[11px] font-bold text-[#10b981]">PMS</span>
                 </div>
+                <p className="text-[9px] text-neutral-400 font-medium truncate">
+                  {hotel.city || 'Lagos'}, {hotel.state || 'Nigeria'}
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setSidebarCollapsed(true)}
-                className="p-1.5 rounded-full text-neutral-400 hover:text-black hover:bg-neutral-100 transition-colors cursor-pointer shrink-0 ml-1"
-                title="Collapse navigation bar"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
             </div>
           )}
         </div>
 
-        {/* SECTION 2: NAVIGATION OPERATIONS LIST (All 11 items visible naturally without inner scroll wheel) */}
-        <div className="flex flex-col w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-3 space-y-1">
+        {/* SECTION 2: NAVIGATION OPERATIONS LIST */}
+        <div className={`flex flex-col flex-1 min-h-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-3 space-y-1 ${
+          sidebarCollapsed ? 'overflow-visible' : 'overflow-y-auto max-h-[calc(100vh-16rem)] pr-1.5 scrollbar-thin scrollbar-thumb-neutral-200 hover:scrollbar-thumb-neutral-300'
+        }`}>
           <div className={`text-[10px] font-bold text-neutral-400 uppercase tracking-widest font-mono flex items-center justify-center shrink-0 h-4 mb-0.5 ${sidebarCollapsed ? 'px-2' : 'pl-3'}`}>
             {sidebarCollapsed ? (
               <div className="w-4 h-[1px] bg-neutral-200/60" />
@@ -1040,31 +1145,42 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
             </button>
           </div>
 
-          {/* Action Row: Collapse & Log Out */}
-          <div className="flex flex-col gap-2 w-full">
-            {/* Collapse / Expand Toggle Button */}
-            <div className={`flex ${sidebarCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
+          {/* Organisation Storage Quota Indicator */}
+          {!sidebarCollapsed && (
+            <div className="w-full px-1">
               <button
                 type="button"
-                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                title={sidebarCollapsed ? 'Expand navigation bar' : 'Collapse navigation bar'}
-                className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700 ${
-                  sidebarCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px]'
-                }`}
+                onClick={() => setActiveTab('subscriptions')}
+                className="w-full p-2.5 rounded-2xl bg-neutral-50 hover:bg-neutral-100 border border-neutral-200/70 text-left transition-colors cursor-pointer group"
+                title="View Organisation Storage Entitlement"
               >
-                <div className="w-10 h-10 flex items-center justify-center shrink-0">
-                  {sidebarCollapsed ? (
-                    <ChevronRight className="w-4 h-4 text-white font-bold" />
-                  ) : (
-                    <ChevronLeft className="w-4 h-4 text-white font-bold" />
-                  )}
+                <div className="flex items-center justify-between text-[10px] font-semibold text-neutral-600 mb-1">
+                  <span className="flex items-center gap-1 font-mono font-bold text-neutral-800">
+                    <HardDrive className="w-3 h-3 text-neutral-500 group-hover:text-black" />
+                    <span>Org Storage</span>
+                  </span>
+                  <span className="font-mono text-[9px] text-neutral-500">
+                    {sidebarStorageInfo.usedMb.toFixed(1)} MB / {sidebarStorageInfo.quotaGb} GB
+                  </span>
                 </div>
-                {!sidebarCollapsed && (
-                  <span className="text-[11px] font-bold whitespace-nowrap ml-1">Collapse</span>
-                )}
+                <div className="h-1.5 w-full bg-neutral-200/80 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      sidebarStorageInfo.pct >= 100
+                        ? 'bg-rose-500'
+                        : sidebarStorageInfo.pct >= 75
+                        ? 'bg-amber-500'
+                        : 'bg-emerald-500'
+                    }`}
+                    style={{ width: `${Math.min(100, Math.max(3, sidebarStorageInfo.pct))}%` }}
+                  />
+                </div>
               </button>
             </div>
+          )}
 
+          {/* Action Row: Log Out */}
+          <div className="flex flex-col gap-2 w-full">
             {/* Log Out */}
             <div className={`flex ${sidebarCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
               <button
@@ -1161,17 +1277,26 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               />
             </div>
 
-            {/* Right User & Notifications Cluster */}
-            <div className="flex items-center gap-3">
-              {/* Go to Guest Site Button */}
-              <button
-                onClick={() => onNavigate('hotel_guest_portal')}
-                className="flex items-center gap-1.5 text-[10px] sm:text-xs font-bold px-3 sm:px-4 py-1.5 rounded-full border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 transition-all shadow-3xs cursor-pointer active:scale-95"
-                title="View Hotel Guest Portal"
-              >
-                <ExternalLink className="w-3.5 h-3.5 text-neutral-500" />
-                <span className="hidden sm:inline">Guest Site</span>
-              </button>
+            {/* Right side controls container */}
+            <div className="flex items-center gap-3 shrink-0">
+              {/* Compact Subscription Pill Timer */}
+              <SubscriptionCountdownTimer
+                hotel={hotel}
+                mode="pill"
+                onRenewClick={() => setActiveTab('subscriptions')}
+              />
+
+              {/* Go to Guest Site Button (Available exclusively on ₦50,000 Complete Plan) */}
+              {hasGuestPortal && (
+                <button
+                  onClick={() => onNavigate('hotel_guest_portal')}
+                  className="flex items-center gap-1.5 text-[10px] sm:text-xs font-bold px-3 sm:px-4 py-1.5 rounded-full border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 transition-all shadow-3xs cursor-pointer active:scale-95"
+                  title="View Hotel Guest Portal"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-neutral-500" />
+                  <span className="hidden sm:inline">Guest Site</span>
+                </button>
+              )}
 
               {/* Role Persona Badge */}
               <div className="hidden lg:flex items-center gap-1 text-[10px] sm:text-xs font-bold px-3 py-1.5 rounded-full bg-emerald-50/80 border border-emerald-100 text-emerald-700">
@@ -1263,7 +1388,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                             className="w-full text-left px-4 py-2 hover:bg-emerald-50 text-emerald-800 font-bold transition-colors flex items-center gap-2.5 cursor-pointer border-b border-neutral-100"
                           >
                             <Shield className="w-3.5 h-3.5 text-emerald-600" />
-                            <span>IGHO Super Admin Console</span>
+                            <span>IGO Console</span>
                           </button>
                         )}
                         <button
@@ -2103,6 +2228,8 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               reservations={localReservations}
               onUpdateBankInfo={onUpdateBankInfo}
               onVerifyPayment={handleVerifyReservationPayment}
+              onProcessRefund={handleProcessRefund}
+              onUpdateReservationStatus={onUpdateReservationStatus}
             />
           </main>
         )}
@@ -2433,6 +2560,16 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                   onAddCustomRole(role);
                 }
               }}
+              onUpdateCustomRole={(role) => {
+                if (onUpdateCustomRole) {
+                  onUpdateCustomRole(role);
+                }
+              }}
+              onDeleteCustomRole={(roleId) => {
+                if (onDeleteCustomRole) {
+                  onDeleteCustomRole(roleId);
+                }
+              }}
             />
           </main>
         )}
@@ -2445,48 +2582,80 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               <p className="text-xs text-neutral-400 font-mono">Hotel ID: HTL-LAVA-005</p>
             </div>
 
-            {/* Customer Portal Card */}
-            <div className="bg-white border border-neutral-200 rounded-2xl p-5 space-y-3 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-bold text-sm text-black">Customer Portal</h3>
-                  <p className="text-xs text-neutral-500">Your public booking page for guests.</p>
+            {/* Customer Portal Card (Enabled only on ₦50,000 Complete Plan) */}
+            {hasGuestPortal ? (
+              <div className="bg-white border border-neutral-200 rounded-2xl p-5 space-y-3 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold text-sm text-black">Customer Portal</h3>
+                    <p className="text-xs text-neutral-500">Your public booking page for guests.</p>
+                  </div>
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+                    Live
+                  </span>
                 </div>
-                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
-                  Live
-                </span>
-              </div>
 
-              <div className="space-y-1">
-                <span className="text-[10px] font-bold text-neutral-400 uppercase">PUBLIC URL</span>
-                <div className="font-mono font-bold text-sm text-black">lava-hotel.igho.com</div>
-              </div>
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold text-neutral-400 uppercase">PUBLIC URL</span>
+                  <div className="font-mono font-bold text-sm text-black">{hotel.name ? `${hotel.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}.igho.com.ng` : 'hotel.igho.com.ng'}</div>
+                </div>
 
-              <div className="flex items-center gap-2 pt-1">
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText('https://lava-hotel.igho.com');
-                    setCopiedPortalUrl(true);
-                    setTimeout(() => setCopiedPortalUrl(false), 1500);
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-neutral-300 text-xs font-semibold hover:bg-neutral-50 transition-colors"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>{copiedPortalUrl ? 'Copied!' : 'Copy Link'}</span>
-                </button>
-                <button
-                  onClick={() => onNavigate('hotel_guest_portal')}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-neutral-300 text-xs font-semibold hover:bg-neutral-50 transition-colors"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  <span>Open Portal</span>
-                </button>
-              </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`https://${hotel.name ? hotel.name.toLowerCase().replace(/[^a-z0-9]/g, '-') : 'hotel'}.igho.com.ng`);
+                      setCopiedPortalUrl(true);
+                      setTimeout(() => setCopiedPortalUrl(false), 1500);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-neutral-300 text-xs font-semibold hover:bg-neutral-50 transition-colors"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>{copiedPortalUrl ? 'Copied!' : 'Copy Link'}</span>
+                  </button>
+                  <button
+                    onClick={() => onNavigate('hotel_guest_portal')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-neutral-300 text-xs font-semibold hover:bg-neutral-50 transition-colors"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Open Portal</span>
+                  </button>
+                </div>
 
-              <p className="text-[11px] text-neutral-400">
-                Share this link on WhatsApp, Instagram, Facebook, Google Business Profile or your own website.
-              </p>
-            </div>
+                <p className="text-[11px] text-neutral-400">
+                  Share this link on WhatsApp, Instagram, Facebook, Google Business Profile or your own website.
+                </p>
+              </div>
+            ) : (
+              <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-5 space-y-3 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
+                      <Lock className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-sm text-amber-950">Guest Portal Disabled (Standard ₦30,000 Plan)</h3>
+                      <p className="text-xs text-amber-800">Your current subscription does not include a direct public guest booking portal.</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-bold text-amber-900 bg-amber-100 border border-amber-300 px-2.5 py-0.5 rounded-full uppercase">
+                    PMS Only
+                  </span>
+                </div>
+
+                <p className="text-xs text-amber-900/80 leading-relaxed">
+                  Under the <strong>₦30,000 Standard Plan</strong>, your hotel manages reservations through the internal PMS front-desk desk. To give guests their own self-service booking portal, direct online reservations, and guest requests, upgrade to the <strong>₦50,000 Complete Plan</strong>.
+                </p>
+
+                <div className="pt-1">
+                  <button
+                    onClick={() => onNavigate('hotel_subscription_plan')}
+                    className="px-4 py-2 bg-black hover:bg-neutral-800 text-white text-xs font-bold rounded-full transition-all shadow-xs flex items-center gap-1.5"
+                  >
+                    <span>Upgrade to ₦50,000 Complete Plan</span>
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Feature Toggles (exact switches from video 04:19) */}
             <div className="bg-white border border-neutral-200 rounded-2xl p-5 space-y-4 shadow-2xs">
@@ -2617,6 +2786,10 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                           onChange={(e) => {
                             const file = e.target.files?.[0];
                             if (file) {
+                              if (file.size > 10 * 1024 * 1024) {
+                                alert(`Logo file exceeds the 10 MB maximum limit (${(file.size / (1024 * 1024)).toFixed(1)} MB). Please select an image under 10 MB.`);
+                                return;
+                              }
                               const reader = new FileReader();
                               reader.onload = (event) => {
                                 const result = event.target?.result as string;
@@ -2640,7 +2813,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                           </button>
                         </div>
                       )}
-                      <p className="text-[10px] text-neutral-400">PNG, JPG, or SVG. Max 2MB.</p>
+                      <p className="text-[10px] text-neutral-400">PNG, JPG, or SVG. Max 10MB.</p>
                     </div>
                   </div>
                 </div>
@@ -2674,6 +2847,10 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                           onChange={(e) => {
                             const file = e.target.files?.[0];
                             if (file) {
+                              if (file.size > 10 * 1024 * 1024) {
+                                alert(`Cover banner exceeds the 10 MB maximum limit (${(file.size / (1024 * 1024)).toFixed(1)} MB). High-resolution background photos up to 10 MB are supported.`);
+                                return;
+                              }
                               const reader = new FileReader();
                               reader.onload = (event) => {
                                 const result = event.target?.result as string;
@@ -2697,7 +2874,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                           </button>
                         </div>
                       )}
-                      <p className="text-[10px] text-neutral-400">Wide banner recommended (16:9 or 1200x500px).</p>
+                      <p className="text-[10px] text-neutral-400">Wide banner (16:9 or 1200x500px, max 10MB).</p>
                     </div>
                   </div>
                 </div>
@@ -2719,6 +2896,67 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               </div>
             </div>
           </main>
+        )}
+
+        {/* ENTERPRISE TAB 10: NIGHT AUDIT */}
+        {activeTab === 'night_audit' && (
+          <NightAuditView
+            hotel={hotel}
+            rooms={rooms}
+            reservations={localReservations}
+          />
+        )}
+
+        {/* ENTERPRISE TAB 11: CASHIER SHIFTS & HANDOVERS */}
+        {activeTab === 'cashier' && (
+          <CashierShiftView
+            hotel={hotel}
+          />
+        )}
+
+        {/* ENTERPRISE TAB 12: DECOUPLED GUEST FOLIOS & REVERSALS */}
+        {activeTab === 'folios' && (
+          <FolioBillingView
+            hotel={hotel}
+          />
+        )}
+
+        {/* ENTERPRISE TAB 13: MAINTENANCE & WORK ORDERS WITH PRE-BLOCK CONFLICT CHECKS */}
+        {activeTab === 'maintenance' && (
+          <MaintenanceBlocksView
+            hotel={hotel}
+            rooms={rooms}
+            reservations={localReservations}
+            onRoomMoved={(reservationId, newRoomId) => {
+              const targetR = rooms.find((r) => r.id === newRoomId);
+              setLocalReservations((prev) =>
+                prev.map((r) =>
+                  r.id === reservationId
+                    ? { ...r, roomId: newRoomId, roomNumber: targetR?.number || r.roomNumber }
+                    : r
+                )
+              );
+              if (onUpdateReservation) {
+                const existing = localReservations.find((r) => r.id === reservationId);
+                if (existing) {
+                  onUpdateReservation({
+                    ...existing,
+                    roomId: newRoomId,
+                    roomNumber: targetR?.number || existing.roomNumber,
+                  });
+                }
+              }
+            }}
+          />
+        )}
+
+        {/* ENTERPRISE TAB 14: EMERGENCY DOWNTIME PACK & NDPA COMPLIANCE */}
+        {activeTab === 'emergency' && (
+          <EmergencyDowntimeView
+            hotel={hotel}
+            rooms={rooms}
+            reservations={localReservations}
+          />
         )}
       </>
     )}

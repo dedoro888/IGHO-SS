@@ -43,6 +43,7 @@ import {
 } from '../data/platformData';
 import { INITIAL_FEEDBACK as INITIAL_FEEDBACKS } from '../data/mockData';
 
+import { ConsoleWaitlistsView } from './console/ConsoleWaitlistsView';
 import { ConsoleSidebar, ConsoleTab } from './console/ConsoleSidebar';
 import { ConsoleStorageView } from './console/ConsoleStorageView';
 import { IghoOfficialEmblem, IghoLoadingEmblem } from './IghoLogo';
@@ -78,6 +79,7 @@ interface SuperAdminConsoleProps {
   onUpdateSettings?: (settings: PlatformSettings) => void;
   demoRequests?: DemoRequest[];
   onUpdateDemoRequests?: (demos: DemoRequest[]) => void;
+  onSignOut?: () => void;
 }
 
 export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
@@ -96,6 +98,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   onUpdateSettings,
   demoRequests: initialDemoRequests = [],
   onUpdateDemoRequests,
+  onSignOut,
 }) => {
   // Database-verified authority check: authoritative query against public.platform_roles
   const [dbVerified, setDbVerified] = useState<boolean>(isSuperAdmin);
@@ -156,11 +159,44 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   const [plans, setPlans] = useState<SubscriptionPlan[]>(initialPassedPlans || INITIAL_PLANS);
   const [transactions, setTransactions] = useState<PlatformTransaction[]>(INITIAL_TRANSACTIONS);
   const [auditLogs, setAuditLogs] = useState<PlatformAuditLog[]>(INITIAL_AUDIT_LOGS);
-  const [platformUsers, setPlatformUsers] = useState<PlatformUser[]>(INITIAL_PLATFORM_USERS);
+  const [platformUsers, setPlatformUsers] = useState<PlatformUser[]>(() => {
+    try {
+      const stored = localStorage.getItem('igho_platform_users');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return INITIAL_PLATFORM_USERS;
+  });
   const [products] = useState<PlatformProduct[]>(INITIAL_PRODUCTS);
   const [settings, setSettings] = useState<PlatformSettings>(initialPassedSettings || INITIAL_PLATFORM_SETTINGS);
   const [feedbacks, setFeedbacks] = useState<CustomerFeedback[]>(INITIAL_FEEDBACKS as CustomerFeedback[]);
   const [demoRequests, setDemoRequests] = useState<DemoRequest[]>(initialDemoRequests);
+
+  React.useEffect(() => {
+    // Sync platform users from backend
+    fetch('/api/console/users')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.users) && data.users.length > 0) {
+          setPlatformUsers(data.users);
+          try {
+            localStorage.setItem('igho_platform_users', JSON.stringify(data.users));
+          } catch {}
+        }
+      })
+      .catch((err) => console.error(err));
+
+    const handleUsersUpdated = () => {
+      try {
+        const stored = localStorage.getItem('igho_platform_users');
+        if (stored) setPlatformUsers(JSON.parse(stored));
+      } catch {}
+    };
+    window.addEventListener('igho_users_updated', handleUsersUpdated);
+    return () => window.removeEventListener('igho_users_updated', handleUsersUpdated);
+  }, []);
 
   React.useEffect(() => {
     setHotels(initialHotels);
@@ -346,15 +382,23 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
     );
   };
 
-  // 5. DELETE HOTEL (Soft delete / deactivation protection)
-  const handleDeleteHotel = (hotelId: string) => {
+  // 5. DELETE HOTEL (Authoritative permanent removal across frontend & backend)
+  const handleDeleteHotel = async (hotelId: string) => {
     const target = hotels.find((h) => h.id === hotelId);
     if (!target) return;
 
     const updated = hotels.filter((h) => h.id !== hotelId);
+    setHotels(updated);
     updateHotelsList(updated);
-
     setSubscriptions((prev) => prev.filter((s) => s.hotelId !== hotelId));
+
+    try {
+      localStorage.setItem('igho_db_hotels', JSON.stringify(updated));
+      window.dispatchEvent(new Event('igho_hotels_updated'));
+      await fetch(`/api/hotels/${hotelId}`, { method: 'DELETE' });
+    } catch (e) {
+      console.error('Failed to delete hotel from backend:', e);
+    }
 
     recordAuditLog(
       'DELETE_HOTEL',
@@ -396,22 +440,85 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
     );
   };
 
-  // 7. USER STATUS TOGGLE (Deactivate / Activate)
-  const handleToggleUserStatus = (userId: string, newStatus: 'active' | 'deactivated') => {
-    const target = platformUsers.find((u) => u.id === userId);
+  // 7. USER STATUS TOGGLE / IN-CONSOLE BANNING
+  const handleToggleUserStatus = (
+    userId: string,
+    explicitStatus?: 'active' | 'suspended' | 'deactivated',
+    reason?: string
+  ) => {
+    const target = allSystemUsers.find((u) => u.id === userId) || platformUsers.find((u) => u.id === userId);
     if (!target) return;
 
-    setPlatformUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, status: newStatus } : u))
-    );
+    const newStatus: 'active' | 'suspended' | 'deactivated' =
+      explicitStatus || (target.status === 'active' ? 'suspended' : 'active');
+
+    setPlatformUsers((prev) => {
+      const exists = prev.some((u) => u.id === userId);
+      const next = exists
+        ? prev.map((u) => (u.id === userId ? { ...u, status: newStatus } : u))
+        : [...prev, { ...target, status: newStatus }];
+      try {
+        localStorage.setItem('igho_platform_users', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    // Call backend API for persistent database status update
+    fetch(`/api/console/users/${encodeURIComponent(userId)}/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status: newStatus,
+        reason: reason || 'Administrative action via IGO Console',
+      }),
+    }).catch(console.error);
+
+    // Record banned user in persistent blacklist in localStorage and broadcast event
+    try {
+      const banned = JSON.parse(localStorage.getItem('igho_banned_users') || '[]');
+      if (newStatus === 'suspended' || newStatus === 'deactivated') {
+        if (!banned.includes(target.email.toLowerCase())) {
+          banned.push(target.email.toLowerCase());
+        }
+      } else {
+        const index = banned.indexOf(target.email.toLowerCase());
+        if (index > -1) banned.splice(index, 1);
+      }
+      localStorage.setItem('igho_banned_users', JSON.stringify(banned));
+      window.dispatchEvent(
+        new CustomEvent('igho_user_banned', { detail: { email: target.email, status: newStatus } })
+      );
+    } catch {}
 
     recordAuditLog(
-      newStatus === 'active' ? 'REACTIVATE_USER' : 'DEACTIVATE_USER',
+      newStatus === 'active' ? 'REACTIVATE_USER' : 'BAN_USER',
       `${target.name} (${target.email})`,
       'user',
-      {},
+      { reason: reason || 'Action executed from IGO Console' },
       `status: ${target.status}`,
       `status: ${newStatus}`
+    );
+  };
+
+  const handleEditUser = (
+    userId: string,
+    updatedData: { name: string; phone?: string; email?: string }
+  ) => {
+    setPlatformUsers((prev) => {
+      const updated = prev.map((u) => (u.id === userId ? { ...u, ...updatedData } : u));
+      try {
+        localStorage.setItem('igho_platform_users', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    recordAuditLog(
+      'UPDATE_USER_PROFILE',
+      `${updatedData.name} (${updatedData.email || userId})`,
+      'user',
+      { updatedData },
+      'previous profile',
+      'updated profile'
     );
   };
 
@@ -527,65 +634,96 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
     );
   };
 
-  // Consolidate all system accounts: Owners, Staff, and Regular Users (Guests)
+  // Consolidate authentic system accounts: Super Admins, Hotel Owners, Staff, and Registered Profiles
   const allSystemUsers: PlatformUser[] = React.useMemo(() => {
-    const list: PlatformUser[] = [...platformUsers];
+    let bannedEmails: string[] = [];
+    try {
+      bannedEmails = JSON.parse(localStorage.getItem('igho_banned_users') || '[]');
+    } catch {}
 
-    // 1. Add hotel owners
+    const list: PlatformUser[] = platformUsers.map((u) =>
+      bannedEmails.includes(u.email.toLowerCase()) ? { ...u, status: 'suspended' } : u
+    );
+
+    // 1. Add authentic hotel owners (strictly real emails, never synthetic placeholders)
     hotels.forEach((h) => {
-      const ownerEmail = h.contactEmail || `owner@${h.id}.com`;
-      if (!list.some((u) => u.email.toLowerCase() === ownerEmail.toLowerCase())) {
+      const ownerEmail = (h.ownerEmail || h.contactEmail || h.email || '').trim().toLowerCase();
+      if (
+        ownerEmail &&
+        ownerEmail.includes('@') &&
+        !ownerEmail.includes('placeholder') &&
+        !list.some((u) => u.email.toLowerCase() === ownerEmail)
+      ) {
+        const isBanned = bannedEmails.includes(ownerEmail) || !!h.isSuspended;
         list.push({
           id: `owner-${h.id}`,
-          name: h.ownerName || `${h.name} Owner`,
+          name: h.ownerName || h.name,
           email: ownerEmail,
           role: 'hotel_owner',
           organizationId: h.id,
           organizationName: h.name,
-          status: h.isSuspended ? 'suspended' : 'active',
+          status: isBanned ? 'suspended' : 'active',
           createdAt: h.joinedDate || '2026-09-01',
           lastActivity: 'Active on PMS',
         });
       }
     });
 
-    // 2. Add staff members
+    // 2. Add authentic staff members
     staff.forEach((s) => {
-      if (!list.some((u) => u.email.toLowerCase() === s.email.toLowerCase())) {
+      const staffEmail = (s.email || '').trim().toLowerCase();
+      if (
+        staffEmail &&
+        staffEmail.includes('@') &&
+        !staffEmail.includes('placeholder') &&
+        !list.some((u) => u.email.toLowerCase() === staffEmail)
+      ) {
         const hotel = hotels.find((h) => h.id === s.hotelId);
+        const isBanned = bannedEmails.includes(staffEmail) || s.status !== 'active';
         list.push({
           id: s.id,
           name: s.name,
-          email: s.email,
+          email: staffEmail,
           role: s.role as any,
           organizationId: s.hotelId,
           organizationName: hotel?.name || 'Hotel Staff Member',
-          status: s.status === 'active' ? 'active' : 'suspended',
+          status: isBanned ? 'suspended' : 'active',
           createdAt: s.addedDate || '2026-09-01',
           lastActivity: 'Staff PMS Access',
         });
       }
     });
 
-    // 3. Add regular guest / customer users from reservations
-    reservations.forEach((r) => {
-      const guestEmail = r.guestEmail;
-      if (guestEmail && !list.some((u) => u.email.toLowerCase() === guestEmail.toLowerCase())) {
-        list.push({
-          id: `guest-${r.id.slice(0, 8)}`,
-          name: `${r.guestFirstName || 'Guest'} ${r.guestLastName || ''}`.trim() || 'Verified Guest',
-          email: guestEmail,
-          role: 'customer',
-          organizationName: 'Guest Portal / IGHO Stay',
-          status: 'active',
-          createdAt: r.createdAt ? r.createdAt.split('T')[0] : '2026-09-10',
-          lastActivity: r.checkedIn ? 'Checked In' : 'Reservation Created',
+    // 3. Add genuinely registered customer profiles from persistent directory
+    try {
+      const raw = localStorage.getItem('igho_db_customer_profiles');
+      if (raw) {
+        const registeredProfiles: any[] = JSON.parse(raw);
+        registeredProfiles.forEach((p) => {
+          const profileEmail = (p.email || '').trim().toLowerCase();
+          if (
+            profileEmail &&
+            profileEmail.includes('@') &&
+            !list.some((u) => u.email.toLowerCase() === profileEmail)
+          ) {
+            const isBanned = bannedEmails.includes(profileEmail);
+            list.push({
+              id: p.id || `profile-${Date.now()}`,
+              name: `${p.firstName || 'Guest'} ${p.lastName || ''}`.trim() || 'Verified Guest',
+              email: profileEmail,
+              role: 'customer',
+              organizationName: 'Guest Portal / IGHO Stay',
+              status: isBanned ? 'suspended' : 'active',
+              createdAt: p.createdAt ? p.createdAt.split('T')[0] : '2026-10-01',
+              lastActivity: 'Registered Account',
+            });
+          }
         });
       }
-    });
+    } catch {}
 
     return list;
-  }, [platformUsers, hotels, staff, reservations]);
+  }, [platformUsers, hotels, staff]);
 
   // Counters for badges in sidebar
   const pendingRegistrationsCount = hotels.filter(
@@ -594,6 +732,23 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   const openComplaintsCount = feedbacks.filter(
     (f) => f.type === 'complaint' && f.status !== 'resolved' && f.status !== 'closed'
   ).length;
+
+  const [pendingWaitlistsCount, setPendingWaitlistsCount] = useState<number>(0);
+
+  useEffect(() => {
+    const updateWaitlistCount = () => {
+      try {
+        const stored = localStorage.getItem('igho_waitlists');
+        const list = stored ? JSON.parse(stored) : [];
+        setPendingWaitlistsCount(list.filter((w: any) => w.status === 'pending').length);
+      } catch {
+        setPendingWaitlistsCount(0);
+      }
+    };
+    updateWaitlistCount();
+    window.addEventListener('igho_waitlists_updated', updateWaitlistCount);
+    return () => window.removeEventListener('igho_waitlists_updated', updateWaitlistCount);
+  }, []);
 
   // VERIFYING PLATFORM AUTHORITY
   if (checkingAuth) {
@@ -621,7 +776,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
               Super Admin Authorization Required
             </h2>
             <p className="text-xs text-neutral-400 leading-relaxed">
-              The <strong>IGHO Console</strong> is the internal ecosystem management system. Access is strictly restricted to accounts verified with a <code>super_admin</code> role in the database.
+              The <strong>IGO Console</strong> is the internal ecosystem management system. Access is strictly restricted to accounts verified with a <code>super_admin</code> role in the database.
             </p>
           </div>
 
@@ -631,7 +786,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
             </span>
             <div className="font-mono text-neutral-300 truncate">{currentUserEmail || 'No active session'}</div>
             <span className="text-[10px] text-amber-400 font-medium block">
-              Status: Unauthorized for IGHO Platform Console
+              Status: Unauthorized for IGO Platform Console
             </span>
           </div>
 
@@ -651,7 +806,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
               onClick={() => onNavigate('landing')}
               className="w-full py-2 text-neutral-400 hover:text-white text-xs transition-colors cursor-pointer"
             >
-              ← Back to IGHO Home
+              ← Back to IGO Home
             </button>
           </div>
         </div>
@@ -691,8 +846,10 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
                 }}
                 pendingRegistrationsCount={pendingRegistrationsCount}
                 openComplaintsCount={openComplaintsCount}
+                pendingWaitlistsCount={pendingWaitlistsCount}
                 currentUserEmail={currentUserEmail}
                 onNavigate={onNavigate}
+                onSignOut={onSignOut}
                 isCollapsed={false} // Keep expanded for maximum readability inside drawer
                 onToggleCollapse={() => setMobileMenuOpen(false)} // Clicking collapse closes drawer on mobile
                 isMobile={true}
@@ -712,8 +869,10 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
         onSelectTab={(tab) => setCurrentTab(tab)}
         pendingRegistrationsCount={pendingRegistrationsCount}
         openComplaintsCount={openComplaintsCount}
+        pendingWaitlistsCount={pendingWaitlistsCount}
         currentUserEmail={currentUserEmail}
         onNavigate={onNavigate}
+        onSignOut={onSignOut}
         isCollapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         profileName={profileName}
@@ -740,7 +899,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
               {/* Minimalist Indicator when Sidebar is Collapsed / on mobile */}
               {(sidebarCollapsed || mobileMenuOpen) && (
                 <div className="flex items-center gap-2">
-                  <span className="font-black text-sm text-black">IGHO</span>
+                  <span className="font-black text-sm text-black">IGO</span>
                   <span className="text-neutral-300">|</span>
                   <span className="text-xs text-[#10b981] font-bold">Console</span>
                 </div>
@@ -839,6 +998,21 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
                           <User className="w-3.5 h-3.5 text-neutral-400" />
                           <span>Edit Profile</span>
                         </button>
+                        <div className="border-t border-neutral-100 my-1" />
+                        <button
+                          onClick={() => {
+                            setProfileDropdownOpen(false);
+                            if (onSignOut) {
+                              onSignOut();
+                            } else {
+                              onNavigate('landing');
+                            }
+                          }}
+                          className="w-full text-left px-4 py-2 hover:bg-rose-50 text-rose-600 hover:text-rose-700 transition-colors flex items-center gap-2.5 font-bold cursor-pointer"
+                        >
+                          <LogOut className="w-3.5 h-3.5 text-rose-500" />
+                          <span>Sign out</span>
+                        </button>
                       </div>
                     </div>
                   </>
@@ -900,12 +1074,17 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
             />
           )}
 
+          {currentTab === 'waitlists' && (
+            <ConsoleWaitlistsView onNavigateBreadcrumb={() => setCurrentTab('dashboard')} />
+          )}
+
           {currentTab === 'users' && (
             <ConsoleUsersView
               users={allSystemUsers}
               hotels={hotels}
               onChangeUserRole={handleChangeUserRole}
               onToggleUserStatus={handleToggleUserStatus}
+              onEditUser={handleEditUser}
               onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
             />
           )}
@@ -915,6 +1094,8 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
               subscriptions={subscriptions}
               plans={plans}
               hotels={hotels}
+              rooms={rooms}
+              onUpdateHotels={updateHotelsList}
               settings={settings}
               onUpdateSettings={(newSettings) => {
                 setSettings(newSettings);

@@ -28,6 +28,7 @@ import {
   ChevronRight,
   Info,
   ArrowRight,
+  Download,
 } from 'lucide-react';
 import { Reservation, Room, ActiveScreen, CustomerProfile, Hotel } from '../types';
 import { BackButton } from './BackButton';
@@ -71,6 +72,10 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
   const [cancellingRes, setCancellingRes] = useState<Reservation | null>(null);
   const [cancelReason, setCancelReason] = useState<string>('Change of travel plans');
   const [cancelCustomReason, setCancelCustomReason] = useState<string>('');
+  const [refundBankName, setRefundBankName] = useState<string>('Zenith Bank PLC');
+  const [refundAccountNumber, setRefundAccountNumber] = useState<string>('');
+  const [refundAccountName, setRefundAccountName] = useState<string>('');
+  const [refundBankError, setRefundBankError] = useState<string>('');
 
   // Date Change state
   const [changingDateRes, setChangingDateRes] = useState<Reservation | null>(null);
@@ -284,13 +289,13 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
 
         {/* User Account Controls */}
         <div className="flex items-center gap-2 sm:gap-3 text-xs font-medium text-neutral-800">
-          {isSuperAdmin && (
+          {isSuperAdmin && currentUserEmail && (
             <button
               onClick={() => onNavigate('super_admin_console')}
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
             >
               <Shield className="w-3.5 h-3.5" />
-              <span>IGHO Console</span>
+              <span>IGO Console</span>
             </button>
           )}
 
@@ -367,14 +372,14 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
             >
               Profile & Settings
             </button>
-            {isSuperAdmin && (
+            {isSuperAdmin && currentUserEmail && (
               <button
                 onClick={() => onNavigate('super_admin_console')}
                 className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 transition-colors font-bold flex items-center gap-1.5 cursor-pointer ml-auto"
-                title="Access the IGHO Platform Super Admin Console"
+                title="Access the IGO Platform Super Admin Console"
               >
                 <Shield className="w-3.5 h-3.5 text-emerald-600" />
-                <span>IGHO Console</span>
+                <span>IGO Console</span>
               </button>
             )}
           </div>
@@ -385,7 +390,7 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
       {activeTab === 'dashboard' && (
         <main className="max-w-4xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
           {/* Platform Super Admin Console Access Banner */}
-          {isSuperAdmin && (
+          {isSuperAdmin && currentUserEmail && (
             <div className="bg-neutral-900 text-white p-4 sm:p-5 rounded-2xl border border-neutral-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-md">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center border border-emerald-500/25 shrink-0">
@@ -408,7 +413,7 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 shrink-0 cursor-pointer active:scale-95"
               >
                 <Shield className="w-4 h-4" />
-                <span>Open IGHO Console</span>
+                <span>Open IGO Console</span>
               </button>
             </div>
           )}
@@ -735,6 +740,20 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
                             <Receipt className="w-3.5 h-3.5" />
                             <span>Receipt</span>
                           </button>
+
+                          {res.receiptUrl && (
+                            <a
+                              href={res.receiptUrl}
+                              download={`receipt-${res.reference}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="px-3 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 border border-neutral-200 cursor-pointer"
+                              title="Download Proof Slip"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Download Slip</span>
+                            </a>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1413,6 +1432,57 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
               )}
             </div>
 
+            {/* Guest Destination Bank for Refund */}
+            <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3.5 space-y-2.5 text-xs">
+              <span className="font-bold text-neutral-900 block text-xs">
+                Your Bank Account for Direct Refund Disbursement *
+              </span>
+              <p className="text-[11px] text-neutral-500">
+                The hotel finance team will transfer the refund directly to this account.
+              </p>
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-[10px] font-bold text-neutral-600 uppercase">Bank Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={refundBankName}
+                    onChange={(e) => setRefundBankName(e.target.value)}
+                    placeholder="e.g. Zenith Bank PLC / GTBank"
+                    className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 text-xs bg-white focus:outline-none focus:border-black font-medium"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-bold text-neutral-600 uppercase">10-Digit Account Number *</label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={10}
+                      value={refundAccountNumber}
+                      onChange={(e) => setRefundAccountNumber(e.target.value.replace(/\D/g, ''))}
+                      placeholder="1014529384"
+                      className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 text-xs font-mono font-bold bg-white focus:outline-none focus:border-black"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-neutral-600 uppercase">Beneficiary Name *</label>
+                    <input
+                      type="text"
+                      required
+                      value={refundAccountName}
+                      onChange={(e) => setRefundAccountName(e.target.value)}
+                      placeholder="Name as on Bank Account"
+                      className="w-full px-3 py-1.5 rounded-lg border border-neutral-300 text-xs bg-white focus:outline-none focus:border-black font-medium"
+                    />
+                  </div>
+                </div>
+              </div>
+              {refundBankError && (
+                <p className="text-[11px] text-rose-600 font-semibold">{refundBankError}</p>
+              )}
+            </div>
+
             {/* Modal Actions */}
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-100">
               <button
@@ -1426,6 +1496,16 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
                 type="button"
                 onClick={() => {
                   if (!cancellingRes) return;
+                  if (!refundAccountNumber || refundAccountNumber.length < 10) {
+                    setRefundBankError('Please enter a valid 10-digit NUBAN account number for your refund transfer.');
+                    return;
+                  }
+                  if (!refundAccountName.trim()) {
+                    setRefundBankError('Please enter the account beneficiary name as registered with your bank.');
+                    return;
+                  }
+                  setRefundBankError('');
+
                   const finalReason = cancelReason === 'Other' ? (cancelCustomReason || 'Guest requested cancellation') : cancelReason;
                   const updated: Reservation = {
                     ...cancellingRes,
@@ -1434,6 +1514,11 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
                     cancellationRequestedAt: new Date().toISOString(),
                     refundStatus: 'pending',
                     refundAmount: cancellingRes.total,
+                    refundBankDetails: {
+                      bankName: refundBankName.trim() || 'Zenith Bank PLC',
+                      accountNumber: refundAccountNumber.trim(),
+                      accountName: refundAccountName.trim() || cancellingRes.guestName,
+                    },
                   };
                   if (onUpdateReservation) {
                     onUpdateReservation(updated);
@@ -1443,13 +1528,13 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
                   setCancelCustomReason('');
                   setFeedbackToast({
                     type: 'success',
-                    message: `Booking ${cancellingRes.reference} cancelled. A refund of ₦${cancellingRes.total.toLocaleString()} was requested on the hotel dashboard.`,
+                    message: `Booking ${cancellingRes.reference} cancelled. A refund of ₦${cancellingRes.total.toLocaleString()} was requested to ${refundBankName} (${refundAccountNumber}).`,
                   });
                   setTimeout(() => setFeedbackToast(null), 5000);
                 }}
                 className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-colors cursor-pointer shadow-2xs"
               >
-                Confirm Cancellation & Request Refund
+                Confirm Cancellation & Submit Refund Request
               </button>
             </div>
           </div>

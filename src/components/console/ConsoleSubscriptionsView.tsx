@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CreditCard,
   CheckCircle2,
@@ -14,15 +14,27 @@ import {
   Layers,
   Sparkles,
   ExternalLink,
+  AlertTriangle,
+  X,
+  Globe,
+  HardDrive,
+  ArrowRightLeft,
+  ArrowUpRight,
+  Shield,
+  ShieldOff,
+  Zap,
 } from 'lucide-react';
-import { SubscriptionPlan, HotelSubscription, Hotel, PlatformSettings, TrialToken } from '../../types';
+import { SubscriptionPlan, HotelSubscription, Hotel, PlatformSettings, TrialToken, Room } from '../../types';
 import { BackButton } from '../BackButton';
 import { KeyRound, Copy, Clock, RefreshCw, Check as CheckIcon, Tag } from 'lucide-react';
+import { INITIAL_PLANS } from '../../data/platformData';
 
 interface ConsoleSubscriptionsViewProps {
   subscriptions: HotelSubscription[];
   plans: SubscriptionPlan[];
   hotels: Hotel[];
+  rooms?: Room[];
+  onUpdateHotels?: (newHotels: Hotel[]) => void;
   settings?: PlatformSettings;
   onUpdateSettings?: (newSettings: PlatformSettings) => void;
   onChangePlanPrice?: (planId: string, newMonthlyPrice: number, newAnnualPrice: number, reason: string) => void;
@@ -30,6 +42,7 @@ interface ConsoleSubscriptionsViewProps {
   onUpdateSubscriptionStatus?: (subId: string, status: any, paymentStatus: any) => void;
   onNavigateBreadcrumb?: () => void;
 }
+
 
 const DEFAULT_TRIAL_TOKENS: TrialToken[] = [
   {
@@ -65,6 +78,8 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
   subscriptions,
   plans: initialPlans,
   hotels,
+  rooms = [],
+  onUpdateHotels,
   settings,
   onUpdateSettings,
   onChangePlanPrice,
@@ -76,22 +91,80 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
   const [subStatusFilter, setSubStatusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // 1-Month Free Trial Tokens state
-  const [trialTokens, setTrialTokens] = useState<TrialToken[]>(() => {
-    try {
-      const saved = localStorage.getItem('igho_trial_tokens');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return DEFAULT_TRIAL_TOKENS;
-  });
+  // Hotel Plan Switcher State
+  const [migratingHotelId, setMigratingHotelId] = useState<string | null>(null);
+  const [migrationSuccessMsg, setMigrationSuccessMsg] = useState<string | null>(null);
+  const [switcherSearchQuery, setSwitcherSearchQuery] = useState('');
 
-  const saveTrialTokens = (tokens: TrialToken[]) => {
-    setTrialTokens(tokens);
+  const handleMigrateHotelPlan = async (hotelId: string, targetPlanId: string) => {
     try {
-      localStorage.setItem('igho_trial_tokens', JSON.stringify(tokens));
-      window.dispatchEvent(new Event('igho_tokens_updated'));
-    } catch {}
+      setMigratingHotelId(hotelId);
+      const res = await fetch(`/api/hotels/${hotelId}/plan`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planId: targetPlanId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.message || 'Failed to update hotel plan.');
+        return;
+      }
+
+      const isComplete = targetPlanId.includes('50k') || targetPlanId === 'plan-3';
+      const updatedHotels = hotels.map((h) =>
+        h.id === hotelId
+          ? {
+              ...h,
+              subscriptionPlanId: isComplete ? 'plan-complete-50k' : 'plan-starter-30k',
+              subscriptionPlanName: isComplete ? 'Plan 2 — Complete Hospitality Cloud' : 'Plan 1 — Standard Operations (PMS)',
+              packageType: isComplete ? ('complete' as const) : ('management' as const),
+              hasGuestPortal: isComplete,
+            }
+          : h
+      );
+
+      if (onUpdateHotels) {
+        onUpdateHotels(updatedHotels);
+      }
+
+      // Also dispatch event for any listening components
+      window.dispatchEvent(new CustomEvent('igho_hotel_plan_migrated', { detail: { hotelId, planId: targetPlanId } }));
+
+      setMigrationSuccessMsg(data.message || `Hotel plan successfully updated.`);
+      setTimeout(() => setMigrationSuccessMsg(null), 4500);
+    } catch (err) {
+      console.error(err);
+      alert('Network error communicating with server.');
+    } finally {
+      setMigratingHotelId(null);
+    }
   };
+
+  // 1-Month Free Trial Tokens state
+  const [trialTokens, setTrialTokens] = useState<TrialToken[]>([]);
+  const [tokensLoading, setTokensLoading] = useState(false);
+
+  const loadBackendTokens = async () => {
+    try {
+      setTokensLoading(true);
+      const res = await fetch('/api/trial-tokens');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.tokens)) {
+        setTrialTokens(data.tokens);
+        localStorage.setItem('igho_trial_tokens', JSON.stringify(data.tokens));
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setTokensLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadBackendTokens();
+    window.addEventListener('igho_tokens_updated', loadBackendTokens);
+    return () => window.removeEventListener('igho_tokens_updated', loadBackendTokens);
+  }, []);
 
   // Trial Token Generator Form States
   const [newTokenCode, setNewTokenCode] = useState('');
@@ -103,46 +176,48 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
 
   const generateRandomToken = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let code = 'IGHO-TR-';
-    for (let i = 0; i < 5; i++) {
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    let p1 = '';
+    let p2 = '';
+    for (let i = 0; i < 4; i++) {
+      p1 += chars.charAt(Math.floor(Math.random() * chars.length));
+      p2 += chars.charAt(Math.floor(Math.random() * chars.length));
     }
-    setNewTokenCode(code);
+    setNewTokenCode(`IGHO-${p1}-${p2}`);
   };
 
-  const handleCreateToken = (e: React.FormEvent) => {
+  const handleCreateToken = async (e: React.FormEvent) => {
     e.preventDefault();
-    const clean = (newTokenCode.trim() || `IGHO-TR-${Math.floor(1000 + Math.random() * 9000)}`).toUpperCase();
-
-    if (trialTokens.some((t) => t.code === clean)) {
-      alert(`Token code "${clean}" already exists.`);
-      return;
-    }
-
     const assignedHotel = hotels.find((h) => h.id === newTokenHotelId);
 
-    const now = new Date();
-    const timestamp = `${now.toISOString().split('T')[0]} ${now.toTimeString().split(' ')[0]}`;
+    try {
+      const res = await fetch('/api/trial-tokens/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          durationDays: 30, // strictly 1 month
+          assignedHotelId: newTokenHotelId === 'universal' ? undefined : newTokenHotelId,
+          assignedHotelName: assignedHotel?.name,
+          notes: newTokenNotes.trim() || '1-Month Free Trial Token',
+          customCode: newTokenCode.trim() ? newTokenCode.trim().toUpperCase() : undefined,
+          createdBy: 'Super Admin',
+        }),
+      });
 
-    const created: TrialToken = {
-      id: `tok-${Date.now()}`,
-      code: clean,
-      durationDays: 30, // strictly 1 month
-      assignedHotelId: newTokenHotelId === 'universal' ? undefined : newTokenHotelId,
-      assignedHotelName: assignedHotel?.name,
-      status: 'active',
-      createdAt: timestamp,
-      createdBy: 'Super Admin',
-      notes: newTokenNotes.trim() || '1-Month Free Trial Token',
-    };
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.message || 'Failed to generate token.');
+        return;
+      }
 
-    const nextList = [created, ...trialTokens];
-    saveTrialTokens(nextList);
-
-    setTokenGeneratedSuccess(clean);
-    setNewTokenCode('');
-    setNewTokenNotes('');
-    setTimeout(() => setTokenGeneratedSuccess(null), 5000);
+      setTrialTokens((prev) => [data.token, ...prev]);
+      setTokenGeneratedSuccess(data.token.code);
+      setNewTokenCode('');
+      setNewTokenNotes('');
+      setTimeout(() => setTokenGeneratedSuccess(null), 5000);
+    } catch (err) {
+      console.error(err);
+      alert('Error generating token from backend server.');
+    }
   };
 
   const handleCopyToken = (token: TrialToken) => {
@@ -151,24 +226,74 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
     setTimeout(() => setCopiedTokenId(null), 2500);
   };
 
-  const handleRevokeToken = (tokenId: string) => {
-    const next = trialTokens.map((t) => (t.id === tokenId ? { ...t, status: 'revoked' as const } : t));
-    saveTrialTokens(next);
+  const handleRevokeToken = async (tokenId: string) => {
+    try {
+      const res = await fetch(`/api/trial-tokens/${tokenId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'revoked' }),
+      });
+      if (res.ok) {
+        setTrialTokens((prev) =>
+          prev.map((t) => (t.id === tokenId ? { ...t, status: 'revoked' as const } : t))
+        );
+      }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  const handleDeleteToken = (tokenId: string) => {
-    if (!confirm('Are you sure you want to delete this trial token?')) return;
-    const next = trialTokens.filter((t) => t.id !== tokenId);
-    saveTrialTokens(next);
+  const handleDeleteToken = async (tokenId: string) => {
+    if (!confirm('Are you sure you want to permanently delete this trial token?')) return;
+    try {
+      const res = await fetch(`/api/trial-tokens/${tokenId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setTrialTokens((prev) => prev.filter((t) => t.id !== tokenId));
+      }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   // Plans state
   const [plans, setPlans] = useState<SubscriptionPlan[]>(initialPlans);
   const [editingPlan, setEditingPlan] = useState<SubscriptionPlan | null>(null);
+  const [planToDelete, setPlanToDelete] = useState<SubscriptionPlan | null>(null);
+  const [deleteSuccessMsg, setDeleteSuccessMsg] = useState<string | null>(null);
   const [newMonthly, setNewMonthly] = useState<number>(0);
   const [newAnnual, setNewAnnual] = useState<number>(0);
   const [priceChangeReason, setPriceChangeReason] = useState<string>('');
   const [newFeatureText, setNewFeatureText] = useState<{ [planId: string]: string }>({});
+
+  useEffect(() => {
+    setPlans(initialPlans);
+  }, [initialPlans]);
+
+  const handleConfirmDeletePlan = () => {
+    if (!planToDelete) return;
+    const deletedName = planToDelete.name;
+    const updated = plans.filter((p) => p.id !== planToDelete.id);
+    setPlans(updated);
+    if (onUpdatePlans) {
+      onUpdatePlans(updated);
+    }
+    setPlanToDelete(null);
+    setDeleteSuccessMsg(`Plan "${deletedName}" was successfully deleted.`);
+    setTimeout(() => {
+      setDeleteSuccessMsg(null);
+    }, 4000);
+  };
+
+  const handleRestoreDefaultPlans = () => {
+    setPlans(INITIAL_PLANS);
+    if (onUpdatePlans) {
+      onUpdatePlans(INITIAL_PLANS);
+    }
+    setDeleteSuccessMsg('Default subscription plans have been restored.');
+    setTimeout(() => {
+      setDeleteSuccessMsg(null);
+    }, 4000);
+  };
 
   // Wallet / Payout State
   const defaultPayout = settings?.subscriptionPayout || {
@@ -187,6 +312,43 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
   const mrr = subscriptions
     .filter((s) => s.status === 'active' || s.paymentStatus === 'paid')
     .reduce((sum, s) => sum + (s.billingCycle === 'annual' ? Math.round(s.amount / 12) : s.amount), 0);
+
+  // Plan Adoption Metrics (Standard ₦30,000 PMS Only vs Complete ₦50,000 Hospitality Cloud)
+  const standardHotels = hotels.filter((h) => {
+    const plan = h.subscriptionPlanId || '';
+    return (
+      plan === 'plan-starter-30k' ||
+      plan === 'plan-1' ||
+      h.packageType === 'management' ||
+      h.hasGuestPortal === false
+    );
+  });
+
+  const completeHotels = hotels.filter((h) => {
+    const plan = h.subscriptionPlanId || '';
+    return (
+      plan === 'plan-complete-50k' ||
+      plan === 'plan-3' ||
+      h.packageType === 'complete' ||
+      h.hasGuestPortal === true
+    );
+  });
+
+  const standardRoomsCount = standardHotels.reduce((sum, h) => {
+    const count = rooms.filter((r) => r.hotelId === h.id).length;
+    return sum + (count || h.roomCount || 0);
+  }, 0);
+
+  const completeRoomsCount = completeHotels.reduce((sum, h) => {
+    const count = rooms.filter((r) => r.hotelId === h.id).length;
+    return sum + (count || h.roomCount || 0);
+  }, 0);
+
+  const standardMRR = standardHotels.length * 30000;
+  const completeMRR = completeHotels.length * 50000;
+  const totalTrackedHotels = Math.max(1, hotels.length);
+  const standardPct = Math.round((standardHotels.length / totalTrackedHotels) * 100);
+  const completePct = 100 - standardPct;
 
   const filteredSubs = subscriptions.filter((s) => {
     const q = searchQuery.toLowerCase();
@@ -357,115 +519,507 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
       {/* TAB 1: AVAILABLE PLANS CATALOG & FEATURE MANAGEMENT */}
       {activeSubTab === 'plans' && (
         <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-neutral-200 pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-200 pb-3">
             <div>
-              <h2 className="text-base font-bold text-black">Available Subscription Plans</h2>
-              <p className="text-xs text-neutral-500">
-                Change pricing tiers, add features, and modify what's included in each package.
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-black">Available Subscription Plans</h2>
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700">
+                  {plans.length} {plans.length === 1 ? 'Plan' : 'Plans'}
+                </span>
+              </div>
+              <p className="text-xs text-neutral-500 mt-0.5">
+                Manage pricing tiers, remove unneeded plans, and modify what's included in each package.
               </p>
             </div>
-            <div className="text-xs text-neutral-500 font-medium">
-              Note: Customer Portal is exclusively available on the Complete (₦50,000) package.
+            <div className="flex items-center gap-2">
+              {plans.length < INITIAL_PLANS.length && (
+                <button
+                  type="button"
+                  onClick={handleRestoreDefaultPlans}
+                  className="px-3 py-1.5 rounded-full border border-neutral-300 hover:bg-neutral-50 text-neutral-700 text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-3xs transition-colors"
+                  title="Reset to default platform plans"
+                >
+                  <RefreshCw className="w-3 h-3 text-neutral-500" />
+                  <span>Restore Default Plans</span>
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {plans.map((plan) => (
-              <div
-                key={plan.id}
-                className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between space-y-4 hover:border-black/30 transition-all"
+          {/* Delete success notification banner */}
+          {deleteSuccessMsg && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl text-xs flex items-center justify-between gap-2 animate-in fade-in">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="font-medium">{deleteSuccessMsg}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeleteSuccessMsg(null)}
+                className="text-emerald-700 hover:text-emerald-950 p-1 cursor-pointer"
               >
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-base font-black text-black">{plan.name}</h3>
-                      <span className="text-[10px] font-mono text-neutral-400">{plan.id}</span>
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* REQUIREMENT: PLAN ADOPTION BREAKDOWN & COMPARISON WIDGET (₦30,000 vs ₦50,000) */}
+          <div className="bg-white border border-neutral-200 rounded-3xl p-6 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-100 pb-4">
+              <div>
+                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest block font-mono">
+                  Market Adoption & Entitlement Matrix
+                </span>
+                <h3 className="text-base font-black text-black">
+                  ₦30,000 Standard vs ₦50,000 Complete Plan Comparison
+                </h3>
+              </div>
+              <div className="flex items-center gap-2 text-xs font-semibold">
+                <span className="px-2.5 py-1 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-200">
+                  {hotels.length} Registered Properties
+                </span>
+                <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono">
+                  ₦{(standardMRR + completeMRR).toLocaleString()} Total MRR
+                </span>
+              </div>
+            </div>
+
+            {/* Side-by-side Plan Metric Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Plan 1: ₦30,000 Standard */}
+              <div className="bg-neutral-50/70 border border-neutral-200 rounded-2xl p-5 space-y-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-neutral-200 text-neutral-800 border border-neutral-300">
+                      <span>PLAN 1 — STARTER</span>
                     </div>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-800 border border-neutral-200">
-                      {plan.trialDurationDays} Days Trial
-                    </span>
+                    <h4 className="text-lg font-black text-black mt-1">₦30,000 / month</h4>
+                    <p className="text-xs text-neutral-500">Standard Operations PMS Only</p>
                   </div>
-
-                  <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-100 space-y-1">
-                    <div className="text-2xl font-black text-black font-mono">
-                      ₦{plan.monthlyPrice.toLocaleString()}{' '}
-                      <span className="text-xs text-neutral-500 font-normal">/ month</span>
-                    </div>
-                    <div className="text-xs text-neutral-500 font-mono">
-                      ₦{plan.annualPrice.toLocaleString()} / year (save 17%)
-                    </div>
-                  </div>
-
-                  {/* Features List */}
-                  <div className="space-y-2 pt-2 border-t border-neutral-100">
-                    <div className="flex items-center justify-between text-xs font-bold text-neutral-800">
-                      <span>Included Features ({plan.features.length})</span>
-                    </div>
-
-                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                      {plan.features.map((feat, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-center justify-between gap-2 p-1.5 rounded-lg bg-neutral-50 border border-neutral-200 text-xs text-neutral-800 group"
-                        >
-                          <div className="flex items-center gap-1.5 truncate">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                            <span className="truncate">{feat}</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveFeature(plan.id, idx)}
-                            className="text-neutral-400 hover:text-rose-600 p-0.5 rounded opacity-60 group-hover:opacity-100 transition-opacity"
-                            title="Remove feature"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Add Feature input */}
-                    <div className="pt-2 flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        value={newFeatureText[plan.id] || ''}
-                        onChange={(e) =>
-                          setNewFeatureText({ ...newFeatureText, [plan.id]: e.target.value })
-                        }
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            handleAddFeature(plan.id);
-                          }
-                        }}
-                        placeholder="Add new feature..."
-                        className="flex-1 p-2 bg-neutral-50 border border-neutral-300 rounded-lg text-xs text-neutral-900 focus:outline-none focus:border-black"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleAddFeature(plan.id)}
-                        className="px-2.5 py-2 bg-black hover:bg-neutral-800 text-white rounded-lg text-xs font-bold transition-colors"
-                        title="Add feature"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                  <div className="text-right">
+                    <span className="text-2xl font-black text-black font-mono">{standardHotels.length}</span>
+                    <span className="text-[10px] text-neutral-400 block font-medium">Hotels ({standardPct}%)</span>
                   </div>
                 </div>
 
+                <div className="grid grid-cols-2 gap-2.5 pt-3 border-t border-neutral-200/80 text-xs">
+                  <div className="bg-white p-2.5 rounded-xl border border-neutral-200">
+                    <span className="text-[10px] text-neutral-400 font-bold uppercase block">Managed Rooms</span>
+                    <span className="text-base font-black text-neutral-900 font-mono">{standardRoomsCount}</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-xl border border-neutral-200">
+                    <span className="text-[10px] text-neutral-400 font-bold uppercase block">Monthly Run-rate</span>
+                    <span className="text-base font-black text-neutral-900 font-mono">₦{standardMRR.toLocaleString()}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-2 text-xs">
+                  <div className="flex items-center justify-between text-neutral-700">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <HardDrive className="w-3.5 h-3.5 text-neutral-500" />
+                      <span>Storage Entitlement:</span>
+                    </span>
+                    <span className="font-bold font-mono text-black">1 GB Total Org Storage</span>
+                  </div>
+                  <div className="flex items-center justify-between text-neutral-700">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <ShieldOff className="w-3.5 h-3.5 text-rose-500" />
+                      <span>Public Guest Portal:</span>
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-neutral-200 text-neutral-700">
+                      NO Guest Portal (PMS Only)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Plan 2: ₦50,000 Complete */}
+              <div className="bg-emerald-50/40 border border-emerald-200 rounded-2xl p-5 space-y-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                      <Sparkles className="w-3 h-3 text-emerald-600" />
+                      <span>PLAN 2 — COMPLETE</span>
+                    </div>
+                    <h4 className="text-lg font-black text-black mt-1">₦50,000 / month</h4>
+                    <p className="text-xs text-neutral-500">Complete Hospitality Cloud</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-2xl font-black text-emerald-700 font-mono">{completeHotels.length}</span>
+                    <span className="text-[10px] text-emerald-600 block font-medium">Hotels ({completePct}%)</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5 pt-3 border-t border-emerald-200/80 text-xs">
+                  <div className="bg-white p-2.5 rounded-xl border border-emerald-100">
+                    <span className="text-[10px] text-neutral-400 font-bold uppercase block">Managed Rooms</span>
+                    <span className="text-base font-black text-neutral-900 font-mono">{completeRoomsCount}</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-xl border border-emerald-100">
+                    <span className="text-[10px] text-neutral-400 font-bold uppercase block">Monthly Run-rate</span>
+                    <span className="text-base font-black text-emerald-700 font-mono">₦{completeMRR.toLocaleString()}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-2 text-xs">
+                  <div className="flex items-center justify-between text-neutral-700">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <HardDrive className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Storage Entitlement:</span>
+                    </span>
+                    <span className="font-bold font-mono text-emerald-900">10 GB Total Org Storage</span>
+                  </div>
+                  <div className="flex items-center justify-between text-neutral-700">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <Globe className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Public Guest Portal:</span>
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                      Included (Direct Online Booking)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Proportion Distribution Bar */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex justify-between text-[11px] font-bold text-neutral-500">
+                <span>Standard ₦30k ({standardPct}%)</span>
+                <span>Complete ₦50k ({completePct}%)</span>
+              </div>
+              <div className="h-3 w-full bg-neutral-100 rounded-full overflow-hidden flex p-0.5 border border-neutral-200">
+                <div
+                  className="h-full bg-neutral-700 rounded-l-full transition-all duration-500"
+                  style={{ width: `${standardPct}%` }}
+                />
+                <div
+                  className="h-full bg-emerald-500 rounded-r-full transition-all duration-500"
+                  style={{ width: `${completePct}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+
+          {plans.length === 0 ? (
+            <div className="bg-white border border-neutral-200 rounded-2xl p-10 text-center space-y-4 shadow-xs">
+              <div className="w-14 h-14 bg-neutral-100 text-neutral-500 rounded-2xl flex items-center justify-center mx-auto">
+                <CreditCard className="w-7 h-7 text-neutral-400" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-neutral-900">No Subscription Plans Available</h3>
+                <p className="text-xs text-neutral-500 max-w-sm mx-auto">
+                  All subscription plans have been deleted. You can restore the initial default platform tiers at any time.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleRestoreDefaultPlans}
+                className="px-5 py-2.5 bg-black hover:bg-neutral-800 text-white font-bold text-xs rounded-full shadow-sm cursor-pointer inline-flex items-center gap-1.5 transition-all"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Restore Default Plans</span>
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              {plans.map((plan) => (
+                <div
+                  key={plan.id}
+                  className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between space-y-4 hover:border-black/30 transition-all"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-base font-black text-black">{plan.name}</h3>
+                        <span className="text-[10px] font-mono text-neutral-400">{plan.id}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-800 border border-neutral-200">
+                          {plan.trialDurationDays} Days Trial
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPlanToDelete(plan)}
+                          className="p-1 rounded-lg text-neutral-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                          title={`Delete ${plan.name} Plan`}
+                          aria-label={`Delete ${plan.name} Plan`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-100 space-y-1">
+                      <div className="text-2xl font-black text-black font-mono">
+                        ₦{plan.monthlyPrice.toLocaleString()}{' '}
+                        <span className="text-xs text-neutral-500 font-normal">/ month</span>
+                      </div>
+                      <div className="text-xs text-neutral-500 font-mono">
+                        ₦{plan.annualPrice.toLocaleString()} / year (save 17%)
+                      </div>
+                    </div>
+
+                    {/* Features List */}
+                    <div className="space-y-2 pt-2 border-t border-neutral-100">
+                      <div className="flex items-center justify-between text-xs font-bold text-neutral-800">
+                        <span>Included Features ({plan.features.length})</span>
+                      </div>
+
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                        {plan.features.map((feat, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between gap-2 p-1.5 rounded-lg bg-neutral-50 border border-neutral-200 text-xs text-neutral-800 group"
+                          >
+                            <div className="flex items-center gap-1.5 truncate">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              <span className="truncate">{feat}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveFeature(plan.id, idx)}
+                              className="text-neutral-400 hover:text-rose-600 p-0.5 rounded opacity-60 group-hover:opacity-100 transition-opacity"
+                              title="Remove feature"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Add Feature input */}
+                      <div className="pt-2 flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={newFeatureText[plan.id] || ''}
+                          onChange={(e) =>
+                            setNewFeatureText({ ...newFeatureText, [plan.id]: e.target.value })
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddFeature(plan.id);
+                            }
+                          }}
+                          placeholder="Add new feature..."
+                          className="flex-1 p-2 bg-neutral-50 border border-neutral-300 rounded-lg text-xs text-neutral-900 focus:outline-none focus:border-black"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleAddFeature(plan.id)}
+                          className="px-2.5 py-2 bg-black hover:bg-neutral-800 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                          title="Add feature"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mt-3 pt-2 border-t border-neutral-100">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenPriceModal(plan)}
+                      className="w-full py-2.5 rounded-xl border border-neutral-300 hover:bg-neutral-50 text-neutral-900 font-bold text-xs transition-colors flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                    >
+                      <Edit3 className="w-3.5 h-3.5 text-neutral-600" />
+                      <span>Adjust Price</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPlanToDelete(plan)}
+                      className="w-full py-2.5 rounded-xl border border-rose-200 bg-rose-50/70 hover:bg-rose-100 text-rose-700 font-bold text-xs transition-colors flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                      title={`Delete ${plan.name} Plan`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Delete Plan</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* REQUIREMENT: HOTEL PLAN MIGRATION & DIRECT SWITCHER TABLE */}
+          <div className="bg-white border border-neutral-200 rounded-3xl p-6 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-100 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <ArrowRightLeft className="w-5 h-5 text-neutral-800" />
+                  <h3 className="text-base font-black text-black">
+                    Hotel Plan Assignment & Live Switcher
+                  </h3>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700">
+                    {hotels.length} Properties
+                  </span>
+                </div>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  Super Admin override: switch any hotel between ₦30,000 Standard (PMS only, 1GB storage) and ₦50,000 Complete (PMS + Guest Portal, 10GB storage) tiers.
+                </p>
+              </div>
+
+              {/* Local Search input */}
+              <div className="relative min-w-[220px]">
+                <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={switcherSearchQuery}
+                  onChange={(e) => setSwitcherSearchQuery(e.target.value)}
+                  placeholder="Filter hotel by name or ID..."
+                  className="w-full bg-neutral-50 border border-neutral-200 rounded-xl pl-8 pr-3 py-1.5 text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black"
+                />
+              </div>
+            </div>
+
+            {/* Migration Success Banner */}
+            {migrationSuccessMsg && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-semibold text-emerald-900 flex items-center justify-between gap-2 animate-in fade-in">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{migrationSuccessMsg}</span>
+                </div>
                 <button
                   type="button"
-                  onClick={() => handleOpenPriceModal(plan)}
-                  className="w-full py-2.5 rounded-xl border border-neutral-300 hover:bg-neutral-50 text-neutral-900 font-bold text-xs transition-colors flex items-center justify-center gap-1.5 shadow-2xs mt-3"
+                  onClick={() => setMigrationSuccessMsg(null)}
+                  className="text-emerald-700 hover:text-emerald-950 p-1"
                 >
-                  <Edit3 className="w-3.5 h-3.5" />
-                  <span>Adjust Plan Price</span>
+                  <X className="w-3.5 h-3.5" />
                 </button>
               </div>
-            ))}
+            )}
+
+            <div className="overflow-x-auto border border-neutral-200 rounded-2xl">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-neutral-50 border-b border-neutral-200 text-[10px] font-bold uppercase tracking-wider text-neutral-500">
+                    <th className="p-3.5 text-center w-12">S/N</th>
+                    <th className="p-3.5">Hotel ID</th>
+                    <th className="p-3.5">Hotel / Property</th>
+                    <th className="p-3.5 text-center">Live Rooms</th>
+                    <th className="p-3.5">Current Plan</th>
+                    <th className="p-3.5">Storage Quota</th>
+                    <th className="p-3.5">Guest Portal</th>
+                    <th className="p-3.5 text-right">Switch / Migrate Plan</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100 text-neutral-800">
+                  {hotels
+                    .filter((h) => {
+                      const q = switcherSearchQuery.toLowerCase();
+                      return (
+                        !q ||
+                        h.name.toLowerCase().includes(q) ||
+                        h.id.toLowerCase().includes(q) ||
+                        (h.city || '').toLowerCase().includes(q)
+                      );
+                    })
+                    .map((hotel, idx) => {
+                      const isComplete =
+                        hotel.hasGuestPortal === true ||
+                        hotel.subscriptionPlanId === 'plan-complete-50k' ||
+                        hotel.subscriptionPlanId === 'plan-3' ||
+                        hotel.packageType === 'complete';
+
+                      const dynamicRoomCount =
+                        rooms.filter((r) => r.hotelId === hotel.id).length || hotel.roomCount || 0;
+
+                      const isMigrating = migratingHotelId === hotel.id;
+
+                      const serialNumber = idx + 1;
+                      const formattedHotelId = hotel.id.startsWith('HTL-')
+                        ? hotel.id
+                        : `HTL-${hotel.id.replace(/[^0-9]/g, '').padStart(3, '0') || String(serialNumber).padStart(3, '0')}`;
+
+                      return (
+                        <tr key={hotel.id} className="hover:bg-neutral-50/70 transition-colors">
+                          <td className="p-3.5 text-center font-mono font-bold text-neutral-400">
+                            {serialNumber}
+                          </td>
+                          <td className="p-3.5">
+                            <span className="font-mono font-bold text-[11px] bg-neutral-100 text-neutral-800 px-2 py-0.5 rounded-md border border-neutral-200">
+                              {formattedHotelId}
+                            </span>
+                          </td>
+                          <td className="p-3.5">
+                            <div className="font-bold text-neutral-900">{hotel.name}</div>
+                            <div className="text-[10px] text-neutral-400">
+                              {hotel.city || 'Lagos'}, {hotel.state || 'Nigeria'}
+                            </div>
+                          </td>
+                          <td className="p-3.5 text-center font-mono font-bold text-neutral-900">
+                            {dynamicRoomCount}
+                          </td>
+                          <td className="p-3.5">
+                            {isComplete ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                <Sparkles className="w-3 h-3 text-emerald-600" />
+                                <span>Complete (₦50,000)</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-neutral-100 text-neutral-800 border border-neutral-300">
+                                <span>Standard (₦30,000)</span>
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3.5">
+                            <span className="font-mono font-semibold text-neutral-700 flex items-center gap-1">
+                              <HardDrive className="w-3 h-3 text-neutral-400" />
+                              <span>{isComplete ? '10 GB' : '1 GB'}</span>
+                            </span>
+                          </td>
+                          <td className="p-3.5">
+                            {isComplete ? (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                                <Globe className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>Active & Live</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-neutral-400">
+                                <ShieldOff className="w-3.5 h-3.5 text-neutral-400" />
+                                <span>Disabled (PMS Only)</span>
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3.5 text-right">
+                            {isMigrating ? (
+                              <span className="inline-flex items-center gap-1.5 text-xs text-neutral-500 font-medium">
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                <span>Updating...</span>
+                              </span>
+                            ) : isComplete ? (
+                              <button
+                                type="button"
+                                onClick={() => handleMigrateHotelPlan(hotel.id, 'plan-starter-30k')}
+                                className="px-3 py-1.5 rounded-xl border border-neutral-300 bg-white hover:bg-neutral-50 text-neutral-800 text-xs font-bold transition-all shadow-3xs cursor-pointer active:scale-95 inline-flex items-center gap-1"
+                                title="Downgrade to Standard ₦30k plan (PMS only, 1GB storage, no guest portal)"
+                              >
+                                <ArrowRightLeft className="w-3 h-3 text-neutral-500" />
+                                <span>Switch to ₦30,000 Standard</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleMigrateHotelPlan(hotel.id, 'plan-complete-50k')}
+                                className="px-3 py-1.5 rounded-xl bg-black hover:bg-neutral-800 text-white text-xs font-bold transition-all shadow-2xs cursor-pointer active:scale-95 inline-flex items-center gap-1"
+                                title="Upgrade to Complete ₦50k plan (10GB storage + Guest Portal enabled)"
+                              >
+                                <Sparkles className="w-3 h-3 text-emerald-400" />
+                                <span>Upgrade to ₦50,000 Complete</span>
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
+
 
       {/* TAB 2: HOTEL SUBSCRIPTIONS & PAYMENT PLANS */}
       {activeSubTab === 'subscriptions' && (
@@ -1025,6 +1579,78 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
                 className="px-4 py-2 rounded-full bg-black text-white text-xs font-bold hover:bg-neutral-800 shadow-sm"
               >
                 Save New Pricing
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Plan Confirmation Modal */}
+      {planToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-neutral-200 rounded-2xl p-6 sm:p-7 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-neutral-900">Delete Subscription Plan</h3>
+                <p className="text-xs text-neutral-500 leading-relaxed">
+                  Are you sure you want to permanently delete the{' '}
+                  <strong className="text-neutral-900 font-semibold">{planToDelete.name}</strong> plan?
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-neutral-50 border border-neutral-200/80 rounded-xl text-xs space-y-1.5">
+              <div className="flex justify-between text-neutral-600">
+                <span>Plan Identifier:</span>
+                <span className="font-mono font-bold text-neutral-900">{planToDelete.id}</span>
+              </div>
+              <div className="flex justify-between text-neutral-600">
+                <span>Monthly Tariff:</span>
+                <span className="font-mono font-bold text-neutral-900">₦{planToDelete.monthlyPrice.toLocaleString()} / mo</span>
+              </div>
+              <div className="flex justify-between text-neutral-600">
+                <span>Annual Tariff:</span>
+                <span className="font-mono font-bold text-neutral-900">₦{planToDelete.annualPrice.toLocaleString()} / yr</span>
+              </div>
+            </div>
+
+            {(() => {
+              const activeCount = subscriptions.filter(
+                (s) =>
+                  s.planName.toLowerCase() === planToDelete.name.toLowerCase() ||
+                  s.id.toLowerCase().includes(planToDelete.id.toLowerCase())
+              ).length;
+              if (activeCount > 0) {
+                return (
+                  <div className="p-3 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-[11px] leading-relaxed flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Notice:</strong> {activeCount} active hotel subscription(s) currently reference this plan tier. Deleting it will remove it from the available catalogue for future onboarding and renewals.
+                    </span>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-neutral-100">
+              <button
+                type="button"
+                onClick={() => setPlanToDelete(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-neutral-700 hover:bg-neutral-100 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeletePlan}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Yes, Delete Plan</span>
               </button>
             </div>
           </div>

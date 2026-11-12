@@ -49,6 +49,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   const accountMenuRef = useRef<HTMLDivElement>(null);
 
   const isLoggedIn = Boolean(currentUserEmail && currentUserEmail.trim() !== '');
+  const isSuperAdminLoggedIn = Boolean(isLoggedIn && isSuperAdmin);
 
   const displayName = currentGuestProfile
     ? `${currentGuestProfile.firstName || ''} ${currentGuestProfile.lastName || ''}`.trim() ||
@@ -304,28 +305,18 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
           >
             Join IGHO Stay
           </button>
-
-          {isSuperAdmin && (
-            <button
-              onClick={() => onNavigate('super_admin_console')}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-xs font-bold transition-all cursor-pointer shadow-3xs"
-            >
-              <Shield className="w-3.5 h-3.5 text-emerald-600" />
-              <span>IGHO Console</span>
-            </button>
-          )}
         </nav>
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Direct IGHO Console button if logged in as Super Admin */}
-          {isSuperAdmin && (
+          {/* Direct IGO Console button strictly when authenticated as Super Admin */}
+          {isSuperAdminLoggedIn && (
             <button
               onClick={() => onNavigate('super_admin_console')}
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition-all shadow-xs cursor-pointer active:scale-95"
             >
               <Shield className="w-3.5 h-3.5" />
-              <span>IGHO Console</span>
+              <span>IGO Console</span>
             </button>
           )}
 
@@ -418,7 +409,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                         </button>
                       )}
 
-                      {isSuperAdmin && (
+                      {isSuperAdminLoggedIn && (
                         <button
                           onClick={() => {
                             setAccountMenuOpen(false);
@@ -427,7 +418,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                           className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors text-left cursor-pointer border border-emerald-200 mb-1"
                         >
                           <Shield className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>IGHO Super Admin Console</span>
+                          <span>IGO Console</span>
                         </button>
                       )}
 
@@ -530,7 +521,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                     </button>
                   )}
 
-                  {isSuperAdmin && (
+                  {isSuperAdminLoggedIn && (
                     <button
                       onClick={() => {
                         setMobileMenuOpen(false);
@@ -539,7 +530,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                       className="w-full py-2.5 px-3 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-center flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
                     >
                       <Shield className="w-4 h-4" />
-                      <span>Open IGHO Super Admin Console</span>
+                      <span>Open IGO Console</span>
                     </button>
                   )}
 
@@ -561,24 +552,6 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                 </div>
               </div>
             ) : null}
-
-            {isSuperAdmin && (
-              <button
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  onNavigate('super_admin_console');
-                }}
-                className="w-full flex items-center justify-between p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-left text-sm font-bold text-emerald-900 mb-2 cursor-pointer"
-              >
-                <div className="flex items-center gap-2.5">
-                  <Shield className="w-4 h-4 text-emerald-600" />
-                  <span>IGHO Super Admin Console</span>
-                </div>
-                <span className="text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded-full font-bold">
-                  Console
-                </span>
-              </button>
-            )}
 
             <div className="px-1 text-[11px] font-bold text-neutral-400 uppercase tracking-wider mb-1">
               Products

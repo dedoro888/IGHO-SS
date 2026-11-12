@@ -14,6 +14,8 @@ import {
   Lock,
   Calendar,
   UserCheck,
+  Edit2,
+  Check,
 } from 'lucide-react';
 import { PlatformUser, Hotel } from '../../types';
 import { BackButton } from '../BackButton';
@@ -22,7 +24,15 @@ interface ConsoleUsersViewProps {
   users: PlatformUser[];
   hotels: Hotel[];
   onChangeUserRole?: (userId: string, newRole: any) => void;
-  onToggleUserStatus?: (userId: string) => void;
+  onToggleUserStatus?: (
+    userId: string,
+    targetStatus?: 'active' | 'suspended' | 'deactivated',
+    reason?: string
+  ) => void;
+  onEditUser?: (
+    userId: string,
+    updatedData: { name: string; phone?: string; email?: string }
+  ) => void;
   onNavigateBreadcrumb?: () => void;
 }
 
@@ -31,12 +41,20 @@ export const ConsoleUsersView: React.FC<ConsoleUsersViewProps> = ({
   hotels = [],
   onChangeUserRole,
   onToggleUserStatus,
+  onEditUser,
   onNavigateBreadcrumb,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [inspectingUser, setInspectingUser] = useState<PlatformUser | null>(null);
+  const [editingUser, setEditingUser] = useState<PlatformUser | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editSuccess, setEditSuccess] = useState(false);
+  const [banModalUser, setBanModalUser] = useState<PlatformUser | null>(null);
+  const [banReason, setBanReason] = useState('Administrative action via IGO Console');
 
   const filteredUsers = users.filter((u) => {
     const q = searchQuery.toLowerCase();
@@ -58,6 +76,8 @@ export const ConsoleUsersView: React.FC<ConsoleUsersViewProps> = ({
       matchesRole = ['manager', 'receptionist', 'finance', 'housekeeping'].includes(u.role);
     } else if (roleFilter === 'customer') {
       matchesRole = u.role === 'customer';
+    } else if (roleFilter === 'suspended') {
+      matchesRole = u.status === 'suspended' || u.status === 'deactivated';
     }
 
     return matchesSearch && matchesRole;
@@ -131,6 +151,7 @@ export const ConsoleUsersView: React.FC<ConsoleUsersViewProps> = ({
             <option value="hotel_owner">Hotel Owners</option>
             <option value="staff">Hotel Staff Members</option>
             <option value="customer">Regular Users / Guests</option>
+            <option value="suspended">Suspended / Banned Accounts</option>
           </select>
         </div>
       </div>
@@ -235,18 +256,40 @@ export const ConsoleUsersView: React.FC<ConsoleUsersViewProps> = ({
                           <Eye className="w-3 h-3" />
                           <span>Inspect</span>
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingUser(user);
+                            setEditName(user.name);
+                            setEditEmail(user.email);
+                            setEditPhone((user as any).phone || '');
+                          }}
+                          className="px-2.5 py-1 rounded-lg border border-neutral-200 text-neutral-700 hover:bg-neutral-100 text-xs font-semibold flex items-center gap-1"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                          <span>Edit</span>
+                        </button>
                         {user.role !== 'super_admin' && onToggleUserStatus && (
-                          <button
-                            type="button"
-                            onClick={() => onToggleUserStatus(user.id)}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors ${
-                              user.status === 'active'
-                                ? 'border-neutral-200 text-neutral-600 hover:bg-rose-50 hover:text-rose-700'
-                                : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                            }`}
-                          >
-                            {user.status === 'active' ? 'Suspend' : 'Activate'}
-                          </button>
+                          user.status === 'active' ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setBanModalUser(user);
+                                setBanReason('Policy violation or administrative lockout');
+                              }}
+                              className="px-2.5 py-1 rounded-lg text-xs font-bold border border-rose-200 text-rose-700 hover:bg-rose-50 transition-colors"
+                            >
+                              Ban Account
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => onToggleUserStatus(user.id, 'active', 'Reactivated by platform administrator')}
+                              className="px-2.5 py-1 rounded-lg text-xs font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+                            >
+                              Reactivate
+                            </button>
+                          )
                         )}
                       </div>
                     </td>
@@ -346,10 +389,214 @@ export const ConsoleUsersView: React.FC<ConsoleUsersViewProps> = ({
             <button
               type="button"
               onClick={() => setInspectingUser(null)}
-              className="w-full py-2.5 rounded-xl bg-black text-white text-xs font-bold hover:bg-neutral-800 transition-colors shadow-sm"
+              className="w-full py-2.5 rounded-xl bg-black text-white text-xs font-bold hover:bg-neutral-800 transition-colors shadow-sm cursor-pointer"
             >
               Close Account Details
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Ban / Suspend Confirmation Modal */}
+      {banModalUser && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-rose-200 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-5 animate-in fade-in duration-200">
+            <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center">
+                  <Shield className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-black">Ban User Account</h3>
+                  <span className="text-[10px] font-mono text-rose-600 font-bold uppercase tracking-wider">
+                    Immediate Lockout Protocol
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBanModalUser(null)}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-black hover:bg-neutral-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl space-y-1 text-rose-800">
+                <p className="font-bold">
+                  Are you sure you want to ban {banModalUser.name}?
+                </p>
+                <p className="text-[11px] text-rose-700 leading-relaxed">
+                  UID: <span className="font-mono">{banModalUser.id}</span> ({banModalUser.email}).
+                  This action immediately revokes active credentials, invalidates sessions, and prevents future sign-ins.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-neutral-700 uppercase tracking-wider mb-1">
+                  Reason for Ban (Audit Ledger):
+                </label>
+                <textarea
+                  rows={3}
+                  value={banReason}
+                  onChange={(e) => setBanReason(e.target.value)}
+                  placeholder="e.g. Terms of service violation, fraudulent payment, suspicious activity..."
+                  className="w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-neutral-900 text-xs focus:outline-none focus:border-black focus:bg-white resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setBanModalUser(null)}
+                className="flex-1 py-2.5 rounded-xl border border-neutral-200 text-neutral-700 text-xs font-semibold hover:bg-neutral-100 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onToggleUserStatus) {
+                    onToggleUserStatus(banModalUser.id, 'suspended', banReason.trim());
+                  }
+                  setBanModalUser(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-colors shadow-sm cursor-pointer"
+              >
+                Confirm & Ban Account
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Modal */}
+      {editingUser && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-neutral-200 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-5 animate-in fade-in duration-200">
+            <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-neutral-100 border border-neutral-200 text-black flex items-center justify-center">
+                  <Edit2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-black">Edit Account Details</h3>
+                  <span className="text-[10px] font-mono text-neutral-400">UID: {editingUser.id}</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingUser(null)}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-black hover:bg-neutral-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const updatedData = { name: editName.trim(), email: editEmail.trim(), phone: editPhone.trim() };
+                try {
+                  await fetch(`/api/console/users/${encodeURIComponent(editingUser.id)}/edit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updatedData),
+                  });
+                } catch (err) {
+                  console.error(err);
+                }
+
+                if (onEditUser) {
+                  onEditUser(editingUser.id, updatedData);
+                }
+
+                try {
+                  const stored = JSON.parse(localStorage.getItem('igho_platform_users') || '[]');
+                  const updated = stored.map((u: any) =>
+                    u.id === editingUser.id ? { ...u, ...updatedData } : u
+                  );
+                  localStorage.setItem('igho_platform_users', JSON.stringify(updated));
+                  window.dispatchEvent(new CustomEvent('igho_users_updated', { detail: updatedData }));
+                } catch (err) {
+                  console.error(err);
+                }
+
+                setEditSuccess(true);
+                setTimeout(() => {
+                  setEditSuccess(false);
+                  setEditingUser(null);
+                }, 1200);
+              }}
+              className="space-y-4 text-xs"
+            >
+              <div>
+                <label className="block text-[11px] font-bold text-neutral-700 uppercase tracking-wider mb-1">
+                  Full Name / Display Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-neutral-900 text-xs font-semibold focus:outline-none focus:border-black focus:bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-neutral-700 uppercase tracking-wider mb-1">
+                  Email Address *
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  className="w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-neutral-900 text-xs font-mono focus:outline-none focus:border-black focus:bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-neutral-700 uppercase tracking-wider mb-1">
+                  Phone Number
+                </label>
+                <input
+                  type="tel"
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  placeholder="+234 902 0886 597"
+                  className="w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-neutral-900 text-xs font-mono focus:outline-none focus:border-black focus:bg-white"
+                />
+              </div>
+
+              <div className="p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-[11px] text-neutral-500">
+                Organization: <strong className="text-black">{editingUser.organizationName || 'Platform General'}</strong> · Role: <strong className="text-black capitalize">{editingUser.role.replace('_', ' ')}</strong>
+              </div>
+
+              {editSuccess ? (
+                <div className="p-3 bg-emerald-50 text-emerald-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 animate-in fade-in">
+                  <Check className="w-4 h-4 text-emerald-600" /> Account Details Saved Successfully!
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingUser(null)}
+                    className="flex-1 py-2.5 rounded-xl border border-neutral-200 text-neutral-700 text-xs font-semibold hover:bg-neutral-100 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2.5 rounded-xl bg-black hover:bg-neutral-800 text-white text-xs font-bold transition-colors shadow-sm cursor-pointer"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              )}
+            </form>
           </div>
         </div>
       )}

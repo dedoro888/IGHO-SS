@@ -79,6 +79,49 @@ export const ConsoleSettingsView: React.FC<ConsoleSettingsViewProps> = ({
     }));
   };
 
+  const getSocialUrl = (platform: PlatformSocialHandle['platform']) => {
+    const found = currentSocialHandles.find((h) => h.platform === platform);
+    return found?.url || '';
+  };
+
+  const updateDirectSocial = (
+    platform: PlatformSocialHandle['platform'],
+    platformName: string,
+    defaultHandle: string,
+    url: string
+  ) => {
+    const existingIndex = currentSocialHandles.findIndex((h) => h.platform === platform);
+    let updated: PlatformSocialHandle[];
+    if (existingIndex >= 0) {
+      if (!url.trim()) {
+        updated = currentSocialHandles.filter((h) => h.platform !== platform);
+      } else {
+        updated = [...currentSocialHandles];
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          url: url.trim(),
+        };
+      }
+    } else if (url.trim()) {
+      updated = [
+        ...currentSocialHandles,
+        {
+          id: `soc-${platform}`,
+          platform,
+          platformName,
+          handle: defaultHandle,
+          url: url.trim(),
+        },
+      ];
+    } else {
+      return;
+    }
+    setFormState((prev) => ({
+      ...prev,
+      socialHandles: updated,
+    }));
+  };
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     onSaveSettings(formState);
@@ -199,6 +242,42 @@ export const ConsoleSettingsView: React.FC<ConsoleSettingsViewProps> = ({
                   setFormState({
                     ...formState,
                     general: { ...formState.general, companyInfo: e.target.value },
+                  })
+                }
+                className="w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-neutral-900 focus:outline-none focus:border-black focus:bg-white"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-neutral-600 uppercase mb-1">
+                Website Footer About / Mission Statement:
+              </label>
+              <textarea
+                rows={2}
+                value={formState.general.footerAboutText || ''}
+                placeholder="Building smart software that helps organisations operate better and grow faster."
+                onChange={(e) =>
+                  setFormState({
+                    ...formState,
+                    general: { ...formState.general, footerAboutText: e.target.value },
+                  })
+                }
+                className="w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-neutral-900 focus:outline-none focus:border-black focus:bg-white resize-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-neutral-600 uppercase mb-1">
+                Website Footer Copyright Notice:
+              </label>
+              <input
+                type="text"
+                value={formState.general.copyrightText || ''}
+                placeholder={`© ${new Date().getFullYear()} IGHO. All rights reserved.`}
+                onChange={(e) =>
+                  setFormState({
+                    ...formState,
+                    general: { ...formState.general, copyrightText: e.target.value },
                   })
                 }
                 className="w-full p-2.5 bg-neutral-50 border border-neutral-300 rounded-xl text-neutral-900 focus:outline-none focus:border-black focus:bg-white"
@@ -552,9 +631,68 @@ export const ConsoleSettingsView: React.FC<ConsoleSettingsViewProps> = ({
             </span>
           </div>
 
-          {/* Add Social Handle Input Bar */}
+          {/* Quick Core Social Links (Footer & Homepage) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-neutral-50 border border-neutral-200 rounded-xl p-3.5">
+            <div>
+              <label className="block text-[11px] font-bold text-neutral-700 uppercase mb-1 flex items-center justify-between">
+                <span>Facebook Page URL</span>
+                <span className="text-[10px] text-neutral-400 font-normal">Controls Homepage Footer</span>
+              </label>
+              <input
+                type="url"
+                value={getSocialUrl('facebook')}
+                placeholder="https://facebook.com/ighostay"
+                onChange={(e) => updateDirectSocial('facebook', 'Facebook', '@ighostay', e.target.value)}
+                className="w-full p-2 bg-white border border-neutral-300 rounded-lg text-xs text-neutral-900 font-mono focus:outline-none focus:border-black"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-neutral-700 uppercase mb-1 flex items-center justify-between">
+                <span>Instagram Profile URL</span>
+                <span className="text-[10px] text-neutral-400 font-normal">Controls Homepage Footer</span>
+              </label>
+              <input
+                type="url"
+                value={getSocialUrl('instagram')}
+                placeholder="https://instagram.com/ighostay"
+                onChange={(e) => updateDirectSocial('instagram', 'Instagram', '@ighostay', e.target.value)}
+                className="w-full p-2 bg-white border border-neutral-300 rounded-lg text-xs text-neutral-900 font-mono focus:outline-none focus:border-black"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-neutral-700 uppercase mb-1 flex items-center justify-between">
+                <span>X / Twitter URL</span>
+                <span className="text-[10px] text-neutral-400 font-normal">Controls Homepage Footer</span>
+              </label>
+              <input
+                type="url"
+                value={getSocialUrl('x')}
+                placeholder="https://x.com/ighostay"
+                onChange={(e) => updateDirectSocial('x', 'X (Twitter)', '@ighostay', e.target.value)}
+                className="w-full p-2 bg-white border border-neutral-300 rounded-lg text-xs text-neutral-900 font-mono focus:outline-none focus:border-black"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-neutral-700 uppercase mb-1 flex items-center justify-between">
+                <span>LinkedIn Company URL</span>
+                <span className="text-[10px] text-neutral-400 font-normal">Controls Homepage Footer</span>
+              </label>
+              <input
+                type="url"
+                value={getSocialUrl('linkedin')}
+                placeholder="https://linkedin.com/company/igho-stay"
+                onChange={(e) => updateDirectSocial('linkedin', 'LinkedIn', 'igho-stay', e.target.value)}
+                className="w-full p-2 bg-white border border-neutral-300 rounded-lg text-xs text-neutral-900 font-mono focus:outline-none focus:border-black"
+              />
+            </div>
+          </div>
+
+          {/* Add Additional Social Handle Input Bar */}
           <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3 space-y-3">
-            <span className="text-[11px] font-bold uppercase text-neutral-600">Add New Handle</span>
+            <span className="text-[11px] font-bold uppercase text-neutral-600">Add Custom Handle / Channel</span>
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
               <div>
                 <select

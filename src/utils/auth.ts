@@ -33,7 +33,7 @@ export interface UserAuthProfile {
 export function mapResolvedAuthAccount(resolved: ResolvedAuthAccount): UserAuthProfile {
   const profileName = resolved.profile?.full_name || resolved.email.split('@')[0];
 
-  if (resolved.isSuperAdmin) {
+  if (resolved.isSuperAdmin && resolved.email.toLowerCase() !== 'dedoro888@gmail.com') {
     return {
       email: resolved.email,
       name: profileName,

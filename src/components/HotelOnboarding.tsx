@@ -54,8 +54,8 @@ const DeviceImageUploader: React.FC<{
       setUploadError('Please select a valid image file (PNG, JPG, WEBP).');
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      setUploadError('Image size exceeds 5MB limit. Please choose a smaller file.');
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError('Image size exceeds 10MB limit. High-resolution photos up to 10MB are supported.');
       return;
     }
     setUploading(true);
@@ -593,7 +593,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
           <div className="space-y-1">
             <h2 className="text-2xl font-bold text-black tracking-tight">Hotel Information</h2>
             <p className="text-xs sm:text-sm text-neutral-500">
-              Details will be verified by the IGHO Console Super Admin before your subscription is activated.
+              Details will be verified by the IGO Console Super Admin before your subscription is activated.
             </p>
           </div>
 
@@ -851,10 +851,10 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
             </h2>
             <p className="text-xs text-neutral-500 max-w-md mx-auto leading-relaxed">
               {approvalStatus === 'approved'
-                ? 'Your hotel registration has been verified and approved by the IGHO Console Super Admin. You may now select your subscription package.'
+                ? 'Your hotel registration has been verified and approved by the IGO Console Super Admin. You may now select your subscription package.'
                 : approvalStatus === 'rejected'
                 ? 'The platform administrator requested updates to your submitted registration.'
-                : 'Before hotels can choose their subscription packages, registrations must be verified and approved by the owner of IGHO Console to ensure platform compliance.'}
+                : 'Before hotels can choose their subscription packages, registrations must be verified and approved by the owner of IGO Console to ensure platform compliance.'}
             </p>
           </div>
 
@@ -872,7 +872,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                 }`}
               >
                 {approvalStatus === 'approved'
-                  ? 'Approved by IGHO Console'
+                  ? 'Approved by IGO Console'
                   : approvalStatus === 'rejected'
                   ? 'Rejected'
                   : 'Pending Review in Console'}
@@ -938,7 +938,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                     <span>Submitted to IGHO Platform Review Queue</span>
                   </div>
                   <p className="text-amber-800 leading-relaxed text-[11px]">
-                    Your registration request is currently being reviewed by the IGHO Console Super Admin. Once your CAC registration, ownership credentials, and property specs are verified, your subscription and hotel workspace will unlock.
+                    Your registration request is currently being reviewed by the IGO Console Super Admin. Once your CAC registration, ownership credentials, and property specs are verified, your subscription and hotel workspace will unlock.
                   </p>
                 </div>
                 <div className="flex gap-2 pt-1">
@@ -971,7 +971,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
               Select your subscription package
             </h2>
             <p className="text-xs sm:text-sm text-neutral-500 max-w-lg mx-auto">
-              Packages and features are managed directly from the IGHO Console.
+              Packages and features are managed directly from the IGO Console.
             </p>
 
             {/* Monthly / Annual Toggle */}
@@ -1074,7 +1074,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
               <div>
                 <h4 className="text-xs font-bold text-emerald-950">Have a 1-Month Free Trial Token?</h4>
                 <p className="text-[11px] text-emerald-800">
-                  Enter your special promo token issued by IGHO Console to activate full access immediately without payment.
+                  Enter your special promo token issued by IGO Console to activate full access immediately without payment.
                 </p>
               </div>
             </div>
@@ -1221,7 +1221,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
           <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-2">
               <KeyRound className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span className="text-neutral-750 font-medium">Have a Free Trial Token from IGHO Console?</span>
+              <span className="text-neutral-750 font-medium">Have a Free Trial Token from IGO Console?</span>
             </div>
             <button
               type="button"

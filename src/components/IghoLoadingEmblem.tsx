@@ -17,7 +17,7 @@ export const IghoLoadingEmblem: React.FC<IghoLoadingEmblemProps> = ({
   size = 'md',
   className = '',
   inverted = false,
-  speed = 'normal',
+  speed = 'fast',
 }) => {
   const sizeMap = {
     xs: 'w-4 h-4',
@@ -27,7 +27,7 @@ export const IghoLoadingEmblem: React.FC<IghoLoadingEmblemProps> = ({
     xl: 'w-24 h-24',
   };
 
-  const duration = speed === 'fast' ? '1.0s' : speed === 'slow' ? '1.8s' : '1.35s';
+  const duration = speed === 'fast' ? '0.65s' : speed === 'slow' ? '1.2s' : '0.85s';
   const dim = sizeMap[size] || sizeMap.md;
 
   // Color mapping based on whether the emblem is base-dark or base-light
@@ -52,15 +52,15 @@ export const IghoLoadingEmblem: React.FC<IghoLoadingEmblemProps> = ({
           @keyframes igho-patch-${uid} {
             0% {
               opacity: 0;
-              transform: scale(0.96);
+              transform: scale(0.95);
             }
-            12%, 30% {
+            15%, 32% {
               opacity: 1;
               transform: scale(1);
             }
-            42%, 100% {
+            45%, 100% {
               opacity: 0;
-              transform: scale(0.96);
+              transform: scale(0.95);
             }
           }
 
@@ -68,10 +68,10 @@ export const IghoLoadingEmblem: React.FC<IghoLoadingEmblemProps> = ({
             0% {
               fill: ${baseFg};
             }
-            12%, 30% {
+            15%, 32% {
               fill: ${invertedFg};
             }
-            42%, 100% {
+            45%, 100% {
               fill: ${baseFg};
             }
           }
@@ -80,50 +80,57 @@ export const IghoLoadingEmblem: React.FC<IghoLoadingEmblemProps> = ({
             0% {
               stroke: ${baseFg};
             }
-            12%, 30% {
+            15%, 32% {
               stroke: ${invertedFg};
             }
-            42%, 100% {
+            45%, 100% {
               stroke: ${baseFg};
             }
           }
 
           .igho-p1-${uid} {
             transform-origin: 27.5px 27.5px;
-            animation: igho-patch-${uid} ${duration} cubic-bezier(0.4, 0, 0.2, 1) infinite 0s;
+            animation: igho-patch-${uid} ${duration} cubic-bezier(0.22, 1, 0.36, 1) infinite 0s;
           }
           .igho-g1-${uid} {
-            animation: igho-glyph-stroke-${uid} ${duration} cubic-bezier(0.4, 0, 0.2, 1) infinite 0s;
+            animation: igho-glyph-stroke-${uid} ${duration} cubic-bezier(0.22, 1, 0.36, 1) infinite 0s;
           }
 
           .igho-p2-${uid} {
             transform-origin: 72.5px 27.5px;
-            animation: igho-patch-${uid} ${duration} cubic-bezier(0.4, 0, 0.2, 1) infinite calc(${duration} * 0.25);
+            animation: igho-patch-${uid} ${duration} cubic-bezier(0.22, 1, 0.36, 1) infinite calc(${duration} * 0.25);
           }
           .igho-g2-${uid} {
-            animation: igho-glyph-fill-${uid} ${duration} cubic-bezier(0.4, 0, 0.2, 1) infinite calc(${duration} * 0.25);
+            animation: igho-glyph-fill-${uid} ${duration} cubic-bezier(0.22, 1, 0.36, 1) infinite calc(${duration} * 0.25);
           }
 
           .igho-p3-${uid} {
             transform-origin: 72.5px 72.5px;
-            animation: igho-patch-${uid} ${duration} cubic-bezier(0.4, 0, 0.2, 1) infinite calc(${duration} * 0.50);
+            animation: igho-patch-${uid} ${duration} cubic-bezier(0.22, 1, 0.36, 1) infinite calc(${duration} * 0.50);
           }
           .igho-g3-${uid} {
-            animation: igho-glyph-stroke-${uid} ${duration} cubic-bezier(0.4, 0, 0.2, 1) infinite calc(${duration} * 0.50);
+            animation: igho-glyph-stroke-${uid} ${duration} cubic-bezier(0.22, 1, 0.36, 1) infinite calc(${duration} * 0.50);
           }
 
           .igho-p4-${uid} {
             transform-origin: 27.5px 72.5px;
-            animation: igho-patch-${uid} ${duration} cubic-bezier(0.4, 0, 0.2, 1) infinite calc(${duration} * 0.75);
+            animation: igho-patch-${uid} ${duration} cubic-bezier(0.22, 1, 0.36, 1) infinite calc(${duration} * 0.75);
           }
           .igho-g4-${uid} {
-            animation: igho-glyph-fill-${uid} ${duration} cubic-bezier(0.4, 0, 0.2, 1) infinite calc(${duration} * 0.75);
+            animation: igho-glyph-fill-${uid} ${duration} cubic-bezier(0.22, 1, 0.36, 1) infinite calc(${duration} * 0.75);
           }
         `}</style>
       </defs>
 
       {/* Main Outer Emblem Badge */}
-      <rect width="100" height="100" rx="18" fill={baseBg} />
+      <rect
+        width="100"
+        height="100"
+        rx="20"
+        fill={baseBg}
+        stroke={inverted ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.14)'}
+        strokeWidth="1.5"
+      />
 
       {/* QUADRANT 1: "I" (Top-Left) */}
       <g>
