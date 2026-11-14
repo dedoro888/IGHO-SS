@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { PlatformUser, Hotel } from '../../types';
 import { BackButton } from '../BackButton';
+import { getAuthHeaders } from '../../utils/storageUpload';
 
 interface ConsoleUsersViewProps {
   users: PlatformUser[];
@@ -53,6 +54,7 @@ export const ConsoleUsersView: React.FC<ConsoleUsersViewProps> = ({
   const [editEmail, setEditEmail] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editSuccess, setEditSuccess] = useState(false);
+  const [editError, setEditError] = useState('');
   const [banModalUser, setBanModalUser] = useState<PlatformUser | null>(null);
   const [banReason, setBanReason] = useState('Administrative action via IGO Console');
 
@@ -498,13 +500,20 @@ export const ConsoleUsersView: React.FC<ConsoleUsersViewProps> = ({
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
+                setEditError('');
                 const updatedData = { name: editName.trim(), email: editEmail.trim(), phone: editPhone.trim() };
                 try {
-                  await fetch(`/api/console/users/${encodeURIComponent(editingUser.id)}/edit`, {
+                  const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+                  const res = await fetch(`/api/console/users/${encodeURIComponent(editingUser.id)}/edit`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers,
                     body: JSON.stringify(updatedData),
                   });
+                  if (!res.ok) {
+                    const errBody = await res.json().catch(() => ({}));
+                    setEditError(errBody.message || 'Failed to save user changes on server.');
+                    return;
+                  }
                 } catch (err) {
                   console.error(err);
                 }
@@ -574,6 +583,12 @@ export const ConsoleUsersView: React.FC<ConsoleUsersViewProps> = ({
               <div className="p-2.5 bg-neutral-50 border border-neutral-200 rounded-xl text-[11px] text-neutral-500">
                 Organization: <strong className="text-black">{editingUser.organizationName || 'Platform General'}</strong> · Role: <strong className="text-black capitalize">{editingUser.role.replace('_', ' ')}</strong>
               </div>
+
+              {editError && (
+                <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-semibold">
+                  {editError}
+                </div>
+              )}
 
               {editSuccess ? (
                 <div className="p-3 bg-emerald-50 text-emerald-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 animate-in fade-in">

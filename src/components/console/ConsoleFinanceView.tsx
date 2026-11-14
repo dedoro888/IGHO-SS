@@ -35,6 +35,8 @@ export const ConsoleFinanceView: React.FC<ConsoleFinanceViewProps> = ({
   // Refund Modal State
   const [refundingTxn, setRefundingTxn] = useState<PlatformTransaction | null>(null);
   const [refundReason, setRefundReason] = useState('');
+  const [refundError, setRefundError] = useState('');
+  const [exportMessage, setExportMessage] = useState('');
 
   // Financial calculations
   const successfulTxns = transactions.filter((t) => t.paymentStatus === 'successful');
@@ -65,12 +67,39 @@ export const ConsoleFinanceView: React.FC<ConsoleFinanceViewProps> = ({
   const handleConfirmRefund = () => {
     if (!refundingTxn) return;
     if (!refundReason.trim()) {
-      alert('Please specify a reason for this refund.');
+      setRefundError('Please specify a reason for this refund.');
       return;
     }
+    setRefundError('');
     onIssueRefund(refundingTxn.id, refundReason.trim());
     setRefundingTxn(null);
     setRefundReason('');
+  };
+
+  const handleExportLedgerCsv = () => {
+    if (transactions.length === 0) {
+      setExportMessage('No transactions available to export.');
+      setTimeout(() => setExportMessage(''), 3000);
+      return;
+    }
+    const headers = ['ID', 'Reference', 'Hotel', 'Amount', 'Method', 'Status', 'Timestamp'];
+    const rows = transactions.map((t) => [
+      t.id,
+      t.reference,
+      `"${(t.hotelName || '').replace(/"/g, '""')}"`,
+      t.amount,
+      t.paymentMethod,
+      t.paymentStatus,
+      t.timestamp,
+    ]);
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `igho_finance_ledger_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   return (
@@ -105,13 +134,19 @@ export const ConsoleFinanceView: React.FC<ConsoleFinanceViewProps> = ({
         </div>
 
         <button
-          onClick={() => alert('Exporting platform financial statement CSV...')}
-          className="px-4 py-2 rounded-xl border border-neutral-300 hover:bg-neutral-50 text-neutral-900 font-bold text-xs transition-colors flex items-center gap-1.5 shadow-2xs"
+          onClick={handleExportLedgerCsv}
+          className="px-4 py-2 rounded-xl border border-neutral-300 hover:bg-neutral-50 text-neutral-900 font-bold text-xs transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer"
         >
           <Download className="w-3.5 h-3.5" />
           <span>Export Ledger</span>
         </button>
       </div>
+
+      {exportMessage && (
+        <div className="p-3 bg-neutral-900 text-white rounded-xl text-xs font-semibold">
+          {exportMessage}
+        </div>
+      )}
 
       {/* Paystack Automated Settlement Engine Notice */}
       <div className="bg-white border border-neutral-200 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
@@ -285,20 +320,29 @@ export const ConsoleFinanceView: React.FC<ConsoleFinanceViewProps> = ({
             <input
               type="text"
               value={refundReason}
-              onChange={(e) => setRefundReason(e.target.value)}
+              onChange={(e) => {
+                setRefundReason(e.target.value);
+                if (refundError) setRefundError('');
+              }}
               placeholder="Reason for refund (required)..."
               className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3 py-2 text-xs text-neutral-900 focus:outline-none focus:border-black"
             />
+            {refundError && (
+              <p className="text-xs font-semibold text-rose-600">{refundError}</p>
+            )}
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
-                onClick={() => setRefundingTxn(null)}
+                onClick={() => {
+                  setRefundError('');
+                  setRefundingTxn(null);
+                }}
                 className="px-4 py-2 rounded-xl text-xs font-semibold text-neutral-700 hover:bg-neutral-100"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmRefund}
-                className="px-4 py-2 rounded-full bg-black text-white text-xs font-bold hover:bg-neutral-800 shadow-sm"
+                className="px-4 py-2 rounded-full bg-black text-white text-xs font-bold hover:bg-neutral-800 shadow-sm cursor-pointer"
               >
                 Confirm Refund
               </button>

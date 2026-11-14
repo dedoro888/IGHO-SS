@@ -521,7 +521,7 @@ export const ConsoleSettingsView: React.FC<ConsoleSettingsViewProps> = ({
                 className="rounded border-neutral-300 text-black focus:ring-0"
               />
               <label htmlFor="super2fa" className="text-neutral-700">
-                Enforce 2-Factor Authentication (2FA) for Super Admin (rumeobire@gmail.com)
+                Enforce 2-Factor Authentication (2FA) for Platform Super Admin
               </label>
             </div>
 

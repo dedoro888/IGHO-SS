@@ -3,8 +3,10 @@ import {
   Hotel,
   Room,
   Reservation,
+  PlanPrivileges,
 } from '../../types';
 import { IghoLoadingEmblem } from '../IghoLogo';
+import { uploadOrganizationFile, validateImageOrDocumentFile } from '../../utils/storageUpload';
 import {
   Plus,
   Zap,
@@ -46,6 +48,7 @@ import {
   Eye,
   Laptop,
   Bed,
+  Lock,
 } from 'lucide-react';
 
 const getAmenityIcon = (amenityName: string, className = "w-3.5 h-3.5 shrink-0") => {
@@ -138,6 +141,8 @@ interface RoomInventoryViewProps {
   hotel: Hotel;
   rooms: Room[];
   reservations: Reservation[];
+  privileges?: PlanPrivileges;
+  onRequestUpgrade?: () => void;
   onAddRoom: (room: Room) => void;
   onUpdateRoom: (room: Room) => void;
   onDeleteRoom?: (roomId: string) => void;
@@ -179,11 +184,33 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
   hotel,
   rooms,
   reservations,
+  privileges,
+  onRequestUpgrade,
   onAddRoom,
   onUpdateRoom,
   onDeleteRoom,
   onAddReservation,
 }) => {
+  const effectivePrivileges: PlanPrivileges = privileges || hotel.privileges || {
+    hasGuestPortal: hotel.hasGuestPortal !== false && hotel.subscriptionPlanId !== 'plan-starter-30k',
+    maxRooms: hotel.subscriptionPlanId === 'plan-complete-50k' ? 999 : 20,
+    maxStaff: hotel.subscriptionPlanId === 'plan-complete-50k' ? 100 : 5,
+    maxBranches: hotel.subscriptionPlanId === 'plan-complete-50k' ? 25 : 1,
+    storageQuotaGb: hotel.subscriptionPlanId === 'plan-complete-50k' ? 10 : 1,
+    frontDeskPMS: true,
+    housekeeping: true,
+    guestFolios: true,
+    nightAudit: true,
+    cashierShifts: true,
+    maintenanceBlocks: true,
+    customRoles: hotel.subscriptionPlanId === 'plan-complete-50k',
+    multiBranch: hotel.subscriptionPlanId === 'plan-complete-50k',
+    cautionDeposits: hotel.subscriptionPlanId === 'plan-complete-50k',
+    financialExports: hotel.subscriptionPlanId === 'plan-complete-50k',
+    publicDirectoryListing: true,
+    prioritySupport: hotel.subscriptionPlanId === 'plan-complete-50k',
+  };
+  const isRoomQuotaReached = effectivePrivileges.maxRooms < 900 && rooms.length >= effectivePrivileges.maxRooms;
   // Filter and search states
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | Room['status']>('all');
@@ -228,6 +255,7 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
   // Photos Room state
   const [tempPhotos, setTempPhotos] = useState<string[]>([]);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [photoUploadError, setPhotoUploadError] = useState<string | null>(null);
 
   // Quick Book wizard state (4 steps)
   const [qbStep, setQbStep] = useState<1 | 2 | 3 | 4>(1);
@@ -404,32 +432,33 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
   };
 
   // Handle Photo Upload / Preset add (Max 6 photos per room, max 10 MB per image)
-  const handleAddPhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAddPhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    const MAX_PHOTO_SIZE = 10 * 1024 * 1024; // 10 MB
+    setPhotoUploadError(null);
     const MAX_ROOM_PHOTOS = 6;
 
     const oversized: string[] = [];
     const validFiles: File[] = [];
 
     Array.from(files).forEach((file: File) => {
-      if (file.size > MAX_PHOTO_SIZE) {
-        oversized.push(`${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB)`);
+      const err = validateImageOrDocumentFile(file, { allowPdf: false });
+      if (err) {
+        oversized.push(`${file.name}: ${err}`);
       } else {
         validFiles.push(file);
       }
     });
 
     if (oversized.length > 0) {
-      alert(`The following image(s) exceed the 10 MB limit:\n${oversized.join('\n')}\nPlease upload high-resolution images up to 10 MB.`);
+      setPhotoUploadError(oversized.join(' • '));
     }
 
     if (validFiles.length === 0) return;
 
     if (tempPhotos.length >= MAX_ROOM_PHOTOS) {
-      alert(`Rooms can have at most ${MAX_ROOM_PHOTOS} photos. Please remove an existing photo first.`);
+      setPhotoUploadError(`Rooms can have at most ${MAX_ROOM_PHOTOS} photos. Please remove an existing photo first.`);
       return;
     }
 
@@ -437,16 +466,22 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
     const filesToUpload = validFiles.slice(0, availableSlots);
 
     if (validFiles.length > availableSlots) {
-      alert(`Only ${availableSlots} more photo(s) can be added (maximum 6 photos per room).`);
+      setPhotoUploadError(`Only ${availableSlots} more photo(s) can be added (maximum ${MAX_ROOM_PHOTOS} photos per room).`);
     }
 
     setIsUploadingPhoto(true);
-    const newUrls: string[] = filesToUpload.map((file) => URL.createObjectURL(file));
-
-    setTimeout(() => {
-      setTempPhotos((prev) => [...prev, ...newUrls].slice(0, MAX_ROOM_PHOTOS));
+    try {
+      const uploadedUrls: string[] = [];
+      for (const file of filesToUpload) {
+        const res = await uploadOrganizationFile(hotel.id, file, 'room_galleries', 'Staff', { allowPdf: false });
+        uploadedUrls.push(res.url);
+      }
+      setTempPhotos((prev) => [...prev, ...uploadedUrls].slice(0, MAX_ROOM_PHOTOS));
+    } catch (err: any) {
+      setPhotoUploadError(err?.message || 'Failed to upload one or more room photos.');
+    } finally {
       setIsUploadingPhoto(false);
-    }, 150);
+    }
   };
 
   const handleAddPresetPhotos = () => {
@@ -516,6 +551,11 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
   const handleCreateNewRoom = (e: React.FormEvent) => {
     e.preventDefault();
     setAddRoomError(null);
+
+    if (isRoomQuotaReached) {
+      setAddRoomError(`Your current plan supports up to ${effectivePrivileges.maxRooms} rooms. Upgrade to Professional to add more rooms.`);
+      return;
+    }
 
     const trimmedNumber = newRoomNumber.trim();
     if (!trimmedNumber) {
@@ -657,7 +697,10 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-mono font-bold px-3 py-1.5 rounded-full bg-neutral-100 border border-neutral-200 text-neutral-700">
+            {rooms.length} / {effectivePrivileges.maxRooms >= 900 ? 'Unlimited' : effectivePrivileges.maxRooms} rooms
+          </span>
           <button
             id="quick-book-button"
             onClick={handleStartQuickBook}
@@ -666,17 +709,28 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
             <Zap className="w-3.5 h-3.5 fill-current" />
             <span>Quick Book</span>
           </button>
-          <button
-            id="add-room-button"
-            onClick={() => {
-              setAddRoomError(null);
-              setShowAddRoomModal(true);
-            }}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-black text-white text-xs font-bold hover:bg-neutral-800 transition-all shadow-xs"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Add Room</span>
-          </button>
+          {isRoomQuotaReached ? (
+            <button
+              id="upgrade-room-quota-button"
+              onClick={() => onRequestUpgrade?.()}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-amber-100 border border-amber-300 text-amber-950 text-xs font-bold hover:bg-amber-200 transition-all shadow-xs"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>Upgrade for More Rooms</span>
+            </button>
+          ) : (
+            <button
+              id="add-room-button"
+              onClick={() => {
+                setAddRoomError(null);
+                setShowAddRoomModal(true);
+              }}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-black text-white text-xs font-bold hover:bg-neutral-800 transition-all shadow-xs"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Room</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1273,23 +1327,39 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
                         accept="image/*"
                         multiple
                         className="hidden"
-                        onChange={(e) => {
+                        onChange={async (e) => {
                           const files = e.target.files;
                           if (!files || files.length === 0) return;
-                          const MAX_SIZE = 10 * 1024 * 1024;
-                          const oversized: string[] = [];
-                          const validUrls: string[] = [];
+                          setAddRoomError(null);
+                          const errors: string[] = [];
+                          const availableSlots = Math.max(0, 6 - newRoomPhotos.length);
+                          const validFiles: File[] = [];
                           Array.from(files).forEach((file: File) => {
-                            if (file.size > MAX_SIZE) {
-                              oversized.push(`${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB)`);
+                            const err = validateImageOrDocumentFile(file, { allowPdf: false });
+                            if (err) {
+                              errors.push(`${file.name}: ${err}`);
                             } else {
-                              validUrls.push(URL.createObjectURL(file));
+                              validFiles.push(file);
                             }
                           });
-                          if (oversized.length > 0) {
-                            alert(`The following images exceed the 10 MB limit:\n${oversized.join('\n')}\nPlease upload high-resolution images up to 10 MB each.`);
+                          if (errors.length > 0) {
+                            setAddRoomError(errors.join(' • '));
                           }
-                          setNewRoomPhotos((prev) => [...prev, ...validUrls].slice(0, 6));
+                          const batch = validFiles.slice(0, availableSlots);
+                          if (batch.length === 0) return;
+                          setIsUploadingPhoto(true);
+                          try {
+                            const uploadedUrls: string[] = [];
+                            for (const file of batch) {
+                              const res = await uploadOrganizationFile(hotel.id, file, 'room_galleries', 'Staff', { allowPdf: false });
+                              uploadedUrls.push(res.url);
+                            }
+                            setNewRoomPhotos((prev) => [...prev, ...uploadedUrls].slice(0, 6));
+                          } catch (err: any) {
+                            setAddRoomError(err?.message || 'Failed to upload room image.');
+                          } finally {
+                            setIsUploadingPhoto(false);
+                          }
                         }}
                       />
                     </label>
@@ -1577,6 +1647,13 @@ export const RoomInventoryView: React.FC<RoomInventoryViewProps> = ({
                 Upload up to 6 high-resolution room photos (max 10 MB each). First photo is used as the cover.
               </p>
             </div>
+
+            {photoUploadError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start justify-between gap-2">
+                <span>{photoUploadError}</span>
+                <button type="button" onClick={() => setPhotoUploadError(null)} className="text-rose-600 hover:text-rose-900 font-bold">✕</button>
+              </div>
+            )}
 
             {isUploadingPhoto && (
               <div className="flex items-center justify-center py-4">

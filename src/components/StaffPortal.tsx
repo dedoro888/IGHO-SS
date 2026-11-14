@@ -79,6 +79,8 @@ import {
   GuestReport,
   SubscriptionPlan,
   PlatformSettings,
+  PlanPrivileges,
+  HotelSettings,
 } from '../types';
 import {
   hasPermission,
@@ -104,6 +106,48 @@ import { CashierShiftView } from './hotel/CashierShiftView';
 import { FolioBillingView } from './hotel/FolioBillingView';
 import { MaintenanceBlocksView } from './hotel/MaintenanceBlocksView';
 import { EmergencyDowntimeView } from './hotel/EmergencyDowntimeView';
+import { formatHotelId } from '../utils/hotelId';
+import { uploadOrganizationFile, validateImageOrDocumentFile, getAuthHeaders } from '../utils/storageUpload';
+
+const DEFAULT_STARTER_PRIVILEGES: PlanPrivileges = {
+  hasGuestPortal: false,
+  maxRooms: 20,
+  maxStaff: 5,
+  maxBranches: 1,
+  storageQuotaGb: 1,
+  frontDeskPMS: true,
+  housekeeping: true,
+  guestFolios: true,
+  nightAudit: true,
+  cashierShifts: true,
+  maintenanceBlocks: true,
+  customRoles: false,
+  multiBranch: false,
+  cautionDeposits: false,
+  financialExports: false,
+  publicDirectoryListing: true,
+  prioritySupport: false,
+};
+
+const DEFAULT_PROFESSIONAL_PRIVILEGES: PlanPrivileges = {
+  hasGuestPortal: true,
+  maxRooms: 999,
+  maxStaff: 100,
+  maxBranches: 25,
+  storageQuotaGb: 10,
+  frontDeskPMS: true,
+  housekeeping: true,
+  guestFolios: true,
+  nightAudit: true,
+  cashierShifts: true,
+  maintenanceBlocks: true,
+  customRoles: true,
+  multiBranch: true,
+  cautionDeposits: true,
+  financialExports: true,
+  publicDirectoryListing: true,
+  prioritySupport: true,
+};
 
 interface StaffPortalProps {
   hotel: Hotel;
@@ -134,7 +178,11 @@ interface StaffPortalProps {
   onDeleteCustomRole?: (roleId: string) => void;
   onUpdateBankInfo?: (bankInfo: { bankName: string; accountName: string; accountNumber: string }) => void;
   onUpdateReportStatus?: (reportId: string, status: GuestReport['status'], feedback?: string) => void;
-  onUpgradeSubscription?: (planId: string, billingCycle: 'monthly' | 'annual') => void;
+  onUpgradeSubscription?: (
+    planId: string,
+    billingCycle: 'monthly' | 'annual' | '5year_contract',
+    verificationResult?: any
+  ) => void;
   onAddBranch?: (branch: HotelBranch) => void;
   currentUserEmail?: string;
   onUpdateHotel?: (updatedHotel: Hotel) => void;
@@ -256,22 +304,84 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
     } catch {}
   }, [sidebarCollapsed]);
 
-  // Subscription plan feature gating: ₦50,000 Complete Plan includes Guest Portal; ₦30,000 Standard Plan does not
-  const hasGuestPortal =
-    hotel.hasGuestPortal !== false &&
-    hotel.subscriptionPlanId !== 'plan-starter-30k' &&
-    hotel.subscriptionPlanId !== 'plan-1' &&
-    hotel.packageType !== 'management';
+  // Authoritative plan entitlements & live privilege adaptation
+  const [effectiveEntitlements, setEffectiveEntitlements] = useState<{
+    planId?: string;
+    planName?: string;
+    privileges?: PlanPrivileges;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!hotel?.id) return;
+    let active = true;
+    fetch(`/api/hotels/${encodeURIComponent(hotel.id)}/entitlements`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (active && data?.success) {
+          setEffectiveEntitlements(data);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [hotel?.id, hotel?.subscriptionPlanId, hotel?.subscriptionStatus, hotel?.hasGuestPortal]);
+
+  const effectivePrivileges: PlanPrivileges = useMemo(() => {
+    const isProFallback =
+      hotel.hasGuestPortal === true ||
+      hotel.subscriptionPlanId === 'plan-complete-50k' ||
+      hotel.packageType === 'complete';
+    const base = isProFallback ? DEFAULT_PROFESSIONAL_PRIVILEGES : DEFAULT_STARTER_PRIVILEGES;
+    return {
+      ...base,
+      ...(effectiveEntitlements?.privileges || {}),
+      ...(hotel.privileges || {}),
+    };
+  }, [hotel.hasGuestPortal, hotel.subscriptionPlanId, hotel.packageType, hotel.privileges, effectiveEntitlements]);
+
+  const hasGuestPortal = Boolean(effectivePrivileges.hasGuestPortal);
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
 
-  // User Profile States
-  const [profileName, setProfileName] = useState<string>('Obi Chidi');
-  const [profileEmail, setProfileEmail] = useState<string>('owner@lavahotel.com');
+  // User Profile States (hydrated from authoritative backend /api/users/profile)
+  const resolvedProfileEmail = (
+    currentUserEmail ||
+    currentStaff?.email ||
+    hotel.ownerEmail ||
+    'owner@lavahotel.com'
+  ).trim().toLowerCase();
+  const [profileName, setProfileName] = useState<string>(
+    currentStaff?.name || hotel.ownerName || 'Obi Chidi'
+  );
+  const [profileEmail, setProfileEmail] = useState<string>(resolvedProfileEmail);
   const [profilePassword, setProfilePassword] = useState<string>('••••••••');
-  const [profilePicture, setProfilePicture] = useState<string>('');
+  const [profilePicture, setProfilePicture] = useState<string>(currentStaff?.avatarUrl || '');
   const [editProfileOpen, setEditProfileOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!resolvedProfileEmail) return;
+    let active = true;
+    (async () => {
+      try {
+        const headers = await getAuthHeaders();
+        const res = await fetch(`/api/users/profile?email=${encodeURIComponent(resolvedProfileEmail)}`, {
+          headers,
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (active && data.success && data.profile) {
+          if (data.profile.fullName) setProfileName(data.profile.fullName);
+          if (data.profile.email) setProfileEmail(data.profile.email);
+          if (data.profile.avatarUrl !== undefined) setProfilePicture(data.profile.avatarUrl || '');
+        }
+      } catch {}
+    })();
+    return () => {
+      active = false;
+    };
+  }, [resolvedProfileEmail]);
 
   // Live Organisation Storage Quota for Sidebar Widget
   const [sidebarStorageInfo, setSidebarStorageInfo] = useState<{
@@ -280,7 +390,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
     pct: number;
   }>({
     usedMb: 24.55,
-    quotaGb: hotel.packageType === 'complete' ? 10 : 1,
+    quotaGb: effectivePrivileges.storageQuotaGb || (hotel.packageType === 'complete' ? 10 : 1),
     pct: 2.4,
   });
 
@@ -334,6 +444,17 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   const [staffDateCheckOut, setStaffDateCheckOut] = useState<string>('');
   const [showStaffDateEdit, setShowStaffDateEdit] = useState<boolean>(false);
   const [managementToast, setManagementToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [confirmCancelBooking, setConfirmCancelBooking] = useState<boolean>(false);
+  const [brandingUploadError, setBrandingUploadError] = useState<string | null>(null);
+  const [isUploadingLogo, setIsUploadingLogo] = useState<boolean>(false);
+  const [isUploadingCover, setIsUploadingCover] = useState<boolean>(false);
+  const [hotelDescriptionInput, setHotelDescriptionInput] = useState<string>(hotel.description || '');
+  const [hotelSaveStatus, setHotelSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [hotelSaveMessage, setHotelSaveMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setHotelDescriptionInput(hotel.description || '');
+  }, [hotel.id, hotel.description]);
 
   useEffect(() => {
     if (managingReservation) {
@@ -359,6 +480,10 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   const [hotelBranches, setHotelBranches] = useState<HotelBranch[]>(hotel.branches || []);
   const [localHousekeeping, setLocalHousekeeping] = useState<HousekeepingTask[]>(housekeeping);
   const [localReservations, setLocalReservations] = useState<Reservation[]>(reservations);
+
+  useEffect(() => {
+    setHotelBranches(hotel.branches || []);
+  }, [hotel.id, hotel.branches]);
 
   useEffect(() => {
     setLocalStaffList(staff);
@@ -564,13 +689,71 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
   const [newResSelectedRoom, setNewResSelectedRoom] = useState(rooms[0]?.number || '101');
   const [newResSource, setNewResSource] = useState('Front Desk');
 
-  // Settings Toggles (matches video 04:19)
-  const [onlineBookings, setOnlineBookings] = useState(true);
-  const [allowRegistration, setAllowRegistration] = useState(true);
-  const [showPrices, setShowPrices] = useState(true);
-  const [showAvailability, setShowAvailability] = useState(true);
-  const [requireIdVerification, setRequireIdVerification] = useState(false);
+  // Settings Toggles (hydrated and persisted via hotel.settings)
+  const [onlineBookings, setOnlineBookings] = useState(hotel.settings?.onlineBookings ?? true);
+  const [allowRegistration, setAllowRegistration] = useState(hotel.settings?.allowRegistration ?? true);
+  const [showPrices, setShowPrices] = useState(hotel.settings?.showPrices ?? true);
+  const [showAvailability, setShowAvailability] = useState(hotel.settings?.showAvailability ?? true);
+  const [requireIdVerification, setRequireIdVerification] = useState(hotel.settings?.requireIdVerification ?? false);
   const [copiedPortalUrl, setCopiedPortalUrl] = useState(false);
+
+  useEffect(() => {
+    if (hotel.settings) {
+      setOnlineBookings(hotel.settings.onlineBookings ?? true);
+      setAllowRegistration(hotel.settings.allowRegistration ?? true);
+      setShowPrices(hotel.settings.showPrices ?? true);
+      setShowAvailability(hotel.settings.showAvailability ?? true);
+      setRequireIdVerification(hotel.settings.requireIdVerification ?? false);
+    }
+  }, [hotel.id, hotel.settings]);
+
+  const persistHotelProfilePatch = async (
+    patch: Record<string, any>,
+    successMsg?: string
+  ): Promise<boolean> => {
+    if (!hotel?.id) return false;
+    setHotelSaveStatus('saving');
+    setHotelSaveMessage(null);
+    setBrandingUploadError(null);
+    try {
+      const headers = await getAuthHeaders({
+        'Content-Type': 'application/json',
+        'x-igho-user-email': profileEmail || resolvedProfileEmail,
+      });
+      const res = await fetch(`/api/hotels/${encodeURIComponent(hotel.id)}/profile`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify(patch),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        const errMsg = data?.message || 'Unable to save hotel changes to server.';
+        setHotelSaveStatus('error');
+        setHotelSaveMessage(errMsg);
+        setBrandingUploadError(errMsg);
+        setManagementToast({ type: 'error', message: errMsg });
+        setTimeout(() => setManagementToast(null), 4000);
+        return false;
+      }
+      if (data.hotel && onUpdateHotel) {
+        onUpdateHotel(data.hotel);
+      }
+      setHotelSaveStatus('saved');
+      if (successMsg) {
+        setHotelSaveMessage(successMsg);
+        setManagementToast({ type: 'success', message: successMsg });
+        setTimeout(() => setManagementToast(null), 3500);
+      }
+      setTimeout(() => setHotelSaveStatus((prev) => (prev === 'saved' ? 'idle' : prev)), 2500);
+      return true;
+    } catch (err: any) {
+      const errMsg = err?.message || 'Network error while saving hotel profile.';
+      setHotelSaveStatus('error');
+      setHotelSaveMessage(errMsg);
+      setBrandingUploadError(errMsg);
+      return false;
+    }
+  };
 
   // Filter in reservations
   const [resFilter, setResFilter] = useState<
@@ -685,27 +868,40 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
     }
   };
 
-  // Handle adding branch
-  const handleCreateBranch = (e: React.FormEvent) => {
+  // Handle adding branch (plan-gated & backend-persisted)
+  const handleCreateBranch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newBranchName.trim()) return;
+    if (!effectivePrivileges.multiBranch || hotelBranches.length >= effectivePrivileges.maxBranches) {
+      setShowAddBranchModal(false);
+      setManagementToast({
+        type: 'error',
+        message: 'Multi-branch operations require the IGHO Stay Professional Plan.',
+      });
+      setTimeout(() => setManagementToast(null), 4500);
+      return;
+    }
     const branch: HotelBranch = {
       id: `branch-${Date.now()}`,
       hotelId: hotel.id,
-      name: newBranchName,
-      address: newBranchAddress || hotel.address,
-      code: newBranchCode || newBranchName.substring(0, 3).toUpperCase(),
+      name: newBranchName.trim(),
+      address: (newBranchAddress || hotel.address || '').trim(),
+      code: (newBranchCode || newBranchName.substring(0, 3)).toUpperCase(),
       isActive: true,
       roomCount: 0,
     };
-    setHotelBranches((prev) => [...prev, branch]);
-    if (onAddBranch) {
-      onAddBranch(branch);
+    const nextBranches = [...hotelBranches, branch];
+    const ok = await persistHotelProfilePatch({ branches: nextBranches }, `Branch "${branch.name}" saved.`);
+    if (ok) {
+      setHotelBranches(nextBranches);
+      if (onAddBranch) {
+        onAddBranch(branch);
+      }
+      setNewBranchName('');
+      setNewBranchCode('');
+      setNewBranchAddress('');
+      setShowAddBranchModal(false);
     }
-    setNewBranchName('');
-    setNewBranchCode('');
-    setNewBranchAddress('');
-    setShowAddBranchModal(false);
   };
 
   // Tab Permission Mapping
@@ -1019,10 +1215,10 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
             e.stopPropagation();
           }
         }}
-        className={`hidden md:flex ml-4 my-4 flex-col justify-between gap-3 shrink-0 bg-transparent shadow-none border-none px-0 z-30 self-start ${
+        className={`hidden md:flex ml-4 my-4 flex-col gap-3 shrink-0 bg-transparent shadow-none border-none px-0 z-30 self-start ${
           sidebarCollapsed
             ? 'sticky top-4 h-fit overflow-visible'
-            : 'sticky top-4 h-[calc(100vh-2rem)] overflow-hidden'
+            : 'sticky top-4 h-[calc(100vh-2rem)]'
         }`}
       >
         {/* SECTION 1: HEADER BRANDING PILL */}
@@ -1057,7 +1253,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
 
         {/* SECTION 2: NAVIGATION OPERATIONS LIST */}
         <div className={`flex flex-col flex-1 min-h-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-3 space-y-1 ${
-          sidebarCollapsed ? 'overflow-visible' : 'overflow-y-auto max-h-[calc(100vh-16rem)] pr-1.5 scrollbar-thin scrollbar-thumb-neutral-200 hover:scrollbar-thumb-neutral-300'
+          sidebarCollapsed ? 'overflow-visible' : 'overflow-y-auto pr-1.5 pb-4 scrollbar-thin scrollbar-thumb-neutral-200 hover:scrollbar-thumb-neutral-300'
         }`}>
           <div className={`text-[10px] font-bold text-neutral-400 uppercase tracking-widest font-mono flex items-center justify-center shrink-0 h-4 mb-0.5 ${sidebarCollapsed ? 'px-2' : 'pl-3'}`}>
             {sidebarCollapsed ? (
@@ -1358,25 +1554,27 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                         </div>
                       </div>
 
-                      <div className="px-4 py-2 border-b border-neutral-100 bg-neutral-50">
-                        <label className="text-[9px] text-neutral-400 font-bold uppercase tracking-wider block mb-1">
-                          Test Another Role:
-                        </label>
-                        <select
-                          value={selectedRolePersona}
-                          onChange={(e) => {
-                            setSelectedRolePersona(e.target.value as StaffRole);
-                            setProfileDropdownOpen(false);
-                          }}
-                          className="w-full bg-white border border-neutral-200 rounded-full text-[11px] py-1 px-2.5 focus:outline-none cursor-pointer text-neutral-800 font-semibold"
-                        >
-                          <option value="hotel_owner">Hotel Owner (Full Access)</option>
-                          <option value="manager">Manager</option>
-                          <option value="receptionist">Receptionist</option>
-                          <option value="finance">Finance</option>
-                          <option value="housekeeping">Housekeeping</option>
-                        </select>
-                      </div>
+                      {(!currentStaff || currentStaff.role === 'hotel_owner') && (
+                        <div className="px-4 py-2 border-b border-neutral-100 bg-neutral-50">
+                          <label className="text-[9px] text-neutral-400 font-bold uppercase tracking-wider block mb-1">
+                            Test Another Role:
+                          </label>
+                          <select
+                            value={selectedRolePersona}
+                            onChange={(e) => {
+                              setSelectedRolePersona(e.target.value as StaffRole);
+                              setProfileDropdownOpen(false);
+                            }}
+                            className="w-full bg-white border border-neutral-200 rounded-full text-[11px] py-1 px-2.5 focus:outline-none cursor-pointer text-neutral-800 font-semibold"
+                          >
+                            <option value="hotel_owner">Hotel Owner (Full Access)</option>
+                            <option value="manager">Manager</option>
+                            <option value="receptionist">Receptionist</option>
+                            <option value="finance">Finance</option>
+                            <option value="housekeeping">Housekeeping</option>
+                          </select>
+                        </div>
+                      )}
 
                       <div className="py-1">
                         {isSuperAdmin && (
@@ -2043,6 +2241,8 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               hotel={hotel}
               rooms={rooms}
               reservations={localReservations}
+              privileges={effectivePrivileges}
+              onRequestUpgrade={() => setActiveTab('subscriptions')}
               onAddRoom={onAddRoom}
               onUpdateRoom={onUpdateRoom}
               onDeleteRoom={onDeleteRoom}
@@ -2226,7 +2426,12 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
             <HotelBillingAndPaymentsView
               hotel={hotel}
               reservations={localReservations}
-              onUpdateBankInfo={onUpdateBankInfo}
+              privileges={effectivePrivileges}
+              onRequestUpgrade={() => setActiveTab('subscriptions')}
+              onUpdateBankInfo={(bankInfo) => {
+                if (onUpdateBankInfo) onUpdateBankInfo(bankInfo);
+                persistHotelProfilePatch(bankInfo, 'Bank deposit details saved.');
+              }}
               onVerifyPayment={handleVerifyReservationPayment}
               onProcessRefund={handleProcessRefund}
               onUpdateReservationStatus={onUpdateReservationStatus}
@@ -2242,6 +2447,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               plans={plans}
               payoutSettings={payoutSettings}
               onUpgrade={onUpgradeSubscription}
+              onNavigate={onNavigate}
             />
           </main>
         )}
@@ -2340,13 +2546,23 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                     ))}
                   </div>
 
-                  <button
-                    onClick={() => setShowReportPrintModal(true)}
-                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-black text-white text-xs font-bold hover:bg-neutral-800 shadow-2xs"
-                  >
-                    <Printer className="w-3.5 h-3.5" />
-                    <span>Print / Export</span>
-                  </button>
+                  {effectivePrivileges.financialExports ? (
+                    <button
+                      onClick={() => setShowReportPrintModal(true)}
+                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-black text-white text-xs font-bold hover:bg-neutral-800 shadow-2xs"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span>Print / Export</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setActiveTab('subscriptions')}
+                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-amber-100 border border-amber-300 text-amber-950 text-xs font-bold hover:bg-amber-200 shadow-2xs"
+                    >
+                      <Lock className="w-3.5 h-3.5" />
+                      <span>Upgrade to Export</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -2496,6 +2712,8 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               staff={localStaffList}
               invitations={localInvitations}
               customRoles={customRoles}
+              privileges={effectivePrivileges}
+              onRequestUpgrade={() => setActiveTab('subscriptions')}
               onInviteStaff={(newInvite) => {
                 handleInviteStaff(newInvite);
               }}
@@ -2579,7 +2797,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
           <main className="p-4 sm:p-6 space-y-6 max-w-4xl pb-16">
             <div className="space-y-0.5">
               <h1 className="text-xl sm:text-2xl font-black text-black">Settings</h1>
-              <p className="text-xs text-neutral-400 font-mono">Hotel ID: HTL-LAVA-005</p>
+              <p className="text-xs text-neutral-400 font-mono">Hotel ID: {formatHotelId(hotel.id)}</p>
             </div>
 
             {/* Customer Portal Card (Enabled only on ₦50,000 Complete Plan) */}
@@ -2657,30 +2875,35 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               </div>
             )}
 
-            {/* Feature Toggles (exact switches from video 04:19) */}
+            {/* Feature Toggles (persisted to backend hotel settings) */}
             <div className="bg-white border border-neutral-200 rounded-2xl p-5 space-y-4 shadow-2xs">
               {[
                 {
+                  key: 'onlineBookings' as keyof HotelSettings,
                   label: 'Allow online bookings',
                   val: onlineBookings,
                   set: setOnlineBookings,
                 },
                 {
+                  key: 'allowRegistration' as keyof HotelSettings,
                   label: 'Allow customer registration',
                   val: allowRegistration,
                   set: setAllowRegistration,
                 },
                 {
+                  key: 'showPrices' as keyof HotelSettings,
                   label: 'Show room prices',
                   val: showPrices,
                   set: setShowPrices,
                 },
                 {
+                  key: 'showAvailability' as keyof HotelSettings,
                   label: 'Show room availability',
                   val: showAvailability,
                   set: setShowAvailability,
                 },
                 {
+                  key: 'requireIdVerification' as keyof HotelSettings,
                   label: 'Require customer ID verification',
                   val: requireIdVerification,
                   set: setRequireIdVerification,
@@ -2691,7 +2914,19 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                   <button
                     type="button"
                     disabled={!can('settings.edit')}
-                    onClick={() => toggle.set(!toggle.val)}
+                    onClick={() => {
+                      const nextVal = !toggle.val;
+                      toggle.set(nextVal);
+                      const nextSettings: HotelSettings = {
+                        onlineBookings,
+                        allowRegistration,
+                        showPrices,
+                        showAvailability,
+                        requireIdVerification,
+                        [toggle.key]: nextVal,
+                      };
+                      persistHotelProfilePatch({ settings: nextSettings });
+                    }}
                     className={`w-11 h-6 rounded-full transition-colors relative flex items-center px-0.5 ${
                       toggle.val ? 'bg-black' : 'bg-neutral-300'
                     } ${!can('settings.edit') ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -2706,23 +2941,33 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               ))}
             </div>
 
-            {/* HOTEL BRANCHES (Requirement 31) */}
+            {/* HOTEL BRANCHES (Plan-gated & persisted) */}
             <div className="bg-white border border-neutral-200 rounded-2xl p-5 space-y-4 shadow-2xs">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-bold text-sm text-black">Hotel Branches</h3>
                   <p className="text-xs text-neutral-500">
-                    Manage multi-branch operations for {hotel.name}
+                    Manage multi-branch operations for {hotel.name} ({hotelBranches.length} / {effectivePrivileges.maxBranches} branches)
                   </p>
                 </div>
                 {can('settings.edit') && (
-                  <button
-                    onClick={() => setShowAddBranchModal(true)}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-black text-white text-xs font-bold hover:bg-neutral-800 shadow-sm"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Add Branch</span>
-                  </button>
+                  effectivePrivileges.multiBranch ? (
+                    <button
+                      onClick={() => setShowAddBranchModal(true)}
+                      className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-black text-white text-xs font-bold hover:bg-neutral-800 shadow-sm"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Branch</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setActiveTab('subscriptions')}
+                      className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-amber-100 border border-amber-300 text-amber-950 text-xs font-bold hover:bg-amber-200 shadow-sm"
+                    >
+                      <Lock className="w-3.5 h-3.5" />
+                      <span>Upgrade for Multi-Branch</span>
+                    </button>
+                  )
                 )}
               </div>
 
@@ -2747,14 +2992,26 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               </div>
             </div>
 
-            {/* Branding Preview */}
+            {/* Branding & Public Profile (Persisted via PATCH /api/hotels/:id/profile) */}
             <div className="bg-white border border-neutral-200 rounded-xl p-5 space-y-4 shadow-2xs">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="font-bold text-sm text-black">Branding</h3>
-                  <p className="text-xs text-neutral-500">Your logo appears in the dashboard sidebar and on your guest booking page.</p>
+                  <h3 className="font-bold text-sm text-black">Branding & Hotel Profile</h3>
+                  <p className="text-xs text-neutral-500">Your logo, cover banner, and description appear in the hotel directory and guest booking page.</p>
                 </div>
+                {hotelSaveStatus === 'saved' && (
+                  <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+                    Saved to Database
+                  </span>
+                )}
               </div>
+
+              {brandingUploadError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center justify-between gap-2">
+                  <span>{brandingUploadError}</span>
+                  <button type="button" onClick={() => setBrandingUploadError(null)} className="font-bold text-rose-600 hover:text-rose-900">✕</button>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-1">
                 <div className="space-y-3 p-4 rounded-xl border border-neutral-100 bg-neutral-50/50">
@@ -2778,24 +3035,30 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                     </div>
                     <div className="space-y-1.5">
                       <label className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-black text-white text-xs font-semibold hover:bg-neutral-800 cursor-pointer transition-colors shadow-2xs">
-                        <span>Upload Logo</span>
+                        <span>{isUploadingLogo ? 'Uploading...' : 'Upload Logo'}</span>
                         <input
                           type="file"
                           accept="image/*"
+                          disabled={isUploadingLogo}
                           className="hidden"
-                          onChange={(e) => {
+                          onChange={async (e) => {
                             const file = e.target.files?.[0];
-                            if (file) {
-                              if (file.size > 10 * 1024 * 1024) {
-                                alert(`Logo file exceeds the 10 MB maximum limit (${(file.size / (1024 * 1024)).toFixed(1)} MB). Please select an image under 10 MB.`);
-                                return;
-                              }
-                              const reader = new FileReader();
-                              reader.onload = (event) => {
-                                const result = event.target?.result as string;
-                                if (onUpdateHotel) onUpdateHotel({ ...hotel, logoImage: result });
-                              };
-                              reader.readAsDataURL(file);
+                            if (!file) return;
+                            setBrandingUploadError(null);
+                            const err = validateImageOrDocumentFile(file, { allowPdf: false });
+                            if (err) {
+                              setBrandingUploadError(err);
+                              return;
+                            }
+                            setIsUploadingLogo(true);
+                            try {
+                              const res = await uploadOrganizationFile(hotel.id, file, 'guest_portal_media', activeStaffMember.name, { allowPdf: false });
+                              if (onUpdateHotel) onUpdateHotel({ ...hotel, logoImage: res.url });
+                              await persistHotelProfilePatch({ logoImage: res.url }, 'Hotel logo saved permanently.');
+                            } catch (uploadErr: any) {
+                              setBrandingUploadError(uploadErr?.message || 'Failed to upload hotel logo.');
+                            } finally {
+                              setIsUploadingLogo(false);
                             }
                           }}
                         />
@@ -2804,8 +3067,9 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                         <div>
                           <button
                             type="button"
-                            onClick={() => {
+                            onClick={async () => {
                               if (onUpdateHotel) onUpdateHotel({ ...hotel, logoImage: '' });
+                              await persistHotelProfilePatch({ logoImage: '' }, 'Hotel logo removed.');
                             }}
                             className="text-[11px] text-rose-600 font-semibold hover:underline"
                           >
@@ -2813,7 +3077,7 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                           </button>
                         </div>
                       )}
-                      <p className="text-[10px] text-neutral-400">PNG, JPG, or SVG. Max 10MB.</p>
+                      <p className="text-[10px] text-neutral-400">PNG, JPG, or WEBP. Max 10MB.</p>
                     </div>
                   </div>
                 </div>
@@ -2839,24 +3103,30 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                     </div>
                     <div className="space-y-1.5">
                       <label className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-black text-white text-xs font-semibold hover:bg-neutral-800 cursor-pointer transition-colors shadow-2xs">
-                        <span>Upload Cover</span>
+                        <span>{isUploadingCover ? 'Uploading...' : 'Upload Cover'}</span>
                         <input
                           type="file"
                           accept="image/*"
+                          disabled={isUploadingCover}
                           className="hidden"
-                          onChange={(e) => {
+                          onChange={async (e) => {
                             const file = e.target.files?.[0];
-                            if (file) {
-                              if (file.size > 10 * 1024 * 1024) {
-                                alert(`Cover banner exceeds the 10 MB maximum limit (${(file.size / (1024 * 1024)).toFixed(1)} MB). High-resolution background photos up to 10 MB are supported.`);
-                                return;
-                              }
-                              const reader = new FileReader();
-                              reader.onload = (event) => {
-                                const result = event.target?.result as string;
-                                if (onUpdateHotel) onUpdateHotel({ ...hotel, coverImage: result });
-                              };
-                              reader.readAsDataURL(file);
+                            if (!file) return;
+                            setBrandingUploadError(null);
+                            const err = validateImageOrDocumentFile(file, { allowPdf: false });
+                            if (err) {
+                              setBrandingUploadError(err);
+                              return;
+                            }
+                            setIsUploadingCover(true);
+                            try {
+                              const res = await uploadOrganizationFile(hotel.id, file, 'guest_portal_media', activeStaffMember.name, { allowPdf: false });
+                              if (onUpdateHotel) onUpdateHotel({ ...hotel, coverImage: res.url });
+                              await persistHotelProfilePatch({ coverImage: res.url }, 'Hotel cover image saved permanently.');
+                            } catch (uploadErr: any) {
+                              setBrandingUploadError(uploadErr?.message || 'Failed to upload cover image.');
+                            } finally {
+                              setIsUploadingCover(false);
                             }
                           }}
                         />
@@ -2865,8 +3135,9 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                         <div>
                           <button
                             type="button"
-                            onClick={() => {
+                            onClick={async () => {
                               if (onUpdateHotel) onUpdateHotel({ ...hotel, coverImage: '' });
+                              await persistHotelProfilePatch({ coverImage: '' }, 'Hotel cover image removed.');
                             }}
                             className="text-[11px] text-rose-600 font-semibold hover:underline"
                           >
@@ -2881,18 +3152,52 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
               </div>
 
               {/* Hotel Description Setting */}
-              <div className="pt-3 border-t border-neutral-100 space-y-1.5">
+              <div className="pt-3 border-t border-neutral-100 space-y-2">
                 <label className="block text-xs font-semibold text-neutral-700">Hotel Description</label>
                 <textarea
                   rows={3}
-                  value={hotel.description || ''}
+                  value={hotelDescriptionInput}
                   onChange={(e) => {
-                    if (onUpdateHotel) onUpdateHotel({ ...hotel, description: e.target.value });
+                    const nextDesc = e.target.value;
+                    setHotelDescriptionInput(nextDesc);
+                    if (onUpdateHotel) onUpdateHotel({ ...hotel, description: nextDesc });
                   }}
                   placeholder="Tell guests about your hotel, rooms, ambiance, services, and location..."
                   className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 text-xs focus:outline-none focus:border-black bg-white"
                 />
-                <p className="text-[10px] text-neutral-400">This description will be displayed prominently on your public guest portal.</p>
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                  <p className="text-[10px] text-neutral-400">This description will be displayed prominently on your public guest portal.</p>
+                  <button
+                    type="button"
+                    disabled={hotelSaveStatus === 'saving'}
+                    onClick={() =>
+                      persistHotelProfilePatch(
+                        {
+                          description: hotelDescriptionInput,
+                          logoImage: hotel.logoImage || '',
+                          coverImage: hotel.coverImage || '',
+                          settings: {
+                            onlineBookings,
+                            allowRegistration,
+                            showPrices,
+                            showAvailability,
+                            requireIdVerification,
+                          },
+                        },
+                        'Hotel profile, branding, and description saved.'
+                      )
+                    }
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-black text-white text-xs font-bold hover:bg-neutral-800 disabled:opacity-50 transition-colors shadow-2xs"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>{hotelSaveStatus === 'saving' ? 'Saving...' : 'Save Hotel Profile & Description'}</span>
+                  </button>
+                </div>
+                {hotelSaveMessage && (
+                  <p className={`text-[11px] font-semibold ${hotelSaveStatus === 'error' ? 'text-rose-600' : 'text-emerald-700'}`}>
+                    {hotelSaveMessage}
+                  </p>
+                )}
               </div>
             </div>
           </main>
@@ -4048,40 +4353,63 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
                   Confirm Status
                 </button>
 
-                <button
-                  type="button"
-                  disabled={!can('reservations.cancel')}
-                  onClick={() => {
-                    if (confirm('Cancel this reservation? This will make the booking eligible for refund.')) {
-                      const updated: Reservation = {
-                        ...managingReservation,
-                        status: 'cancelled',
-                        cancellationReason: 'Cancelled by front desk staff',
-                        cancellationRequestedAt: new Date().toISOString(),
-                        refundStatus: 'pending',
-                        refundAmount: managingReservation.total,
-                      };
-                      setLocalReservations((prev) =>
-                        prev.map((r) => (r.id === updated.id ? updated : r))
-                      );
-                      if (onUpdateReservation) {
-                        onUpdateReservation(updated);
-                      } else if (onUpdateReservationStatus) {
-                        onUpdateReservationStatus(updated.id, 'cancelled');
-                      }
-                      setManagingReservation(updated);
-                      setManagementToast({ type: 'success', message: `Reservation cancelled and queued for refund.` });
-                      setTimeout(() => setManagementToast(null), 5000);
-                    }
-                  }}
-                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
-                    can('reservations.cancel')
-                      ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
-                      : 'bg-neutral-100 text-neutral-400 border-neutral-200 cursor-not-allowed opacity-60'
-                  }`}
-                >
-                  Cancel Booking
-                </button>
+                {confirmCancelBooking ? (
+                  <div className="col-span-2 p-3 rounded-xl bg-rose-50 border border-rose-200 space-y-2">
+                    <p className="text-xs font-semibold text-rose-900">
+                      Cancel this reservation? This will mark the booking eligible for refund.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated: Reservation = {
+                            ...managingReservation,
+                            status: 'cancelled',
+                            cancellationReason: 'Cancelled by front desk staff',
+                            cancellationRequestedAt: new Date().toISOString(),
+                            refundStatus: 'pending',
+                            refundAmount: managingReservation.total,
+                          };
+                          setLocalReservations((prev) =>
+                            prev.map((r) => (r.id === updated.id ? updated : r))
+                          );
+                          if (onUpdateReservation) {
+                            onUpdateReservation(updated);
+                          } else if (onUpdateReservationStatus) {
+                            onUpdateReservationStatus(updated.id, 'cancelled');
+                          }
+                          setManagingReservation(updated);
+                          setConfirmCancelBooking(false);
+                          setManagementToast({ type: 'success', message: `Reservation cancelled and queued for refund.` });
+                          setTimeout(() => setManagementToast(null), 5000);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 cursor-pointer"
+                      >
+                        Yes, Cancel Booking
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmCancelBooking(false)}
+                        className="px-3 py-1.5 rounded-lg bg-white border border-rose-200 text-rose-700 text-xs font-semibold hover:bg-rose-100 cursor-pointer"
+                      >
+                        Keep Booking
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!can('reservations.cancel')}
+                    onClick={() => setConfirmCancelBooking(true)}
+                    className={`px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                      can('reservations.cancel')
+                        ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                        : 'bg-neutral-100 text-neutral-400 border-neutral-200 cursor-not-allowed opacity-60'
+                    }`}
+                  >
+                    Cancel Booking
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -4604,13 +4932,33 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({
         currentName={profileName}
         currentEmail={profileEmail}
         currentPicture={profilePicture}
-        onSave={(data) => {
-          setProfileName(data.name);
-          setProfileEmail(data.email);
+        onSave={async (data) => {
+          const targetEmail = (data.email || profileEmail || resolvedProfileEmail).trim().toLowerCase();
+          const headers = await getAuthHeaders({
+            'Content-Type': 'application/json',
+            'x-igho-user-email': targetEmail,
+          });
+          const res = await fetch('/api/users/profile', {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify({
+              email: targetEmail,
+              fullName: data.name,
+              avatarUrl: data.picture,
+            }),
+          });
+          const result = await res.json().catch(() => ({}));
+          if (!res.ok || !result.success) {
+            throw new Error(result?.message || 'Failed to save staff profile to backend.');
+          }
+          setProfileName(result.profile?.fullName || data.name);
+          setProfileEmail(result.profile?.email || targetEmail);
           if (data.password) {
             setProfilePassword(data.password);
           }
-          setProfilePicture(data.picture);
+          setProfilePicture(result.profile?.avatarUrl !== undefined ? result.profile.avatarUrl : data.picture);
+          setManagementToast({ type: 'success', message: 'Staff profile & picture saved permanently.' });
+          setTimeout(() => setManagementToast(null), 3500);
         }}
         title="Edit Staff / Owner Profile"
       />

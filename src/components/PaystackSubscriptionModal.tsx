@@ -1,83 +1,199 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   CreditCard,
   Building2,
-  PhoneCall,
-  ArrowRightLeft,
   ShieldCheck,
   CheckCircle2,
-  RefreshCw,
   X,
   Lock,
-  Copy,
-  Check,
+  AlertCircle,
+  ExternalLink,
+  RefreshCw,
+  Repeat,
+  Info,
 } from 'lucide-react';
-import { SubscriptionPlan } from '../types';
+import { ActiveScreen, SubscriptionPlan } from '../types';
 import { IghoLoadingEmblem } from './IghoLogo';
+import { getAuthHeaders } from '../utils/storageUpload';
 
 interface PaystackSubscriptionModalProps {
   isOpen: boolean;
   onClose: () => void;
   plan: SubscriptionPlan;
-  billingCycle: 'monthly' | 'annual';
+  billingCycle: 'monthly' | 'annual' | '5year_contract';
+  hotelId: string;
   customerEmail: string;
   hotelName: string;
-  onSuccess: (paymentReference: string) => void;
+  returnScreen?: ActiveScreen;
+  onSuccess: (paymentReference: string, verificationResult?: any) => void;
 }
+
+export const PENDING_PAYSTACK_STORAGE_KEY = 'igho_pending_paystack_checkout';
 
 export const PaystackSubscriptionModal: React.FC<PaystackSubscriptionModalProps> = ({
   isOpen,
   onClose,
   plan,
   billingCycle,
+  hotelId,
   customerEmail,
   hotelName,
+  returnScreen = 'hotel_subscription_plan',
   onSuccess,
 }) => {
-  const [selectedChannel, setSelectedChannel] = useState<'card' | 'bank' | 'transfer' | 'ussd'>('card');
-  const [cardNumber, setCardNumber] = useState('5399 •••• •••• 4821');
-  const [cardExpiry, setCardExpiry] = useState('08/28');
-  const [cardCvv, setCardCvv] = useState('831');
-  const [cardName, setCardName] = useState(hotelName ? `${hotelName} Admin` : 'Finance Director');
-  
-  const [selectedBank, setSelectedBank] = useState('GTBank Nigeria');
-  const [selectedUssdBank, setSelectedUssdBank] = useState('gtb');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [paymentSuccess, setPaymentSuccess] = useState(false);
-  const [transactionRef, setTransactionRef] = useState('');
-  const [copied, setCopied] = useState(false);
+  const recurringSupported = billingCycle === 'monthly';
+  const [paymentMode, setPaymentMode] = useState<'paystack_recurring' | 'paystack_one_time'>(
+    recurringSupported ? 'paystack_recurring' : 'paystack_one_time'
+  );
+  const [isInitializing, setIsInitializing] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [initializedSession, setInitializedSession] = useState<{
+    reference: string;
+    authorizationUrl: string;
+    pendingSubscriptionId: string;
+    autoRenew: boolean;
+    organizationId: string;
+  } | null>(null);
+  const [verifiedResult, setVerifiedResult] = useState<any | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!recurringSupported && paymentMode === 'paystack_recurring') {
+      setPaymentMode('paystack_one_time');
+    }
+  }, [recurringSupported, paymentMode]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setInitializedSession(null);
+      setVerifiedResult(null);
+      setErrorMsg(null);
+      setIsInitializing(false);
+      setIsVerifying(false);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const dueAmount = billingCycle === 'annual' ? plan.annualPrice : plan.monthlyPrice;
-  const paystackRef = `pstk_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
+  const displayedDueAmount =
+    billingCycle === '5year_contract'
+      ? plan.contractAnnualPrice || Math.round(plan.monthlyPrice * 12 * 0.87)
+      : billingCycle === 'annual'
+      ? plan.annualPrice
+      : plan.monthlyPrice;
 
-  // Simulated Paystack Virtual Dynamic Account for transfer
-  const virtualAccount = {
-    bankName: 'Wema Bank (Paystack Checkout)',
-    accountNumber: '0289410384',
-    accountName: `IGHO-${hotelName.slice(0, 10).toUpperCase()}`,
-    expiresIn: '29:45',
-  };
-
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-
-  const handlePay = (e: React.FormEvent) => {
+  const handleInitializeCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsProcessing(true);
+    setErrorMsg(null);
 
-    setTimeout(() => {
-      setIsProcessing(false);
-      setPaymentSuccess(true);
-      setTransactionRef(paystackRef);
+    if (!hotelId) {
+      setErrorMsg('Organization record not found. Please ensure your hotel profile is saved before subscribing.');
+      return;
+    }
+
+    setIsInitializing(true);
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      if (!headers['Authorization']) {
+        throw new Error('Please sign in with your verified IGHO account before starting subscription checkout.');
+      }
+
+      const initRes = await fetch('/api/subscriptions/initialize', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          planId: plan.id,
+          billingCycle,
+          paymentMode: recurringSupported ? paymentMode : 'paystack_one_time',
+          organizationId: hotelId,
+          returnScreen,
+        }),
+      });
+
+      const rawInitText = await initRes.text().catch(() => '');
+      let initData: any = {};
+      try {
+        initData = rawInitText ? JSON.parse(rawInitText) : {};
+      } catch {
+        initData = {};
+      }
+      if (!initRes.ok || !initData.success || !initData.authorizationUrl) {
+        const detail =
+          initData.message ||
+          initData.error ||
+          (rawInitText && !rawInitText.trim().startsWith('<') ? rawInitText.slice(0, 180) : '') ||
+          `Server returned HTTP ${initRes.status || 'error'}`;
+        throw new Error(`Unable to initialize Paystack Test checkout (${detail}).`);
+      }
+
+      const sessionRecord = {
+        reference: initData.reference,
+        authorizationUrl: initData.authorizationUrl,
+        pendingSubscriptionId: initData.pendingSubscriptionId,
+        autoRenew: Boolean(initData.autoRenew),
+        organizationId: initData.organizationId || hotelId,
+        returnScreen,
+        savedAt: Date.now(),
+      };
+
+      try {
+        sessionStorage.setItem(PENDING_PAYSTACK_STORAGE_KEY, JSON.stringify(sessionRecord));
+      } catch {
+        // Ignore storage errors if third-party storage is restricted
+      }
+
+      setInitializedSession(sessionRecord);
+      setIsInitializing(false);
+
+      // Navigate to hosted Paystack Checkout in top frame when permitted, falling back cleanly to explicit link
+      try {
+        if (window.top && window.top !== window.self) {
+          window.top.location.href = initData.authorizationUrl;
+        } else {
+          window.location.assign(initData.authorizationUrl);
+        }
+      } catch {
+        // Preview sandbox iframe blocked top navigation; user can click the direct Paystack Checkout link shown below.
+      }
+    } catch (err: any) {
+      setIsInitializing(false);
+      setErrorMsg(err?.message || 'Unable to initialize Paystack checkout.');
+    }
+  };
+
+  const handleVerifyPayment = async () => {
+    if (!initializedSession?.reference) return;
+    setErrorMsg(null);
+    setIsVerifying(true);
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      const verifyRes = await fetch('/api/subscriptions/verify', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          reference: initializedSession.reference,
+        }),
+      });
+      const verifyData = await verifyRes.json().catch(() => ({}));
+      if (!verifyRes.ok || !verifyData.success) {
+        throw new Error(
+          verifyData.message || 'Payment has not completed on Paystack yet. Complete checkout first, then verify again.'
+        );
+      }
+
+      try {
+        sessionStorage.removeItem(PENDING_PAYSTACK_STORAGE_KEY);
+      } catch {}
+
+      setIsVerifying(false);
+      setVerifiedResult(verifyData);
       setTimeout(() => {
-        onSuccess(paystackRef);
-      }, 1200);
-    }, 1500);
+        onSuccess(initializedSession.reference, verifyData);
+      }, 900);
+    } catch (err: any) {
+      setIsVerifying(false);
+      setErrorMsg(err?.message || 'Verification failed.');
+    }
   };
 
   return (
@@ -90,279 +206,224 @@ export const PaystackSubscriptionModal: React.FC<PaystackSubscriptionModalProps>
               P
             </div>
             <div>
-              <div className="text-[11px] font-medium tracking-wide uppercase text-white/80">Secured by Paystack</div>
-              <div className="text-sm font-bold text-white tracking-tight">IGHO Platform Gateway</div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-medium tracking-wide uppercase text-white/90">
+                  Paystack Hosted Checkout
+                </span>
+                <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-300 text-neutral-950">
+                  Test Mode
+                </span>
+              </div>
+              <div className="text-sm font-bold text-white tracking-tight">IGHO Stay Subscription Billing</div>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-black/10 hover:bg-black/20 flex items-center justify-center text-white transition-colors"
+            aria-label="Close checkout modal"
+            className="w-8 h-8 rounded-full bg-black/10 hover:bg-black/20 flex items-center justify-center text-white transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Invoice Header */}
+        {/* Plan Summary Header */}
         <div className="px-6 py-4 bg-neutral-50 border-b border-neutral-100 flex items-center justify-between shrink-0">
-          <div>
-            <div className="text-[11px] text-neutral-500 font-medium">{customerEmail}</div>
-            <div className="text-xs font-bold text-neutral-900">{plan.name} ({billingCycle})</div>
+          <div className="min-w-0 pr-3">
+            <div className="text-[11px] text-neutral-500 font-medium truncate">
+              {hotelName} · {customerEmail}
+            </div>
+            <div className="text-xs font-bold text-neutral-900 truncate">
+              {plan.name} ({billingCycle === '5year_contract' ? '5-Year Contract' : billingCycle})
+            </div>
           </div>
-          <div className="text-right">
+          <div className="text-right shrink-0">
             <div className="text-[10px] text-neutral-400 uppercase font-semibold">Amount Due</div>
-            <div className="text-lg font-black text-black">₦{dueAmount.toLocaleString()}</div>
+            <div className="text-lg font-black text-black tabular-nums">₦{displayedDueAmount.toLocaleString()}</div>
           </div>
         </div>
 
-        {/* Success State */}
-        {paymentSuccess ? (
+        {verifiedResult ? (
           <div className="p-8 text-center space-y-4 my-auto">
             <div className="w-14 h-14 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center mx-auto shadow-sm">
               <CheckCircle2 className="w-8 h-8" />
             </div>
             <div className="space-y-1">
-              <h3 className="text-lg font-black text-neutral-900">Payment Successful</h3>
+              <h3 className="text-lg font-black text-neutral-900">Payment Verified (Test Mode)</h3>
               <p className="text-xs text-neutral-500">
-                Your subscription has been activated instantly via Paystack.
+                {verifiedResult.autoRenew
+                  ? 'Your recurring Paystack card subscription is now active and organization entitlements are unlocked.'
+                  : 'Your one-time subscription payment is verified and organization entitlements are active for this term.'}
               </p>
             </div>
-            <div className="p-3 bg-neutral-50 rounded-xl text-xs text-neutral-600 font-mono text-center">
-              Ref: {transactionRef}
+            <div className="p-3 bg-neutral-50 rounded-xl text-xs text-neutral-600 font-mono text-center break-all">
+              Ref: {verifiedResult.reference}
             </div>
             <div className="flex items-center justify-center py-2">
               <IghoLoadingEmblem size="sm" speed="fast" />
             </div>
           </div>
+        ) : initializedSession ? (
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {errorMsg && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+
+            <div className="p-4 rounded-2xl bg-sky-50 border border-sky-200 space-y-2 text-xs">
+              <div className="font-bold text-sky-950 flex items-center gap-2">
+                <ExternalLink className="w-4 h-4 text-[#0BA4DB]" />
+                <span>Complete Payment on Paystack Checkout</span>
+              </div>
+              <p className="text-sky-900 leading-relaxed text-[11px]">
+                A Paystack Test transaction has been initialized for <strong>{hotelName}</strong>. Use Paystack&apos;s
+                secure hosted checkout page to authorize payment. Your subscription activates only after server-side
+                verification succeeds.
+              </p>
+              <div className="pt-1 font-mono text-[11px] text-sky-800 break-all">
+                Ref: {initializedSession.reference}
+              </div>
+            </div>
+
+            <a
+              href={initializedSession.authorizationUrl}
+              target="_top"
+              rel="noopener noreferrer"
+              className="w-full bg-[#0BA4DB] hover:bg-[#0993C5] text-white py-3.5 rounded-full font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <span>Continue to Paystack Checkout</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+
+            <button
+              type="button"
+              onClick={handleVerifyPayment}
+              disabled={isVerifying}
+              className="w-full border border-neutral-300 hover:bg-neutral-50 text-neutral-900 py-3 rounded-full font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              {isVerifying ? (
+                <IghoLoadingEmblem size="xs" inverted={true} speed="fast" />
+              ) : (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>I Have Completed Checkout — Verify Payment</span>
+                </>
+              )}
+            </button>
+
+            <p className="text-[11px] text-neutral-500 text-center">
+              {initializedSession.autoRenew
+                ? 'Mode: Auto-renewing monthly card subscription (Paystack Test Plan).'
+                : 'Mode: One-time payment — manual renewal required at period end.'}
+            </p>
+          </div>
         ) : (
-          <div className="flex-1 overflow-y-auto p-6 space-y-5">
-            {/* Paystack Channel Selection Tabs */}
-            <div className="grid grid-cols-4 gap-1.5 bg-neutral-100 p-1 rounded-xl text-xs font-semibold">
+          <form onSubmit={handleInitializeCheckout} className="flex-1 overflow-y-auto p-6 space-y-4">
+            {errorMsg && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+
+            <div className="space-y-2.5">
+              <label className="block text-[11px] font-bold text-neutral-700 uppercase tracking-wider">
+                Select Payment Arrangement
+              </label>
+
+              {/* Option 1: Auto-Renewing Card Subscription (Paystack Plan) */}
               <button
                 type="button"
-                onClick={() => setSelectedChannel('card')}
-                className={`py-2 rounded-lg flex flex-col items-center gap-1 transition-all ${
-                  selectedChannel === 'card'
-                    ? 'bg-white text-black shadow-xs font-bold'
-                    : 'text-neutral-500 hover:text-neutral-900'
+                disabled={!recurringSupported}
+                onClick={() => recurringSupported && setPaymentMode('paystack_recurring')}
+                className={`w-full text-left p-3.5 rounded-xl border-2 transition-all ${
+                  !recurringSupported
+                    ? 'border-neutral-200 bg-neutral-50 opacity-60 cursor-not-allowed'
+                    : paymentMode === 'paystack_recurring'
+                    ? 'border-[#0BA4DB] bg-sky-50/50 cursor-pointer'
+                    : 'border-neutral-200 hover:border-neutral-300 cursor-pointer'
                 }`}
               >
-                <CreditCard className="w-4 h-4" />
-                <span className="text-[10px]">Card</span>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <CreditCard className="w-4 h-4 text-[#0BA4DB] shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
+                        <span>Card — Auto-Renewing Subscription</span>
+                        <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold">
+                          <Repeat className="w-2.5 h-2.5" /> Auto-Renew
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-neutral-600 mt-1 leading-relaxed">
+                        {recurringSupported
+                          ? 'Attaches to the Paystack monthly subscription plan for automatic card billing each month.'
+                          : 'Monthly Paystack recurring plans are available on the Monthly billing cycle only.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </button>
+
+              {/* Option 2: Non-Recurring One-Time Payment (Bank Transfer / USSD / Fixed Term) */}
               <button
                 type="button"
-                onClick={() => setSelectedChannel('bank')}
-                className={`py-2 rounded-lg flex flex-col items-center gap-1 transition-all ${
-                  selectedChannel === 'bank'
-                    ? 'bg-white text-black shadow-xs font-bold'
-                    : 'text-neutral-500 hover:text-neutral-900'
+                onClick={() => setPaymentMode('paystack_one_time')}
+                className={`w-full text-left p-3.5 rounded-xl border-2 transition-all cursor-pointer ${
+                  paymentMode === 'paystack_one_time'
+                    ? 'border-[#0BA4DB] bg-sky-50/50'
+                    : 'border-neutral-200 hover:border-neutral-300'
                 }`}
               >
-                <Building2 className="w-4 h-4" />
-                <span className="text-[10px]">Bank</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedChannel('transfer')}
-                className={`py-2 rounded-lg flex flex-col items-center gap-1 transition-all ${
-                  selectedChannel === 'transfer'
-                    ? 'bg-white text-black shadow-xs font-bold'
-                    : 'text-neutral-500 hover:text-neutral-900'
-                }`}
-              >
-                <ArrowRightLeft className="w-4 h-4" />
-                <span className="text-[10px]">Transfer</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedChannel('ussd')}
-                className={`py-2 rounded-lg flex flex-col items-center gap-1 transition-all ${
-                  selectedChannel === 'ussd'
-                    ? 'bg-white text-black shadow-xs font-bold'
-                    : 'text-neutral-500 hover:text-neutral-900'
-                }`}
-              >
-                <PhoneCall className="w-4 h-4" />
-                <span className="text-[10px]">USSD</span>
+                <div className="flex items-start gap-2.5">
+                  <Building2 className="w-4 h-4 text-neutral-700 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="text-xs font-bold text-neutral-900 flex items-center gap-1.5 flex-wrap">
+                      <span>One-Time Payment (Bank Transfer / USSD / Card)</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-bold">
+                        Manual Renewal Required
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-neutral-600 mt-1 leading-relaxed">
+                      Bank transfer and USSD payments on Paystack do not create an auto-renewing subscription. You will
+                      renew manually at the end of this billing period.
+                    </p>
+                  </div>
+                </div>
               </button>
             </div>
 
-            {/* Channel Content */}
-            <form onSubmit={handlePay} className="space-y-4">
-              {selectedChannel === 'card' && (
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-neutral-600 mb-1">Card Number</label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={cardNumber}
-                        onChange={(e) => setCardNumber(e.target.value)}
-                        className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs font-mono text-neutral-900 focus:outline-none focus:border-[#0BA4DB]"
-                        placeholder="0000 0000 0000 0000"
-                        required
-                      />
-                      <span className="absolute right-3 top-2.5 text-xs text-neutral-400 font-bold">💳</span>
-                    </div>
-                  </div>
+            <div className="p-3 rounded-xl bg-neutral-50 border border-neutral-200 text-[11px] text-neutral-600 flex items-start gap-2">
+              <Info className="w-4 h-4 text-neutral-500 shrink-0 mt-0.5" />
+              <span>
+                Paystack gateway fees are absorbed by IGHO. Plan pricing and entitlements are validated securely on the
+                server before checkout starts.
+              </span>
+            </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-neutral-600 mb-1">Valid Thru</label>
-                      <input
-                        type="text"
-                        value={cardExpiry}
-                        onChange={(e) => setCardExpiry(e.target.value)}
-                        className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs font-mono text-neutral-900 focus:outline-none focus:border-[#0BA4DB]"
-                        placeholder="MM/YY"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-neutral-600 mb-1">CVV</label>
-                      <input
-                        type="password"
-                        value={cardCvv}
-                        onChange={(e) => setCardCvv(e.target.value)}
-                        className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs font-mono text-neutral-900 focus:outline-none focus:border-[#0BA4DB]"
-                        placeholder="123"
-                        maxLength={4}
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-neutral-600 mb-1">Cardholder Name</label>
-                    <input
-                      type="text"
-                      value={cardName}
-                      onChange={(e) => setCardName(e.target.value)}
-                      className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-[#0BA4DB]"
-                      required
-                    />
-                  </div>
-                </div>
-              )}
-
-              {selectedChannel === 'bank' && (
-                <div className="space-y-3">
-                  <p className="text-xs text-neutral-500">
-                    Authenticate directly through your Nigerian bank's secure portal or app.
-                  </p>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-neutral-600 mb-1">Select Bank</label>
-                    <select
-                      value={selectedBank}
-                      onChange={(e) => setSelectedBank(e.target.value)}
-                      className="w-full bg-white border border-neutral-300 rounded-xl px-3 py-2.5 text-xs text-neutral-900 focus:outline-none focus:border-[#0BA4DB]"
-                    >
-                      <option>GTBank Nigeria</option>
-                      <option>Zenith Bank PLC</option>
-                      <option>Access Bank Nigeria</option>
-                      <option>First Bank of Nigeria</option>
-                      <option>Kuda Microfinance Bank</option>
-                      <option>Providus Bank</option>
-                      <option>United Bank for Africa (UBA)</option>
-                    </select>
-                  </div>
-                  <div className="p-3 bg-neutral-50 rounded-xl text-[11px] text-neutral-600 space-y-1">
-                    <span className="font-semibold text-neutral-800 block">Authorization:</span>
-                    <span>You will be prompted to enter your Internet Banking credentials or OTP to complete this ₦{dueAmount.toLocaleString()} payment.</span>
-                  </div>
-                </div>
-              )}
-
-              {selectedChannel === 'transfer' && (
-                <div className="space-y-3">
-                  <div className="p-4 bg-sky-50 border border-sky-100 rounded-2xl space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-sky-900">Paystack Dynamic Virtual Account</span>
-                      <span className="text-[10px] bg-sky-200/60 text-sky-900 px-2 py-0.5 rounded-full font-mono">
-                        Expires in {virtualAccount.expiresIn}
-                      </span>
-                    </div>
-                    <div className="text-xs text-neutral-600 space-y-1">
-                      <div>Bank: <span className="font-bold text-neutral-900">{virtualAccount.bankName}</span></div>
-                      <div className="flex items-center justify-between">
-                        <span>Account Number:</span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono font-black text-sm text-neutral-900">{virtualAccount.accountNumber}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleCopy(virtualAccount.accountNumber)}
-                            className="p-1 text-neutral-500 hover:text-black"
-                          >
-                            {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                          </button>
-                        </div>
-                      </div>
-                      <div>Beneficiary: <span className="font-semibold text-neutral-900">{virtualAccount.accountName}</span></div>
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-neutral-500 leading-relaxed">
-                    Make a bank transfer of exactly ₦{dueAmount.toLocaleString()} to this dedicated account. Paystack automatically verifies within seconds.
-                  </p>
-                </div>
-              )}
-
-              {selectedChannel === 'ussd' && (
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-neutral-600 mb-1">Choose Bank for USSD</label>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      {[
-                        { id: 'gtb', name: 'GTBank', code: '*737*50*Amount*104#' },
-                        { id: 'zenith', name: 'Zenith Bank', code: '*966*00*Amount#' },
-                        { id: 'access', name: 'Access Bank', code: '*901*00*Amount#' },
-                        { id: 'uba', name: 'UBA', code: '*919*00*Amount#' },
-                      ].map((b) => (
-                        <button
-                          key={b.id}
-                          type="button"
-                          onClick={() => setSelectedUssdBank(b.id)}
-                          className={`p-3 rounded-xl border text-left transition-all ${
-                            selectedUssdBank === b.id
-                              ? 'border-[#0BA4DB] bg-sky-50/50 font-bold'
-                              : 'border-neutral-200 hover:border-neutral-300'
-                          }`}
-                        >
-                          <div className="text-neutral-900 font-semibold">{b.name}</div>
-                          <div className="text-[10px] text-neutral-500 font-mono mt-0.5">{b.code}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="p-3 bg-neutral-50 rounded-xl text-[11px] text-neutral-600 font-mono text-center">
-                    Dial code on your registered SIM to authorize payment.
-                  </div>
-                </div>
-              )}
-
-              {/* Pay Button */}
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  disabled={isProcessing}
-                  className="w-full bg-[#0BA4DB] hover:bg-[#0993C5] text-white py-3.5 rounded-full font-bold text-xs shadow-md transition-all active:scale-98 flex items-center justify-center gap-2"
-                >
-                  {isProcessing ? (
-                    <IghoLoadingEmblem size="xs" speed="fast" />
-                  ) : (
-                    <>
-                      <Lock className="w-3.5 h-3.5" />
-                      <span>Pay ₦{dueAmount.toLocaleString()}</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
+            <div className="pt-1">
+              <button
+                type="submit"
+                disabled={isInitializing}
+                className="w-full bg-[#0BA4DB] hover:bg-[#0993C5] text-white py-3.5 rounded-full font-bold text-xs shadow-md transition-all active:scale-98 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+              >
+                {isInitializing ? (
+                  <IghoLoadingEmblem size="xs" speed="fast" />
+                ) : (
+                  <>
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>Proceed to Paystack Checkout (₦{displayedDueAmount.toLocaleString()})</span>
+                  </>
+                )}
+              </button>
+            </div>
 
             <div className="flex items-center justify-center gap-2 text-[10px] text-neutral-400 pt-2 border-t border-neutral-100">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              <span>PCI-DSS Level 1 Certified · 256-bit Encryption · Paystack</span>
+              <span>Paystack Test Mode · Server-Verified Transaction · Raw Webhook HMAC</span>
             </div>
-          </div>
+          </form>
         )}
       </div>
     </div>

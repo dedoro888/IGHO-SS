@@ -21,7 +21,7 @@ const DEFAULT_TRIAL_TOKENS: TrialToken[] = [
     durationDays: 30,
     status: 'active',
     createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-    createdBy: 'Super Admin (rumeobire@gmail.com)',
+    createdBy: 'Platform Super Admin',
     notes: 'Standard 1-Month Launch Promotion Token',
   },
   {
@@ -30,7 +30,7 @@ const DEFAULT_TRIAL_TOKENS: TrialToken[] = [
     durationDays: 30,
     status: 'active',
     createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-    createdBy: 'Super Admin (rumeobire@gmail.com)',
+    createdBy: 'Platform Super Admin',
     notes: 'Partner VIP 1-Month Access',
   },
   {
@@ -39,7 +39,7 @@ const DEFAULT_TRIAL_TOKENS: TrialToken[] = [
     durationDays: 30,
     status: 'active',
     createdAt: new Date(Date.now() - 86400000).toISOString(),
-    createdBy: 'Super Admin (rumeobire@gmail.com)',
+    createdBy: 'Platform Super Admin',
     notes: 'Hospitality Partner Direct Token',
   },
 ];

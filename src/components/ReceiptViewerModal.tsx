@@ -14,6 +14,7 @@ import {
   ZoomIn,
 } from 'lucide-react';
 import { Reservation, Hotel } from '../types';
+import { uploadOrganizationFile, validateImageOrDocumentFile } from '../utils/storageUpload';
 
 interface ReceiptViewerModalProps {
   reservation: Reservation | null;
@@ -35,6 +36,8 @@ export const ReceiptViewerModal: React.FC<ReceiptViewerModalProps> = ({
   const [rejectPrompt, setRejectPrompt] = useState(false);
   const [rejectReason, setRejectReason] = useState('Payment amount could not be reconciled with bank statement');
   const [activeTab, setActiveTab] = useState<'preview' | 'details'>('preview');
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   if (!reservation) return null;
 
@@ -252,26 +255,44 @@ export const ReceiptViewerModal: React.FC<ReceiptViewerModalProps> = ({
               </div>
 
               {/* Upload or Replace Evidence */}
-              <div className="flex items-center justify-between p-3 rounded-2xl bg-neutral-50 border border-neutral-200 text-xs">
-                <span className="text-neutral-600 font-medium">
-                  Need to replace or upload another receipt copy?
-                </span>
-                <label className="cursor-pointer px-4 py-1.5 rounded-full bg-neutral-900 hover:bg-neutral-800 text-white font-bold text-xs flex items-center gap-1.5 transition-colors">
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>Upload Receipt</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file && onUploadReceipt) {
-                        const url = URL.createObjectURL(file);
-                        onUploadReceipt(reservation.id, url);
-                      }
-                    }}
-                  />
-                </label>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between p-3 rounded-2xl bg-neutral-50 border border-neutral-200 text-xs">
+                  <span className="text-neutral-600 font-medium">
+                    Need to replace or upload another receipt copy?
+                  </span>
+                  <label className="cursor-pointer px-4 py-1.5 rounded-full bg-neutral-900 hover:bg-neutral-800 text-white font-bold text-xs flex items-center gap-1.5 transition-colors">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>{isUploading ? 'Uploading...' : 'Upload Receipt'}</span>
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      className="hidden"
+                      disabled={isUploading}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file || !onUploadReceipt) return;
+                        setUploadError(null);
+                        const err = validateImageOrDocumentFile(file, { allowPdf: true });
+                        if (err) {
+                          setUploadError(err);
+                          return;
+                        }
+                        setIsUploading(true);
+                        try {
+                          const res = await uploadOrganizationFile(hotel.id, file, 'payment_proofs', 'Hotel Staff', { allowPdf: true });
+                          onUploadReceipt(reservation.id, res.url);
+                        } catch (uploadErr: any) {
+                          setUploadError(uploadErr?.message || 'Failed to upload receipt.');
+                        } finally {
+                          setIsUploading(false);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+                {uploadError && (
+                  <p className="text-xs text-rose-600 font-medium px-2">{uploadError}</p>
+                )}
               </div>
             </div>
           ) : (

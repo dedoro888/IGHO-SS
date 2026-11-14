@@ -71,8 +71,8 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
   currentUserEmail,
   onNavigate,
   onSwitchPersona,
-  profileName = 'Rume Obire',
-  profileEmail = 'rumeobire@gmail.com',
+  profileName = 'Platform Super Admin',
+  profileEmail = 'superadmin@igho.software',
   profilePicture = '',
   onEditProfileClick,
   onSignOut,
@@ -123,8 +123,8 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
         className={`${
           isMobile
             ? 'fixed top-0 bottom-0 left-0 h-full w-[272px] z-50 rounded-r-[2rem] border-r shadow-2xl bg-white/95 flex flex-col justify-between pb-6 px-5 pt-4 gap-3 overflow-hidden'
-            : `hidden md:flex sticky top-4 h-[calc(100vh-2rem)] ml-4 my-4 flex-col justify-between gap-3 shrink-0 bg-transparent shadow-none border-none px-0 ${
-                isCollapsed ? 'overflow-visible' : 'overflow-hidden'
+            : `hidden md:flex sticky top-4 ml-4 my-4 flex-col gap-3 shrink-0 bg-transparent shadow-none border-none px-0 self-start z-30 ${
+                isCollapsed ? 'h-fit overflow-visible' : 'h-[calc(100vh-2rem)]'
               }`
         }`}
       >
@@ -156,7 +156,7 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
         {/* SECTION 2: NAVIGATION & SCROLLABLE CONTROLS LIST */}
         <div
           className={`flex flex-col flex-1 min-h-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-3.5 nav-second-segment ${
-            isCollapsed ? 'overflow-visible' : 'overflow-y-auto max-h-[calc(100vh-14rem)] pr-1.5 scrollbar-thin scrollbar-thumb-neutral-200 hover:scrollbar-thumb-neutral-300'
+            isCollapsed ? 'overflow-visible' : 'overflow-y-auto pr-1.5 pb-4 scrollbar-thin scrollbar-thumb-neutral-200 hover:scrollbar-thumb-neutral-300'
           }`}
         >
           <div className="space-y-2 text-xs w-full">
@@ -251,19 +251,19 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                 </AnimatePresence>
               </button>
 
-              {/* Float Bubbles on Hover when Collapsed (Curved to the right and underneath) */}
+              {/* Float Bubbles on Hover when Collapsed (Curved strictly to the right and underneath inside viewport) */}
               {isCollapsed && (
                 <>
-                  {/* Invisible hover bridge to keep bubble cluster active */}
-                  <div className="absolute top-0 left-1/2 w-36 h-36 opacity-0 pointer-events-none group-hover:pointer-events-auto z-10" />
+                  {/* Invisible hover bridge to keep bubble cluster active smoothly */}
+                  <div className="absolute top-0 left-1/2 w-24 h-28 opacity-0 pointer-events-none group-hover:pointer-events-auto z-20" />
 
                   {/* Bubble 1: Hotels & Stay */}
                   <button
                     type="button"
                     onClick={() => onSelectTab('hotels')}
-                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black border border-neutral-700 shadow-xl flex items-center justify-center text-white opacity-0 scale-0 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto group-hover:translate-x-[3.4rem] group-hover:translate-y-[0.35rem] hover:scale-115 active:scale-95 hover:bg-neutral-900 cursor-pointer z-30 transition-all duration-300"
+                    className="absolute top-1/2 left-1/2 -mt-4.5 -ml-4.5 w-9 h-9 rounded-full bg-black border border-neutral-700 shadow-xl flex items-center justify-center text-white opacity-0 scale-0 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto group-hover:translate-x-[50px] group-hover:translate-y-[8px] hover:scale-110 active:scale-95 hover:bg-neutral-900 cursor-pointer z-30 transition-all duration-300"
                     style={{
-                      transition: 'all 400ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+                      transition: 'all 360ms cubic-bezier(0.34, 1.56, 0.64, 1)',
                     }}
                     title="Hotels & Stay (IGHO Stay)"
                   >
@@ -274,9 +274,9 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                   <button
                     type="button"
                     onClick={() => onSelectTab('schools')}
-                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white border border-neutral-300 shadow-xl flex items-center justify-center text-black opacity-0 scale-0 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto group-hover:translate-x-[2.85rem] group-hover:translate-y-[2.85rem] hover:scale-115 active:scale-95 hover:bg-neutral-50 cursor-pointer z-30 transition-all duration-300"
+                    className="absolute top-1/2 left-1/2 -mt-4.5 -ml-4.5 w-9 h-9 rounded-full bg-white border border-neutral-300 shadow-xl flex items-center justify-center text-black opacity-0 scale-0 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto group-hover:translate-x-[38px] group-hover:translate-y-[38px] hover:scale-110 active:scale-95 hover:bg-neutral-50 cursor-pointer z-30 transition-all duration-300"
                     style={{
-                      transition: 'all 400ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+                      transition: 'all 360ms cubic-bezier(0.34, 1.56, 0.64, 1)',
                       transitionDelay: '40ms',
                     }}
                     title="Schools & Academia (IGHO Classroom)"
@@ -288,9 +288,9 @@ export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
                   <button
                     type="button"
                     onClick={() => onSelectTab('hospitals')}
-                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white border border-neutral-300 shadow-xl flex items-center justify-center text-black opacity-0 scale-0 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto group-hover:translate-x-[1.1rem] group-hover:translate-y-[4.35rem] hover:scale-115 active:scale-95 hover:bg-neutral-50 cursor-pointer z-30 transition-all duration-300"
+                    className="absolute top-1/2 left-1/2 -mt-4.5 -ml-4.5 w-9 h-9 rounded-full bg-white border border-neutral-300 shadow-xl flex items-center justify-center text-black opacity-0 scale-0 pointer-events-none group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto group-hover:translate-x-[12px] group-hover:translate-y-[58px] hover:scale-110 active:scale-95 hover:bg-neutral-50 cursor-pointer z-30 transition-all duration-300"
                     style={{
-                      transition: 'all 400ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+                      transition: 'all 360ms cubic-bezier(0.34, 1.56, 0.64, 1)',
                       transitionDelay: '80ms',
                     }}
                     title="Hospitals & Clinics (IGHO Medbay)"

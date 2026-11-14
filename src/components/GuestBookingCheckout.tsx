@@ -22,6 +22,7 @@ import { GuestAccountNavMenu } from './GuestAccountNavMenu';
 import { saveCustomerProfile } from '../utils/auth';
 import { getRoomLevelInfo } from '../utils/roomCategories';
 import { IghoLoadingEmblem } from './IghoLogo';
+import { uploadOrganizationFile, validateImageOrDocumentFile } from '../utils/storageUpload';
 
 interface GuestBookingCheckoutProps {
   room: Room;
@@ -58,6 +59,8 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [showMediaPicker, setShowMediaPicker] = useState(false);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const filesInputRef = useRef<HTMLInputElement>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
 
   const levelInfo = getRoomLevelInfo(room);
@@ -182,29 +185,30 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
     setTimeout(() => setSaveDraftFeedback(false), 3000);
   };
 
-  const handleDeviceReceiptUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleDeviceReceiptUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setReceiptError(null);
     const file = e.target.files?.[0];
     if (file) {
-      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-      const isImage = file.type.startsWith('image/');
-
-      if (!isPdf && !isImage) {
-        setReceiptError('Unsupported file type. Please upload an image (PNG, JPG, WebP) or a PDF document.');
+      const err = validateImageOrDocumentFile(file, { allowPdf: true });
+      if (err) {
+        setReceiptError(err);
         return;
       }
-
+      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
       setUploadedFileName(file.name);
       setUploadedFileType(isPdf ? 'pdf' : 'image');
-      setUploadedFileSize(`${(file.size / 1024).toFixed(0)} KB`);
-
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setUploadedReceipt(event.target.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
+      setUploadedFileSize(
+        file.size >= 1024 * 1024
+          ? `${(file.size / (1024 * 1024)).toFixed(2)} MB`
+          : `${(file.size / 1024).toFixed(0)} KB`
+      );
+      setShowMediaPicker(false);
+      try {
+        const res = await uploadOrganizationFile(hotel.id, file, 'payment_proofs', undefined, guestName || 'Guest');
+        setUploadedReceipt(res.url);
+      } catch (uploadErr: any) {
+        setReceiptError(uploadErr?.message || 'Failed to upload payment receipt.');
+      }
     }
   };
 
@@ -829,16 +833,27 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
               Choose an action
             </div>
 
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={handleDeviceReceiptUpload}
+            />
+            <input
+              ref={filesInputRef}
+              type="file"
+              accept="image/*,application/pdf"
+              className="hidden"
+              onChange={handleDeviceReceiptUpload}
+            />
+
             <div className="grid grid-cols-2 gap-4 pt-2">
               {/* Camera */}
               <button
                 type="button"
-                onClick={() => {
-                  setUploadedReceipt(
-                    'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=400&q=80'
-                  );
-                  setShowMediaPicker(false);
-                }}
+                onClick={() => cameraInputRef.current?.click()}
                 className="flex flex-col items-center justify-center p-4 bg-neutral-800 hover:bg-neutral-700 rounded-2xl gap-2 transition-colors"
               >
                 <Camera className="w-7 h-7 text-neutral-300" />
@@ -848,12 +863,7 @@ export const GuestBookingCheckout: React.FC<GuestBookingCheckoutProps> = ({
               {/* Files */}
               <button
                 type="button"
-                onClick={() => {
-                  setUploadedReceipt(
-                    'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=400&q=80'
-                  );
-                  setShowMediaPicker(false);
-                }}
+                onClick={() => filesInputRef.current?.click()}
                 className="flex flex-col items-center justify-center p-4 bg-neutral-800 hover:bg-neutral-700 rounded-2xl gap-2 transition-colors"
               >
                 <FileText className="w-7 h-7 text-neutral-300" />

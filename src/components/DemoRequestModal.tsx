@@ -38,6 +38,7 @@ export const DemoRequestModal: React.FC<DemoRequestModalProps> = ({ onClose, onN
   const [demoDate, setDemoDate] = useState('');
   const [demoTime, setDemoTime] = useState('10:00');
   const [message, setMessage] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
 
   const productInfo = {
     stay: {
@@ -62,14 +63,15 @@ export const DemoRequestModal: React.FC<DemoRequestModalProps> = ({ onClose, onN
 
   const handleGoToReview = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
     if (!fullName || !email || !phone || !orgName || !demoDate) {
-      alert('Please fill in all required fields.');
+      setFormError('Please fill in all required fields.');
       return;
     }
     setStep(2);
   };
 
-  const handleSubmitDemo = () => {
+  const handleSubmitDemo = async () => {
     const newDemo = {
       id: `demo-${Date.now()}`,
       fullName,
@@ -84,6 +86,15 @@ export const DemoRequestModal: React.FC<DemoRequestModalProps> = ({ onClose, onN
       status: 'pending',
       createdAt: new Date().toISOString().split('T')[0],
     };
+    try {
+      await fetch('/api/demo-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newDemo),
+      });
+    } catch (err) {
+      console.error('Demo request API submit error:', err);
+    }
     try {
       const currentList = JSON.parse(localStorage.getItem('igho_demo_requests') || '[]');
       currentList.push(newDemo);
@@ -133,6 +144,12 @@ export const DemoRequestModal: React.FC<DemoRequestModalProps> = ({ onClose, onN
                 Fill out the specifications below to schedule a personalized live session with our cloud product architects.
               </p>
             </div>
+
+            {formError && (
+              <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-200 text-xs font-medium">
+                {formError}
+              </div>
+            )}
 
             {/* Product Selection Row - Clearly displays all three IGHO Products */}
             <div className="space-y-2">

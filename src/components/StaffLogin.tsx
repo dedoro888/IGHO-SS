@@ -113,6 +113,7 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({ onLoginSuccess, onNaviga
   };
 
 
+
   return (
     <div className="min-h-screen bg-black text-white flex flex-col justify-between p-4 sm:p-6">
       {/* Top Bar */}
@@ -172,6 +173,7 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({ onLoginSuccess, onNaviga
             )}
           </div>
         )}
+
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">

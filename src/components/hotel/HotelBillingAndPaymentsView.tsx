@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CreditCard,
   Building2,
@@ -22,13 +22,16 @@ import {
   Send,
   HelpCircle,
   Copy,
+  Lock,
 } from 'lucide-react';
-import { Hotel, Reservation } from '../../types';
+import { Hotel, Reservation, PlanPrivileges } from '../../types';
 import { ComparativePerformanceChart, MetricConfig } from '../common/ComparativePerformanceChart';
 
 interface HotelBillingAndPaymentsViewProps {
   hotel: Hotel;
   reservations: Reservation[];
+  privileges?: PlanPrivileges;
+  onRequestUpgrade?: () => void;
   onUpdateBankInfo: (bankInfo: {
     bankName: string;
     accountName: string;
@@ -43,11 +46,33 @@ interface HotelBillingAndPaymentsViewProps {
 export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewProps> = ({
   hotel,
   reservations,
+  privileges,
+  onRequestUpgrade,
   onUpdateBankInfo,
   onUpdateReservationStatus,
   onVerifyPayment,
   onProcessRefund,
 }) => {
+  const effectivePrivileges: PlanPrivileges = privileges || hotel.privileges || {
+    hasGuestPortal: hotel.hasGuestPortal !== false && hotel.subscriptionPlanId !== 'plan-starter-30k',
+    maxRooms: hotel.subscriptionPlanId === 'plan-complete-50k' ? 999 : 20,
+    maxStaff: hotel.subscriptionPlanId === 'plan-complete-50k' ? 100 : 5,
+    maxBranches: hotel.subscriptionPlanId === 'plan-complete-50k' ? 25 : 1,
+    storageQuotaGb: hotel.subscriptionPlanId === 'plan-complete-50k' ? 10 : 1,
+    frontDeskPMS: true,
+    housekeeping: true,
+    guestFolios: true,
+    nightAudit: true,
+    cashierShifts: true,
+    maintenanceBlocks: true,
+    customRoles: hotel.subscriptionPlanId === 'plan-complete-50k',
+    multiBranch: hotel.subscriptionPlanId === 'plan-complete-50k',
+    cautionDeposits: hotel.subscriptionPlanId === 'plan-complete-50k',
+    financialExports: hotel.subscriptionPlanId === 'plan-complete-50k',
+    publicDirectoryListing: true,
+    prioritySupport: hotel.subscriptionPlanId === 'plan-complete-50k',
+  };
+
   // Direct Hotel Bank Account Configuration (No Paystack Subaccounts)
   const [bankName, setBankName] = useState(hotel.bankName || 'Zenith Bank PLC');
   const [accountName, setAccountName] = useState(hotel.accountName || `${hotel.name || 'Hotel'} Ltd`);
@@ -58,6 +83,16 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
   );
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [copiedBank, setCopiedBank] = useState(false);
+
+  useEffect(() => {
+    setBankName(hotel.bankName || 'Zenith Bank PLC');
+    setAccountName(hotel.accountName || `${hotel.name || 'Hotel'} Ltd`);
+    setAccountNumber(hotel.accountNumber || '1014529384');
+    setTransferInstructions(
+      hotel.transferInstructions ||
+        'Please transfer the exact booking fee to our direct commercial bank account above. Use your Booking Reference as payment remarks/narration and upload your transfer receipt to confirm your room.'
+    );
+  }, [hotel.id, hotel.bankName, hotel.accountName, hotel.accountNumber, hotel.transferInstructions, hotel.name]);
 
   // Sub-view: 'overview' | 'invoices' | 'refunds' | 'bank_config'
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'invoices' | 'refunds' | 'bank_config'>('overview');
@@ -259,13 +294,23 @@ export const HotelBillingAndPaymentsView: React.FC<HotelBillingAndPaymentsViewPr
             </button>
           </div>
 
-          <button
-            onClick={handlePrintReport}
-            className="flex items-center gap-1.5 px-4 py-2 bg-white border border-neutral-200 hover:bg-neutral-50 rounded-full text-xs font-semibold text-neutral-800 shadow-2xs whitespace-nowrap"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            <span>Print Report</span>
-          </button>
+          {effectivePrivileges.financialExports ? (
+            <button
+              onClick={handlePrintReport}
+              className="flex items-center gap-1.5 px-4 py-2 bg-white border border-neutral-200 hover:bg-neutral-50 rounded-full text-xs font-semibold text-neutral-800 shadow-2xs whitespace-nowrap"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Print Report</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => onRequestUpgrade?.()}
+              className="flex items-center gap-1.5 px-4 py-2 bg-amber-100 border border-amber-300 hover:bg-amber-200 rounded-full text-xs font-bold text-amber-950 shadow-2xs whitespace-nowrap"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>Upgrade for Report Exports</span>
+            </button>
+          )}
         </div>
       </div>
 

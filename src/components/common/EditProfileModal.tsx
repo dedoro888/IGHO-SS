@@ -1,5 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { X, Upload, Check, Eye, EyeOff, User, Mail, Lock, Image as ImageIcon } from 'lucide-react';
+import { getAuthHeaders } from '../../utils/storageUpload';
 
 interface EditProfileModalProps {
   isOpen: boolean;
@@ -7,7 +8,7 @@ interface EditProfileModalProps {
   currentName: string;
   currentEmail: string;
   currentPicture: string;
-  onSave: (data: { name: string; email: string; password?: string; picture: string }) => void;
+  onSave: (data: { name: string; email: string; password?: string; picture: string }) => void | Promise<void>;
   title?: string;
 }
 
@@ -36,30 +37,63 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    if (isOpen) {
+      setName(currentName);
+      setEmail(currentEmail);
+      setPicture(currentPicture);
+      setPassword('');
+      setError('');
+      setSuccess(false);
+    }
+  }, [isOpen, currentName, currentEmail, currentPicture]);
+
   if (!isOpen) return null;
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 2 * 1024 * 1024) {
-        setError('Image must be less than 2MB');
+    if (!file) return;
+    setError('');
+    if (file.size > 10 * 1024 * 1024) {
+      setError('Image must be less than 10MB');
+      return;
+    }
+    setIsUploading(true);
+    try {
+      const authHeaders = await getAuthHeaders();
+      const formRes = await fetch(
+        `/api/storage/platform-profiles/upload-binary?category=guest_portal_media&filename=${encodeURIComponent(file.name)}`,
+        {
+          method: 'POST',
+          headers: {
+            ...authHeaders,
+            'Content-Type': file.type || 'application/octet-stream',
+            'x-file-name': encodeURIComponent(file.name),
+            'x-uploaded-by': encodeURIComponent(email || 'Profile User'),
+          },
+          body: file,
+        }
+      );
+      const data = await formRes.json();
+      if (formRes.ok && data?.success && (data?.url || data?.file?.url)) {
+        setPicture(data.url || data.file.url);
         return;
       }
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          setPicture(reader.result);
-          setError('');
-        }
-      };
-      reader.readAsDataURL(file);
+      setError(data?.message || 'Failed to upload profile photo.');
+    } catch {
+      setError('Failed to upload profile photo.');
+    } finally {
+      setIsUploading(false);
+      e.target.value = '';
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
       setError('Name is required');
@@ -70,18 +104,25 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       return;
     }
 
-    onSave({
-      name,
-      email,
-      picture,
-      ...(password ? { password } : {}),
-    });
-
-    setSuccess(true);
-    setTimeout(() => {
-      setSuccess(false);
-      onClose();
-    }, 1200);
+    setError('');
+    setIsSaving(true);
+    try {
+      await onSave({
+        name: name.trim(),
+        email: email.trim(),
+        picture: picture.trim(),
+        ...(password ? { password } : {}),
+      });
+      setSuccess(true);
+      setTimeout(() => {
+        setSuccess(false);
+        onClose();
+      }, 900);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save profile changes to server.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (

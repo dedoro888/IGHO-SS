@@ -32,6 +32,7 @@ export const ConsoleRegistrationReviewModal: React.FC<ConsoleRegistrationReviewM
 }) => {
   const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [rejectError, setRejectError] = useState('');
 
   if (!hotel) return null;
 
@@ -40,9 +41,10 @@ export const ConsoleRegistrationReviewModal: React.FC<ConsoleRegistrationReviewM
 
   const handleConfirmReject = () => {
     if (!rejectReason.trim()) {
-      alert('Please provide a specific rejection reason for the applicant.');
+      setRejectError('Please provide a specific rejection reason for the applicant.');
       return;
     }
+    setRejectError('');
     onReject(hotel.id, rejectReason.trim());
     setRejecting(false);
     onClose();
@@ -253,7 +255,7 @@ export const ConsoleRegistrationReviewModal: React.FC<ConsoleRegistrationReviewM
                   'Application flagged for incomplete address documentation and mismatched CAC identity.'}
               </p>
               <div className="text-[10px] font-mono text-rose-400 pt-1">
-                Reviewed by: rumeobire@gmail.com · Recorded in platform audit logs
+                Reviewed by: {(hotel as any).reviewedBy || 'Platform Super Admin'} · Recorded in platform audit logs
               </div>
             </div>
           )}
@@ -267,10 +269,16 @@ export const ConsoleRegistrationReviewModal: React.FC<ConsoleRegistrationReviewM
               <textarea
                 rows={3}
                 value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
+                onChange={(e) => {
+                  setRejectReason(e.target.value);
+                  if (rejectError) setRejectError('');
+                }}
                 placeholder="E.g., Incomplete CAC documentation, unable to verify physical hotel location, or duplicate property submission..."
                 className="w-full p-3 rounded-xl bg-neutral-900 border border-neutral-700 text-white text-xs placeholder:text-neutral-500 focus:outline-none focus:border-rose-500"
               />
+              {rejectError && (
+                <div className="text-rose-400 text-[11px] font-semibold">{rejectError}</div>
+              )}
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleConfirmReject}

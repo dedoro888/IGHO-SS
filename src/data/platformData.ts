@@ -11,7 +11,7 @@ import {
 export const INITIAL_PLANS: SubscriptionPlan[] = [
   {
     id: 'plan-starter-30k',
-    name: 'Plan 1 — Standard Operations',
+    name: 'IGHO Stay Starter',
     monthlyPrice: 30000,
     annualPrice: 300000,
     trialDurationDays: 14,
@@ -36,10 +36,29 @@ export const INITIAL_PLANS: SubscriptionPlan[] = [
     contractAnnualPrice: 313200, // 87% of (30,000 * 12)
     contractFiveYearTotal: 1566000,
     contractDepositRequired: 313200, // 20% contract deposit
+    privileges: {
+      hasGuestPortal: false,
+      maxRooms: 20,
+      maxStaff: 5,
+      maxBranches: 1,
+      storageQuotaGb: 1,
+      frontDeskPMS: true,
+      housekeeping: true,
+      guestFolios: true,
+      nightAudit: true,
+      cashierShifts: true,
+      maintenanceBlocks: true,
+      customRoles: false,
+      multiBranch: false,
+      cautionDeposits: false,
+      financialExports: false,
+      publicDirectoryListing: false,
+      prioritySupport: false,
+    },
   },
   {
     id: 'plan-complete-50k',
-    name: 'Plan 2 — Complete Hospitality Cloud',
+    name: 'IGHO Stay Professional',
     monthlyPrice: 50000,
     annualPrice: 500000,
     trialDurationDays: 30,
@@ -65,6 +84,25 @@ export const INITIAL_PLANS: SubscriptionPlan[] = [
     contractAnnualPrice: 522000, // 87% of (50,000 * 12)
     contractFiveYearTotal: 2610000,
     contractDepositRequired: 522000, // 20% contract deposit
+    privileges: {
+      hasGuestPortal: true,
+      maxRooms: 999,
+      maxStaff: 100,
+      maxBranches: 25,
+      storageQuotaGb: 10,
+      frontDeskPMS: true,
+      housekeeping: true,
+      guestFolios: true,
+      nightAudit: true,
+      cashierShifts: true,
+      maintenanceBlocks: true,
+      customRoles: true,
+      multiBranch: true,
+      cautionDeposits: true,
+      financialExports: true,
+      publicDirectoryListing: true,
+      prioritySupport: true,
+    },
   },
 ];
 
@@ -79,8 +117,8 @@ export const INITIAL_AUDIT_LOGS: PlatformAuditLog[] = [];
 export const INITIAL_PLATFORM_USERS: PlatformUser[] = [
   {
     id: 'user-001',
-    name: 'Rume Obire',
-    email: 'rumeobire@gmail.com',
+    name: 'Platform Super Admin',
+    email: 'superadmin@igho.software',
     role: 'super_admin',
     organizationName: 'IGHO Software Systems',
     status: 'active',

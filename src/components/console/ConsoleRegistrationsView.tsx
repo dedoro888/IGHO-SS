@@ -26,6 +26,8 @@ import {
   KeyRound,
 } from 'lucide-react';
 import { Hotel, DemoRequest } from '../../types';
+import { getAuthHeaders } from '../../utils/storageUpload';
+import { formatHotelId } from '../../utils/hotelId';
 
 interface ConsoleRegistrationsViewProps {
   hotels?: Hotel[];
@@ -96,7 +98,18 @@ export const ConsoleRegistrationsView: React.FC<ConsoleRegistrationsViewProps> =
     return matchesSearch && matchesProduct;
   });
 
-  const handleUpdateDemoStatus = (demoId: string, newStatus: any) => {
+  const handleUpdateDemoStatus = async (demoId: string, newStatus: any) => {
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/demo-requests/${encodeURIComponent(demoId)}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ status: newStatus }),
+      });
+    } catch (err) {
+      console.error(err);
+    }
+
     const updated = demoRequests.map((d) =>
       d.id === demoId ? { ...d, status: newStatus } : d
     );
@@ -109,11 +122,29 @@ export const ConsoleRegistrationsView: React.FC<ConsoleRegistrationsViewProps> =
     } catch {}
   };
 
-  const handleApprove = (hotel: Hotel) => {
+  const handleApprove = async (hotel: Hotel) => {
     // Generate official 1-Month Free Trial Token
     const prefix = hotel.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase() || 'STAY';
     const tokenCode = `IGHO-TRIAL-${prefix}-${Math.floor(100 + Math.random() * 900)}`;
     setActiveGeneratedToken(tokenCode);
+
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch('/api/trial-tokens/generate', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          durationDays: 30,
+          assignedHotelId: hotel.id,
+          assignedHotelName: hotel.name,
+          notes: `1-Month Free Trial Token issued upon approval for ${hotel.name}`,
+          customCode: tokenCode,
+          createdBy: 'Super Admin',
+        }),
+      });
+    } catch (e) {
+      console.warn('Failed generating trial token on backend', e);
+    }
 
     try {
       const savedTokens = JSON.parse(localStorage.getItem('igho_trial_tokens') || '[]');
@@ -327,7 +358,7 @@ export const ConsoleRegistrationsView: React.FC<ConsoleRegistrationsViewProps> =
                             <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
                               IGHO Stay
                             </span>
-                            <span className="text-[10px] text-neutral-400 font-mono">ID: {hotel.id}</span>
+                            <span className="text-[10px] text-neutral-400 font-mono">ID: {formatHotelId(hotel.id)}</span>
                           </div>
                         </td>
                         <td className="p-4">

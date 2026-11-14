@@ -15,7 +15,7 @@ import {
   Zap,
   Lock,
 } from 'lucide-react';
-import { Hotel, SubscriptionPlan, ActiveScreen, TrialToken } from '../types';
+import { Hotel, SubscriptionPlan, ActiveScreen } from '../types';
 import { BackButton } from './BackButton';
 import { PaystackSubscriptionModal } from './PaystackSubscriptionModal';
 import { IghoLoadingEmblem } from './IghoLogo';
@@ -29,19 +29,6 @@ interface HotelSubscriptionPlanScreenProps {
   onSignOut?: () => void;
 }
 
-// Valid special promo codes for 1-month free trial
-const VALID_TRIAL_CODES = [
-  'IGHO-TRIAL-30',
-  'IGHOFREE',
-  'TRIAL2026',
-  'IGHO2026',
-  'FREETRIAL30',
-  '1MONTHFREE',
-  'HOTEL30',
-  'PROMO30',
-  'IGHOSTAY',
-];
-
 export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenProps> = ({
   hotel,
   plans,
@@ -50,7 +37,7 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
   onNavigate,
   onSignOut,
 }) => {
-  const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('monthly');
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual' | '5year_contract'>('monthly');
   const [specialCode, setSpecialCode] = useState('');
   const [codeError, setCodeError] = useState<string | null>(null);
   const [isActivatingTrial, setIsActivatingTrial] = useState(false);
@@ -63,7 +50,7 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
   const displayPlans = plans && plans.length > 0 ? plans : [
     {
       id: 'plan-starter-30k',
-      name: 'Plan 1 — Standard Operations (PMS)',
+      name: 'IGHO Stay Starter',
       monthlyPrice: 30000,
       annualPrice: 300000,
       trialDurationDays: 30,
@@ -76,17 +63,17 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
       features: [
         'Up to 20 Rooms & Suites',
         '5 Staff Accounts & Roles',
+        '1 GB Organization Cloud Storage',
         'Front Desk Check-in & Check-out',
         'Live Room Inventory & Housekeeping',
         'Direct Hotel Bank Transfer Verification',
         'Guest Folios & Printable Receipts',
-        'Paystack Payment Processing Absorbed by IGHO',
         'Guest Portal: Not Included (No Online Guest Booking)',
       ],
     },
     {
       id: 'plan-complete-50k',
-      name: 'Plan 2 — Complete Hospitality Cloud',
+      name: 'IGHO Stay Professional',
       monthlyPrice: 50000,
       annualPrice: 500000,
       trialDurationDays: 30,
@@ -98,62 +85,26 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
       active: true,
       features: [
         'Unlimited Rooms & Suites',
+        '10 GB Organization Cloud Storage',
         'Direct Public Guest Booking Portal (Online Stays)',
         'Unlimited Staff Accounts with Custom Editable Roles',
         'Separate Caution Deposit Accounting & Refunds',
         'Multi-Branch Property Management',
         'Guest Inquiries, Reports & Service Dispatch',
         'Audit Logging & Financial Analytics Export',
-        'Paystack Payment Processing Absorbed by IGHO',
         '24/7 Priority Support & Onboarding SLA',
       ],
     },
   ];
 
-  // Handle Free Trial Activation with Special Code (generated from IGHO Console)
+  // Handle Free Trial Activation with Authoritative Pre-Generated Token
   const handleActivateTrial = async (e: React.FormEvent) => {
     e.preventDefault();
-
     setCodeError(null);
 
     const cleanCode = specialCode.trim().toUpperCase();
     if (!cleanCode) {
-      setCodeError('Please enter a special trial code to activate your 1-month free trial.');
-      return;
-    }
-
-    // 1. Check dynamically generated tokens from IGHO Console
-    let dynamicTokens: TrialToken[] = [];
-    try {
-      const saved = localStorage.getItem('igho_trial_tokens');
-      if (saved) dynamicTokens = JSON.parse(saved);
-    } catch {}
-
-    const matchedToken = dynamicTokens.find((t) => t.code.toUpperCase() === cleanCode);
-
-    if (matchedToken) {
-      if (matchedToken.status === 'revoked') {
-        setCodeError('This trial token has been revoked by the IGHO Platform administrator.');
-        return;
-      }
-      if (matchedToken.status === 'used') {
-        setCodeError(
-          `This trial token has already been claimed${
-            matchedToken.claimedByHotelName ? ` by ${matchedToken.claimedByHotelName}` : ''
-          }.`
-        );
-        return;
-      }
-      if (matchedToken.assignedHotelId && matchedToken.assignedHotelId !== hotel.id) {
-        setCodeError(
-          `This trial token was issued exclusively for ${
-            matchedToken.assignedHotelName || 'another property'
-          }.`
-        );
-        return;
-      }
-    } else if (!VALID_TRIAL_CODES.includes(cleanCode)) {
-      setCodeError('Invalid special trial code. Please enter a valid token generated from the IGO Console.');
+      setCodeError('Please enter a special trial code issued from the IGHO Console.');
       return;
     }
 
@@ -173,25 +124,27 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
 
       const data = await res.json();
 
-      if (!res.ok) {
+      if (!res.ok || !data.success) {
         setIsActivatingTrial(false);
-        setCodeError(data.message || 'Invalid trial code.');
+        setCodeError(data.message || 'Invalid or expired trial token.');
         return;
       }
 
-      // Calculate 1 month expiration date (30 days) from server response or fallback
       const now = new Date();
-      const trialEndDate = data.token?.endDate || new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      const durationDays = data.token?.durationDays || 30;
+      const trialEndDate =
+        data.token?.endDate || new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000).toISOString();
 
       const updatedHotel: Hotel = {
         ...hotel,
+        ...(data.hotel || {}),
         isLive: true,
         status: 'active',
         approvalStatus: 'approved',
         paymentStatus: 'paid',
         subscriptionStatus: 'trial',
-        subscriptionPlanId: 'plan-trial',
-        subscriptionPlanName: '1-Month Free Trial',
+        subscriptionPlanId: hotel.subscriptionPlanId || 'plan-starter-30k',
+        subscriptionPlanName: hotel.subscriptionPlanName || '1-Month Free Trial',
         billingCycle: 'monthly',
         trialCode: cleanCode,
         trialStartDate: now.toISOString(),
@@ -199,40 +152,45 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
       };
 
       setTrialSuccessMessage(
-        `Special token "${cleanCode}" verified! Your 1-Month Free Trial is now active until ${new Date(trialEndDate).toLocaleDateString()}.`
+        data.message ||
+          `Token "${cleanCode}" verified! Your Free Trial is active until ${new Date(trialEndDate).toLocaleDateString()}.`
       );
       setIsActivatingTrial(false);
 
       setTimeout(() => {
         onSubscriptionActivated(updatedHotel);
-      }, 1200);
-    } catch (err) {
+      }, 900);
+    } catch {
       setIsActivatingTrial(false);
       setCodeError('Unable to connect to server to verify trial token. Please try again.');
     }
   };
 
-  // Handle Paid Plan Activation via Paystack
-  const handlePaystackSuccess = (paymentReference: string) => {
-    if (!selectedPlanForPayment) return;
-
-    const now = new Date();
-    const durationDays = billingCycle === 'annual' ? 365 : 30;
-    const subscriptionEndDate = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+  // Handle Paid Plan Activation via Server-Verified Paystack Result
+  const handlePaystackSuccess = (_paymentReference: string, verificationResult?: any) => {
+    if (!selectedPlanForPayment || !verificationResult?.success) return;
 
     const updatedHotel: Hotel = {
       ...hotel,
+      ...(verificationResult.hotel || {}),
       isLive: true,
       status: 'active',
       approvalStatus: 'approved',
       paymentStatus: 'paid',
-      subscriptionStatus: 'active',
-      subscriptionPlanId: selectedPlanForPayment.id,
-      subscriptionPlanName: selectedPlanForPayment.name,
-      hasGuestPortal: selectedPlanForPayment.hasGuestPortal ?? (selectedPlanForPayment.monthlyPrice >= 50000),
-      billingCycle: billingCycle,
-      subscriptionStartDate: now.toISOString(),
-      subscriptionEndDate: subscriptionEndDate,
+      subscriptionStatus: verificationResult.status || 'active',
+      subscriptionPlanId: verificationResult.planId || selectedPlanForPayment.id,
+      subscriptionPlanName: verificationResult.planName || selectedPlanForPayment.name,
+      packageType: verificationResult.hasGuestPortal ? 'complete' : 'management',
+      hasGuestPortal: Boolean(verificationResult.hasGuestPortal),
+      billingCycle: verificationResult.billingCycle || billingCycle,
+      paymentMode: verificationResult.paymentMode,
+      paystackMode: verificationResult.mode || 'test',
+      autoRenew: Boolean(verificationResult.autoRenew),
+      paystackCustomerCode: verificationResult.paystackCustomerCode || hotel.paystackCustomerCode,
+      paystackSubscriptionCode: verificationResult.paystackSubscriptionCode || hotel.paystackSubscriptionCode,
+      isContractPlan: (verificationResult.billingCycle || billingCycle) === '5year_contract',
+      subscriptionStartDate: verificationResult.startDate || hotel.subscriptionStartDate,
+      subscriptionEndDate: verificationResult.endDate || hotel.subscriptionEndDate,
     };
 
     setSelectedPlanForPayment(null);
@@ -408,8 +366,8 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
               <p className="text-xs text-neutral-400 text-left">Continuous uninterrupted access with priority support and scalable features</p>
             </div>
 
-            {/* Monthly / Annual Toggle */}
-            <div className="flex items-center gap-2 p-1 bg-neutral-800 rounded-full border border-neutral-700">
+            {/* Monthly / Annual / 5-Year Contract Toggle */}
+            <div className="flex flex-wrap items-center gap-1.5 p-1 bg-neutral-800 rounded-full border border-neutral-700">
               <button
                 type="button"
                 onClick={() => setBillingCycle('monthly')}
@@ -417,7 +375,7 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
                   billingCycle === 'monthly' ? 'bg-white text-black shadow-xs' : 'text-neutral-400 hover:text-white'
                 }`}
               >
-                Monthly Billing
+                Monthly
               </button>
               <button
                 type="button"
@@ -426,20 +384,42 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
                   billingCycle === 'annual' ? 'bg-white text-black shadow-xs' : 'text-neutral-400 hover:text-white'
                 }`}
               >
-                <span>Annual Billing</span>
+                <span>Annual</span>
                 <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500 text-black font-extrabold">
-                  2 Mos Free
+                  -17%
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setBillingCycle('5year_contract')}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  billingCycle === '5year_contract' ? 'bg-white text-black shadow-xs' : 'text-neutral-400 hover:text-white'
+                }`}
+              >
+                <span>5-Yr Contract</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-400 text-black font-extrabold">
+                  87% Lock
                 </span>
               </button>
             </div>
           </div>
 
           {/* Plan Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
             {displayPlans.map((plan) => {
-              const isPopular = plan.id === 'plan-complete' || plan.name.toLowerCase().includes('complete') || plan.name.toLowerCase().includes('growth');
-              const price = billingCycle === 'annual' ? plan.annualPrice : plan.monthlyPrice;
-              const period = billingCycle === 'annual' ? '/year' : '/month';
+              const isPopular = plan.id.includes('complete') || plan.name.toLowerCase().includes('complete');
+              const price =
+                billingCycle === '5year_contract'
+                  ? plan.contractAnnualPrice || Math.round(plan.monthlyPrice * 12 * 0.87)
+                  : billingCycle === 'annual'
+                  ? plan.annualPrice
+                  : plan.monthlyPrice;
+              const period =
+                billingCycle === '5year_contract'
+                  ? '/year (5-yr fixed)'
+                  : billingCycle === 'annual'
+                  ? '/year'
+                  : '/month';
 
               return (
                 <div
@@ -452,7 +432,7 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
                 >
                   {isPopular && (
                     <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full bg-white text-black text-[10px] font-black uppercase tracking-wider shadow-md">
-                      Most Popular Tier
+                      Includes Guest Portal
                     </div>
                   )}
 
@@ -474,6 +454,11 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
                       {billingCycle === 'annual' && (
                         <p className="text-[11px] text-emerald-400 mt-1 font-semibold">
                           Billed annually (Includes 2 months free)
+                        </p>
+                      )}
+                      {billingCycle === '5year_contract' && (
+                        <p className="text-[11px] text-amber-300 mt-1 font-semibold">
+                          87% fixed rate guaranteed for 5 years
                         </p>
                       )}
                     </div>
@@ -518,9 +503,11 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
         <div className="p-4 rounded-2xl bg-neutral-900/60 border border-neutral-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-neutral-400 text-xs">
           <div className="flex items-center gap-2">
             <Lock className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>Payments securely processed by Paystack (Card, Direct Bank Transfer & USSD supported).</span>
+            <span>
+              Paystack Test Mode: Monthly card subscriptions auto-renew via Paystack Plans; Bank Transfer & USSD process as one-time payments requiring manual renewal.
+            </span>
           </div>
-          <div className="flex items-center gap-2 text-[11px]">
+          <div className="flex items-center gap-2 text-[11px] shrink-0">
             <span>Need an enterprise invoice?</span>
             <button
               onClick={() => onNavigate('demo_request')}
@@ -539,8 +526,10 @@ export const HotelSubscriptionPlanScreen: React.FC<HotelSubscriptionPlanScreenPr
           onClose={() => setSelectedPlanForPayment(null)}
           plan={selectedPlanForPayment}
           billingCycle={billingCycle}
-          customerEmail={currentUserEmail || hotel.email || 'finance@hotel.com'}
+          hotelId={hotel.id}
+          customerEmail={currentUserEmail || hotel.email || ''}
           hotelName={hotel.name || 'Your Hotel'}
+          returnScreen="hotel_subscription_plan"
           onSuccess={handlePaystackSuccess}
         />
       )}

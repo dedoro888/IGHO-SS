@@ -13,6 +13,8 @@ import {
   ShieldCheck,
   AlertCircle,
   ExternalLink,
+  Edit2,
+  Check,
 } from 'lucide-react';
 import {
   Hotel,
@@ -35,6 +37,7 @@ interface ConsoleHotelDetailModalProps {
   onSuspend: (hotel: Hotel, reason: string) => void;
   onReactivate: (hotel: Hotel) => void;
   onDeleteRequest: (hotel: Hotel) => void;
+  onRenameHotel?: (hotelId: string, newName: string) => void;
 }
 
 export const ConsoleHotelDetailModal: React.FC<ConsoleHotelDetailModalProps> = ({
@@ -48,12 +51,18 @@ export const ConsoleHotelDetailModal: React.FC<ConsoleHotelDetailModalProps> = (
   onSuspend,
   onReactivate,
   onDeleteRequest,
+  onRenameHotel,
 }) => {
-  if (!hotel) return null;
-
   const [activeTab, setActiveTab] = useState<
     'overview' | 'owner' | 'staff' | 'rooms' | 'reservations' | 'subscription' | 'activity'
   >('overview');
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editedName, setEditedName] = useState(hotel?.name || '');
+  const [suspending, setSuspending] = useState(false);
+  const [suspendReason, setSuspendReason] = useState('');
+  const [suspendError, setSuspendError] = useState('');
+
+  if (!hotel) return null;
 
   const hotelRooms = allRooms.filter(
     (r) => r.hotelId === hotel.id || r.branchId === hotel.id || (!r.hotelId && hotel.id === 'hotel-lava')
@@ -85,7 +94,58 @@ export const ConsoleHotelDetailModal: React.FC<ConsoleHotelDetailModalProps> = (
             )}
             <div className="truncate">
               <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-base font-bold text-black truncate">{hotel.name}</h3>
+                {isEditingName ? (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={editedName}
+                      onChange={(e) => setEditedName(e.target.value)}
+                      className="px-2.5 py-1 rounded-lg border border-neutral-300 text-sm font-bold text-black bg-neutral-50 focus:outline-none focus:border-black"
+                      placeholder="Organization Name"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (editedName.trim() && onRenameHotel) {
+                          onRenameHotel(hotel.id, editedName.trim());
+                        }
+                        setIsEditingName(false);
+                      }}
+                      className="p-1.5 rounded-lg bg-black text-white hover:bg-neutral-800 cursor-pointer"
+                      title="Save Organization Name"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditedName(hotel.name);
+                        setIsEditingName(false);
+                      }}
+                      className="p-1.5 rounded-lg border border-neutral-200 text-neutral-600 hover:bg-neutral-100 cursor-pointer"
+                      title="Cancel"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-base font-bold text-black truncate">{hotel.name}</h3>
+                    {onRenameHotel && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditedName(hotel.name);
+                          setIsEditingName(true);
+                        }}
+                        className="p-1 rounded-lg text-neutral-400 hover:text-black hover:bg-neutral-100 transition-colors cursor-pointer"
+                        title="Edit Organization Name"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neutral-100 border border-neutral-200 text-neutral-700">
                   ID: {formatHotelId(hotel.id)}
                 </span>
@@ -384,6 +444,53 @@ export const ConsoleHotelDetailModal: React.FC<ConsoleHotelDetailModalProps> = (
           )}
         </div>
 
+        {/* Inline Suspension Confirmation Panel */}
+        {suspending && !isSuspended && (
+          <div className="px-6 py-4 border-t border-amber-200 bg-amber-50/70 space-y-2.5 text-xs">
+            <div className="font-bold text-amber-950">Provide Suspension Reason:</div>
+            <input
+              type="text"
+              value={suspendReason}
+              onChange={(e) => {
+                setSuspendReason(e.target.value);
+                if (suspendError) setSuspendError('');
+              }}
+              placeholder="e.g., Policy violation, overdue subscription, unverified documentation..."
+              className="w-full px-3 py-2 rounded-xl border border-amber-300 bg-white text-neutral-900 focus:outline-none focus:border-black"
+            />
+            {suspendError && (
+              <div className="text-rose-700 font-semibold text-[11px]">{suspendError}</div>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!suspendReason.trim()) {
+                    setSuspendError('Please enter a reason before suspending this hotel.');
+                    return;
+                  }
+                  onSuspend(hotel, suspendReason.trim());
+                  setSuspending(false);
+                  setSuspendReason('');
+                }}
+                className="px-3.5 py-1.5 rounded-xl bg-amber-600 text-white font-bold hover:bg-amber-700 transition-colors cursor-pointer"
+              >
+                Confirm Suspension
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSuspending(false);
+                  setSuspendError('');
+                }}
+                className="px-3.5 py-1.5 rounded-xl border border-neutral-300 bg-white text-neutral-700 font-semibold hover:bg-neutral-100 cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Footer Actions */}
         <div className="px-6 py-4 border-t border-neutral-200 bg-white flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -397,10 +504,9 @@ export const ConsoleHotelDetailModal: React.FC<ConsoleHotelDetailModalProps> = (
             ) : (
               <button
                 onClick={() => {
-                  const reason = prompt('Please provide a reason for suspending this hotel:') || '';
-                  if (reason.trim()) {
-                    onSuspend(hotel, reason);
-                  }
+                  setSuspending(true);
+                  setSuspendReason('');
+                  setSuspendError('');
                 }}
                 className="px-3.5 py-2 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 font-bold text-xs hover:bg-amber-100 transition-colors"
               >

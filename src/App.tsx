@@ -46,6 +46,8 @@ import { WaitlistView } from './components/WaitlistViews';
 import { SuperAdminConsole } from './components/SuperAdminConsole';
 import { StaffInvitationAccept } from './components/StaffInvitationAccept';
 import { HotelSubscriptionPlanScreen } from './components/HotelSubscriptionPlanScreen';
+import { PENDING_PAYSTACK_STORAGE_KEY } from './components/PaystackSubscriptionModal';
+import { getAuthHeaders } from './utils/storageUpload';
 import { INITIAL_INVITATIONS } from './data/mockData';
 
 // Local persistence helper utilities
@@ -146,9 +148,54 @@ export default function App() {
 
   useEffect(() => {
     saveToStorage('igho_currentUserEmail', currentUserEmail);
+    try {
+      if (currentUserEmail) {
+        localStorage.setItem('igho_active_user_email', currentUserEmail.trim().toLowerCase());
+      } else {
+        localStorage.removeItem('igho_active_user_email');
+      }
+    } catch {}
     if (currentUserEmail) {
       const p = getSavedCustomerProfile(currentUserEmail);
       if (p) setCurrentGuestProfile(p);
+
+      // Hydrate user profile (including avatarUrl, fullName, phone, address) from authoritative backend
+      let active = true;
+      (async () => {
+        try {
+          const headers = await getAuthHeaders();
+          const res = await fetch(`/api/users/profile?email=${encodeURIComponent(currentUserEmail)}`, { headers });
+          if (!res.ok) return;
+          const data = await res.json();
+          if (active && data.success && data.profile) {
+            const pRec = data.profile;
+            const fullName = String(pRec.fullName || '').trim();
+            const parts = fullName ? fullName.split(/\s+/) : [];
+            const hydrated: CustomerProfile = {
+              ...(p || {
+                id: pRec.id || `cust-${Date.now()}`,
+                email: pRec.email || currentUserEmail,
+                firstName: parts[0] || '',
+                lastName: parts.slice(1).join(' ') || '',
+                phone: '',
+                address: '',
+                createdAt: pRec.createdAt || new Date().toISOString(),
+              }),
+              email: pRec.email || currentUserEmail,
+              firstName: pRec.firstName || parts[0] || p?.firstName || '',
+              lastName: pRec.lastName || parts.slice(1).join(' ') || p?.lastName || '',
+              phone: pRec.phone !== undefined ? pRec.phone : (p?.phone || ''),
+              address: pRec.address !== undefined ? pRec.address : (p?.address || ''),
+              avatarUrl: pRec.avatarUrl !== undefined ? pRec.avatarUrl : p?.avatarUrl,
+            };
+            saveCustomerProfile(hydrated);
+            setCurrentGuestProfile(hydrated);
+          }
+        } catch {}
+      })();
+      return () => {
+        active = false;
+      };
     } else {
       setCurrentGuestProfile(null);
     }
@@ -356,17 +403,27 @@ export default function App() {
       window.location.hash = 'console';
     } else if (screen === 'staff_portal') {
       if (isSuperAdmin) {
-        alert('Access Restricted: Hotel management dashboards are private to hotel staff. The IGO Console cannot access or impersonate individual hotel operational portals.');
+        triggerLiveToast(
+          'Access Restricted: Platform console cannot open private hotel operational portals.',
+          'delete'
+        );
         return;
       }
       const userHotel = hotels.find((h) => h.email?.toLowerCase() === emailToCheck);
       if (userHotel) {
         if (userHotel.approvalStatus !== 'approved') {
-          alert(`Your hotel "${userHotel.name}" registration is currently ${userHotel.approvalStatus}. Access to the dashboard is locked.`);
+          triggerLiveToast(
+            `Hotel "${userHotel.name}" registration is currently ${userHotel.approvalStatus}.`,
+            'delete'
+          );
           return;
         }
         if (userHotel.paymentStatus !== 'paid') {
-          alert(`Your subscription for "${userHotel.name}" is unpaid. Please choose a subscription plan first via the Notification Bell in the header.`);
+          triggerLiveToast(
+            `Subscription for "${userHotel.name}" is pending payment. Select a plan to continue.`,
+            'update'
+          );
+          setActiveScreen('hotel_subscription_plan');
           return;
         }
       }
@@ -375,10 +432,12 @@ export default function App() {
         selectedHotel &&
         (selectedHotel.hasGuestPortal === false ||
           selectedHotel.subscriptionPlanId === 'plan-starter-30k' ||
+          selectedHotel.subscriptionPlanId === 'plan-1' ||
           selectedHotel.packageType === 'management')
       ) {
-        alert(
-          `Guest Portal Unavailable: ${selectedHotel.name} is on the Standard Operations Plan (₦30,000/mo), which does not include a public online booking portal. Direct online bookings require the ₦50,000 Complete Plan.`
+        triggerLiveToast(
+          `Guest Portal Unavailable: ${selectedHotel.name} is on Standard Operations (PMS only). Upgrade to Complete Cloud to enable the Guest Portal.`,
+          'delete'
         );
         return;
       }
@@ -472,19 +531,25 @@ export default function App() {
     }
 
     const account = resolveUserAccount(cleanEmail, profile);
+    const resolvedStaffRoles = ['owner', 'manager', 'receptionist', 'finance', 'housekeeping'];
+    const isResolvedStaff = Boolean(
+      resolvedAuth &&
+      (resolvedAuth.targetScreen === 'staff_portal' || resolvedStaffRoles.includes(resolvedAuth.effectiveRole))
+    );
     if (
+      isResolvedStaff ||
       account.targetScreen === 'staff_portal' ||
       account.role === 'hotel_owner' ||
       account.role === 'hotel_manager' ||
       account.role === 'receptionist'
     ) {
       // Hotel owner or staff logging into their hotel dashboard!
+      const targetOrgId = resolvedAuth?.organization?.id || resolvedAuth?.membership?.organization_id || account.organizationId;
       const matchingHotel = hotels.find(
         (h) =>
-          h.id === account.organizationId ||
+          (targetOrgId && h.id === targetOrgId) ||
           h.email?.toLowerCase() === cleanEmail ||
-          h.ownerEmail?.toLowerCase() === cleanEmail ||
-          h.name.toLowerCase().includes('lava')
+          h.ownerEmail?.toLowerCase() === cleanEmail
       );
       if (matchingHotel) {
         setSelectedHotel(matchingHotel);
@@ -711,9 +776,16 @@ export default function App() {
     const handleUserBanned = (e: any) => {
       const bannedEmail = e.detail?.email?.toLowerCase();
       const status = e.detail?.status;
-      if (bannedEmail && currentUserEmail.toLowerCase() === bannedEmail && (status === 'suspended' || status === 'deactivated')) {
+      if (
+        bannedEmail &&
+        currentUserEmail.toLowerCase() === bannedEmail &&
+        (status === 'suspended' || status === 'deactivated')
+      ) {
         handleGuestSignOut();
-        alert('Your account has been suspended by platform administration. Please contact support@igho.com.ng.');
+        triggerLiveToast(
+          'Your account has been suspended by platform administration. Please contact support@igho.com.ng.',
+          'delete'
+        );
       }
     };
     window.addEventListener('igho_user_banned', handleUserBanned);
@@ -807,7 +879,7 @@ export default function App() {
     };
 
     fetchState();
-    const interval = setInterval(fetchState, 3000); // Poll every 3 seconds for real-time synchronization
+    const interval = setInterval(fetchState, 15000); // Lightweight fallback sync (SSE handles live updates immediately)
 
     return () => {
       active = false;
@@ -914,40 +986,62 @@ export default function App() {
     total: 35000,
   });
 
-  // Handler for adding a hotel from onboarding wizard
+  // Handler for adding or activating a hotel from onboarding wizard
   const handleHotelCreated = (newHotelData: any) => {
+    const targetId = newHotelData.id || `hotel-${Date.now()}`;
+    const existing = hotels.find((h) => h.id === targetId);
     const createdHotel: Hotel = {
-      id: `hotel-${Date.now()}`,
-      name: newHotelData.hotelName || 'Lava Hotel',
-      location: `${newHotelData.city || 'Asaba'}, ${newHotelData.state || 'Delta'}`,
-      city: newHotelData.city || 'Asaba',
-      state: newHotelData.state || 'Delta',
-      country: newHotelData.country || 'Nigeria',
-      rating: 0,
-      reviewCount: 0,
+      ...(existing || {}),
+      id: targetId,
+      name: newHotelData.hotelName || existing?.name || 'Partner Hotel',
+      location: `${newHotelData.city || existing?.city || 'Lagos'}, ${newHotelData.state || existing?.state || 'Lagos'}`,
+      city: newHotelData.city || existing?.city || 'Lagos',
+      state: newHotelData.state || existing?.state || 'Lagos',
+      country: newHotelData.country || existing?.country || 'Nigeria',
+      rating: existing?.rating ?? 0,
+      reviewCount: existing?.reviewCount ?? 0,
       isLive: true,
-      roomCount: parseInt(newHotelData.roomCount, 10) || 30,
-      startingPrice: 35000,
+      roomCount: parseInt(newHotelData.roomCount, 10) || existing?.roomCount || 20,
+      startingPrice: existing?.startingPrice || 35000,
       coverImage:
         newHotelData.coverImage ||
+        existing?.coverImage ||
         'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80',
-      logoImage: newHotelData.logoImage || '',
-      address: newHotelData.address || 'Okpanam Road, Asaba',
-      email: newHotelData.email || newHotelData.hotelEmail || 'info@lavahotel.ng',
-      phone: newHotelData.phone || newHotelData.hotelPhone || '+234 811 223 3445',
+      logoImage: newHotelData.logoImage || existing?.logoImage || '',
+      address: newHotelData.address || existing?.address || '',
+      email: newHotelData.email || newHotelData.hotelEmail || existing?.email || '',
+      phone: newHotelData.phone || newHotelData.hotelPhone || existing?.phone || '',
+      ownerName: newHotelData.fullName || existing?.ownerName,
+      ownerEmail: newHotelData.email || existing?.ownerEmail,
       registeredBusiness: !!newHotelData.isRegisteredBusiness || !!newHotelData.registeredBusiness,
-      cacNumber: newHotelData.cacNumber,
-      bankName: newHotelData.bankName || 'Zenith Bank',
-      accountName: newHotelData.accountName || 'Lava Hotel Ltd',
-      accountNumber: newHotelData.accountNumber || '1014529384',
-      coordinates: { lat: 6.1982, lng: 6.7335 },
+      cacNumber: newHotelData.cacNumber || existing?.cacNumber,
+      bankName: newHotelData.bankName || existing?.bankName || '',
+      accountName: newHotelData.accountName || existing?.accountName || '',
+      accountNumber: newHotelData.accountNumber || existing?.accountNumber || '',
+      coordinates: existing?.coordinates || { lat: 6.1982, lng: 6.7335 },
       approvalStatus: 'approved',
-      paymentStatus: 'paid',
+      paymentStatus:
+        newHotelData.subscriptionStatus === 'active' || newHotelData.subscriptionStatus === 'trial'
+          ? 'paid'
+          : existing?.paymentStatus || 'pending',
+      subscriptionStatus: newHotelData.subscriptionStatus || existing?.subscriptionStatus || 'pending',
+      packageType: newHotelData.packageType || existing?.packageType,
+      hasGuestPortal:
+        newHotelData.hasGuestPortal !== undefined ? Boolean(newHotelData.hasGuestPortal) : existing?.hasGuestPortal,
+      subscriptionPlanId: newHotelData.subscriptionPlanId || existing?.subscriptionPlanId,
+      subscriptionPlanName: newHotelData.subscriptionPlanName || existing?.subscriptionPlanName,
+      subscriptionStartDate: newHotelData.subscriptionStartDate || existing?.subscriptionStartDate,
+      subscriptionEndDate: newHotelData.subscriptionEndDate || existing?.subscriptionEndDate,
       status: 'active',
-      submittedAt: new Date().toISOString(),
+      submittedAt: existing?.submittedAt || new Date().toISOString(),
     };
 
-    setHotels((prev) => [createdHotel, ...prev]);
+    setHotels((prev) => {
+      if (prev.some((h) => h.id === targetId)) {
+        return prev.map((h) => (h.id === targetId ? createdHotel : h));
+      }
+      return [createdHotel, ...prev];
+    });
     setSelectedHotel(createdHotel);
     setActiveScreen('staff_portal');
   };
@@ -961,6 +1055,70 @@ export default function App() {
       setLiveToast((prev) => (prev?.message === message ? null : prev));
     }, 4500);
   };
+
+  // Verify Paystack Hosted Checkout redirect callbacks server-side before activating entitlements
+  const verifiedCallbackRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const isPaystackCallback =
+      params.get('paystack_callback') === '1' || params.has('trxref') || params.has('reference');
+    const reference = (params.get('reference') || params.get('trxref') || '').trim();
+    if (!isPaystackCallback || !reference || verifiedCallbackRef.current === reference) {
+      return;
+    }
+
+    let cancelled = false;
+    const verifyReturn = async () => {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      // Wait for Supabase session hydration on fresh page load after Paystack redirect
+      if (!headers['Authorization']) return;
+
+      verifiedCallbackRef.current = reference;
+      try {
+        const res = await fetch('/api/subscriptions/verify', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ reference }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (cancelled) return;
+
+        // Clear URL callback parameters cleanly so reloads do not re-trigger verification
+        try {
+          window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash || ''}`);
+          sessionStorage.removeItem(PENDING_PAYSTACK_STORAGE_KEY);
+        } catch {}
+
+        if (res.ok && data.success && data.hotel) {
+          setHotels((prev) => {
+            const exists = prev.some((h) => h.id === data.hotel.id);
+            return exists ? prev.map((h) => (h.id === data.hotel.id ? data.hotel : h)) : [data.hotel, ...prev];
+          });
+          setSelectedHotel(data.hotel);
+          setActiveScreen('staff_portal');
+          triggerLiveToast(
+            `${data.hotel.name} activated on ${data.planName || 'IGHO Stay'} (Paystack Test Verified).`,
+            'add'
+          );
+        } else {
+          triggerLiveToast(
+            data.message || 'Paystack payment was not completed. Subscription remains inactive.',
+            'delete'
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          triggerLiveToast('Unable to verify Paystack transaction status with server.', 'delete');
+        }
+      }
+    };
+
+    verifyReturn();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserEmail, initialStateLoaded]);
 
   // Instant Real-Time Synchronization Listener (SSE + BroadcastChannel across tabs/devices)
   useEffect(() => {
@@ -1046,13 +1204,154 @@ export default function App() {
     window.addEventListener('igho_demo_requested', handleDemoEvent);
     window.addEventListener('igho_feedback_submitted', handleSupportEvent);
 
+    // Subscribe to server SSE stream for subscription upgrades, org renames, bans, waitlists, and demos
+    let sseSource: EventSource | null = null;
+    if (typeof window !== 'undefined' && typeof EventSource !== 'undefined') {
+      try {
+        sseSource = new EventSource('/api/events');
+        sseSource.addEventListener('hotel_subscription_updated', (ev: any) => {
+          try {
+            const payload = JSON.parse(ev.data || '{}');
+            if (!payload.hotelId) return;
+            const applySubscriptionUpdate = (h: Hotel): Hotel =>
+              h.id === payload.hotelId
+                ? {
+                    ...h,
+                    subscriptionPlanId: payload.planId || h.subscriptionPlanId,
+                    subscriptionPlanName: payload.planName || h.subscriptionPlanName,
+                    packageType: payload.packageType || h.packageType,
+                    hasGuestPortal:
+                      payload.hasGuestPortal !== undefined ? payload.hasGuestPortal : h.hasGuestPortal,
+                    privileges: payload.privileges || h.privileges,
+                    billingCycle: payload.billingCycle || h.billingCycle,
+                    subscriptionStatus: payload.subscriptionStatus || 'active',
+                    subscriptionStartDate: payload.subscriptionStartDate || h.subscriptionStartDate,
+                    subscriptionEndDate: payload.subscriptionEndDate || h.subscriptionEndDate,
+                    trialStartDate: payload.trialStartDate || h.trialStartDate,
+                    trialEndDate: payload.trialEndDate || h.trialEndDate,
+                    paymentStatus: 'paid',
+                    isLive: true,
+                  }
+                : h;
+            isSyncingFromServer.current = true;
+            setHotels((prev) => prev.map(applySubscriptionUpdate));
+            setSelectedHotel((prev) => applySubscriptionUpdate(prev));
+          } catch {}
+        });
+        sseSource.addEventListener('hotel_plan_migrated', (ev: any) => {
+          try {
+            const payload = JSON.parse(ev.data || '{}');
+            if (!payload.hotelId) return;
+            const applyPlanMigration = (h: Hotel): Hotel =>
+              h.id === payload.hotelId
+                ? {
+                    ...h,
+                    subscriptionPlanId: payload.newPlanId || h.subscriptionPlanId,
+                    subscriptionPlanName: payload.newPlanName || h.subscriptionPlanName,
+                    hasGuestPortal:
+                      payload.privileges?.hasGuestPortal !== undefined
+                        ? payload.privileges.hasGuestPortal
+                        : h.hasGuestPortal,
+                    privileges: payload.privileges || h.privileges,
+                  }
+                : h;
+            isSyncingFromServer.current = true;
+            setHotels((prev) => prev.map(applyPlanMigration));
+            setSelectedHotel((prev) => applyPlanMigration(prev));
+          } catch {}
+        });
+        sseSource.addEventListener('hotel_profile_updated', (ev: any) => {
+          try {
+            const payload = JSON.parse(ev.data || '{}');
+            const updatedHotel = payload?.hotel;
+            if (!updatedHotel?.id) return;
+            isSyncingFromServer.current = true;
+            setHotels((prev) => prev.map((h) => (h.id === updatedHotel.id ? { ...h, ...updatedHotel } : h)));
+            setSelectedHotel((prev) => (prev.id === updatedHotel.id ? { ...prev, ...updatedHotel } : prev));
+          } catch {}
+        });
+        sseSource.addEventListener('user_profile_updated', (ev: any) => {
+          try {
+            const payload = JSON.parse(ev.data || '{}');
+            const pRec = payload?.profile;
+            if (!pRec?.email) return;
+            if (currentUserEmail && pRec.email.toLowerCase() === currentUserEmail.trim().toLowerCase()) {
+              const fullName = String(pRec.fullName || '').trim();
+              const parts = fullName ? fullName.split(/\s+/) : [];
+              setCurrentGuestProfile((prev) => {
+                const merged: CustomerProfile = {
+                  ...(prev || {
+                    id: pRec.id || `cust-${Date.now()}`,
+                    email: pRec.email,
+                    firstName: parts[0] || '',
+                    lastName: parts.slice(1).join(' ') || '',
+                    phone: '',
+                    address: '',
+                    createdAt: pRec.createdAt || new Date().toISOString(),
+                  }),
+                  firstName: pRec.firstName || parts[0] || prev?.firstName || '',
+                  lastName: pRec.lastName || parts.slice(1).join(' ') || prev?.lastName || '',
+                  phone: pRec.phone !== undefined ? pRec.phone : (prev?.phone || ''),
+                  address: pRec.address !== undefined ? pRec.address : (prev?.address || ''),
+                  avatarUrl: pRec.avatarUrl !== undefined ? pRec.avatarUrl : prev?.avatarUrl,
+                };
+                saveCustomerProfile(merged);
+                return merged;
+              });
+            }
+          } catch {}
+        });
+        sseSource.addEventListener('organization_name_updated', (ev: any) => {
+          try {
+            const payload = JSON.parse(ev.data || '{}');
+            if (payload.id && payload.name) {
+              setHotels((prev) => prev.map((h) => (h.id === payload.id ? { ...h, name: payload.name } : h)));
+              setSelectedHotel((prev) => (prev.id === payload.id ? { ...prev, name: payload.name } : prev));
+            }
+          } catch {}
+        });
+        sseSource.addEventListener('user_status_changed', (ev: any) => {
+          try {
+            const payload = JSON.parse(ev.data || '{}');
+            if (Array.isArray(payload.bannedEmails)) {
+              localStorage.setItem('igho_banned_users', JSON.stringify(payload.bannedEmails));
+            }
+            window.dispatchEvent(new CustomEvent('igho_user_banned', { detail: payload }));
+          } catch {}
+        });
+        sseSource.addEventListener('waitlist_created', (ev: any) => {
+          try {
+            const payload = JSON.parse(ev.data || '{}');
+            if (isSuperAdmin) {
+              triggerLiveToast(
+                `New Waitlist: ${payload.fullName || 'Applicant'} (${payload.product || 'Waitlist'})`,
+                'add'
+              );
+            }
+          } catch {}
+        });
+        sseSource.addEventListener('demo_request_created', (ev: any) => {
+          try {
+            const payload = JSON.parse(ev.data || '{}');
+            if (isSuperAdmin) {
+              triggerLiveToast(
+                `New Demo Request: ${payload.orgName || payload.fullName || 'Enterprise'}`,
+                'add'
+              );
+            }
+          } catch {}
+        });
+      } catch {}
+    }
+
     return () => {
       unsubscribe();
+      sseSource?.close();
       window.removeEventListener('igho_waitlist_joined', handleWaitlistEvent);
       window.removeEventListener('igho_demo_requested', handleDemoEvent);
       window.removeEventListener('igho_feedback_submitted', handleSupportEvent);
     };
-  }, [selectedRoom.id, activeScreen, bookingDraft.room?.id]);
+  }, [selectedRoom.id, activeScreen, bookingDraft.room?.id, isSuperAdmin]);
 
   const handleAddRoom = (newRoom: Room) => {
     setRooms((prev) => {
@@ -1224,8 +1523,9 @@ export default function App() {
           payoutSettings={platformSettings.subscriptionPayout}
           existingHotels={hotels}
           onRegisterRequest={(hotelData) => {
+            const pendingHotelId = hotelData.id || `hotel-${Date.now()}`;
             const pendingHotel: Hotel = {
-              id: `hotel-${Date.now()}`,
+              id: pendingHotelId,
               name: hotelData.hotelName || 'Pending Hotel',
               location: `${hotelData.city || 'Lagos'}, ${hotelData.state || 'Lagos'}`,
               city: hotelData.city || 'Lagos',
@@ -1262,6 +1562,7 @@ export default function App() {
               saveToStorage('igho_db_hotels', updated);
               return updated;
             });
+            setSelectedHotel(pendingHotel);
             window.dispatchEvent(new Event('igho_hotels_updated'));
 
             // Immediately persist to backend server
@@ -1284,6 +1585,7 @@ export default function App() {
                 }),
               }).catch(() => {});
             } catch {}
+            return pendingHotelId;
           }}
         />
       )}
@@ -1374,6 +1676,7 @@ export default function App() {
           onUpdateGuestProfile={(updated) => {
             setCurrentGuestProfile(updated);
             saveCustomerProfile(updated);
+            setProfileUpdateTrigger((p) => p + 1);
           }}
           onUpdateReservation={handleUpdateReservation}
           onSignOut={handleGuestSignOut}
@@ -1509,8 +1812,23 @@ export default function App() {
               );
               setSelectedHotel((prev) => ({ ...prev, ...bankInfo }));
             }}
-            onUpgradeSubscription={(planId, billingCycle, proof) => {
-              navigateTo('hotel_subscription_plan');
+            onUpgradeSubscription={(planId, _billingCycle, verificationResult) => {
+              if (!verificationResult?.success || !verificationResult?.hotel) {
+                navigateTo('hotel_subscription_plan');
+                return;
+              }
+              const verifiedHotel: Hotel = {
+                ...activeHotelForPMS,
+                ...verificationResult.hotel,
+              };
+              setHotels((prev) => prev.map((h) => (h.id === verifiedHotel.id ? verifiedHotel : h)));
+              setSelectedHotel(verifiedHotel);
+              const isComplete = Boolean(verifiedHotel.hasGuestPortal);
+              const toastMsg = isComplete
+                ? `${verifiedHotel.name} upgraded to ${verifiedHotel.subscriptionPlanName || planId}! Guest Portal is now live.`
+                : `${verifiedHotel.name} updated to ${verifiedHotel.subscriptionPlanName || planId}.`;
+
+              triggerLiveToast(toastMsg, 'add');
             }}
             onAddCustomRole={(newRole) => {
               setCustomRoles((prev) => [...prev, newRole]);
@@ -1622,12 +1940,10 @@ export default function App() {
               try {
                 window.location.hash = '';
               } catch {}
-              setLiveToast({
-                id: Date.now().toString(),
-                type: 'create',
-                message: `Account activated! Welcome to ${matchingInvite.hotelName}, ${newStaffAccount.name}.`,
-              });
-              setTimeout(() => setLiveToast(null), 4000);
+              triggerLiveToast(
+                `Account activated! Welcome to ${matchingInvite.hotelName}, ${newStaffAccount.name}.`,
+                'add'
+              );
               navigateTo('staff_portal');
             }}
             onNavigate={navigateTo}

@@ -43,12 +43,22 @@ export const HotelDirectory: React.FC<HotelDirectoryProps> = ({
   const [notifiedHotels, setNotifiedHotels] = useState<string[]>([]);
   const [locationDetecting, setLocationDetecting] = useState(false);
 
-  // Helper: A hotel is LIVE on the directory after it registers, is approved AND has active status or trial
+  // Helper: A hotel appears in Discover Hotels ONLY if approved, active, not suspended, AND on a plan that includes the Guest Portal
   const isHotelLiveInDirectory = (h: Hotel) => {
-    if (h.approvalStatus === 'rejected' || (h as any).isSuspended) return false;
-    if (h.status === 'suspended' || h.status === 'pending') return false;
+    if (h.approvalStatus === 'rejected' || h.approvalStatus === 'pending' || (h as any).isSuspended) {
+      return false;
+    }
+    if (h.status === 'suspended' || h.status === 'pending') {
+      return false;
+    }
+    if (h.hasGuestPortal === false || h.packageType === 'management') {
+      return false;
+    }
+    if (h.subscriptionPlanId === 'plan-starter-30k' || h.subscriptionPlanId === 'plan-1') {
+      return false;
+    }
     const isApproved = h.approvalStatus === 'approved' || h.status === 'active' || h.isLive;
-    return isApproved;
+    return Boolean(isApproved);
   };
 
   // Dynamically aggregate States & Cities so newly approved & paid hotels immediately appear
@@ -445,18 +455,15 @@ export const HotelDirectory: React.FC<HotelDirectoryProps> = ({
                       <Bell className="w-3 h-3" />
                       <span>{notifiedHotels.includes(hotel.id) ? 'Notified ✓' : 'Notify Me'}</span>
                     </button>
-                    <button
-                      onClick={() =>
-                        window.open(
-                          `https://www.google.com/maps/search/?api=1&query=${hotel.coordinates.lat},${hotel.coordinates.lng}`,
-                          '_blank'
-                        )
-                      }
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${hotel.coordinates.lat},${hotel.coordinates.lng}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       className="py-2 px-3 rounded-xl text-xs font-semibold border border-neutral-300 text-neutral-800 hover:bg-neutral-50 flex items-center justify-center gap-1 transition-colors"
                     >
                       <Navigation className="w-3 h-3" />
                       <span>Directions</span>
-                    </button>
+                    </a>
                   </div>
                 )}
               </div>

@@ -29,10 +29,13 @@ import {
   Info,
   ArrowRight,
   Download,
+  Upload,
+  Camera,
 } from 'lucide-react';
 import { Reservation, Room, ActiveScreen, CustomerProfile, Hotel } from '../types';
 import { BackButton } from './BackButton';
 import { getSavedCustomerProfile } from '../utils/auth';
+import { getAuthHeaders } from '../utils/storageUpload';
 import { IghoOfficialEmblem, IghoLoadingEmblem } from './IghoLogo';
 import { getRoomCategories, getRoomLevelInfo, RoomCategory } from '../utils/roomCategories';
 
@@ -119,6 +122,7 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
         address: active.address || '',
         city: active.city || '',
         state: active.state || '',
+        avatarUrl: active.avatarUrl || '',
       };
     }
     const namePart = cleanEmail ? cleanEmail.split('@')[0].replace(/[._]/g, ' ') : 'Guest';
@@ -130,6 +134,7 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
       address: '',
       city: '',
       state: '',
+      avatarUrl: '',
     };
   });
 
@@ -148,6 +153,7 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
         address: active.address || '',
         city: active.city || '',
         state: active.state || '',
+        avatarUrl: active.avatarUrl || '',
       });
     } else if (cleanEmail) {
       const namePart = cleanEmail.split('@')[0].replace(/[._]/g, ' ');
@@ -159,11 +165,15 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
         address: '',
         city: '',
         state: '',
+        avatarUrl: '',
       });
     }
   }, [guestProfile, currentUserEmail]);
 
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [profileSaveError, setProfileSaveError] = useState('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
 
   // Delete Account Slider & Countdown State
   const [deleteSlider, setDeleteSlider] = useState<number>(0);
@@ -215,7 +225,46 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
     setCountdown(5);
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setProfileSaveError('');
+    if (file.size > 10 * 1024 * 1024) {
+      setProfileSaveError('Profile photo must be smaller than 10MB.');
+      return;
+    }
+    setIsUploadingAvatar(true);
+    try {
+      const authHeaders = await getAuthHeaders();
+      const res = await fetch(
+        `/api/storage/platform-profiles/upload-binary?category=guest_portal_media&filename=${encodeURIComponent(file.name)}`,
+        {
+          method: 'POST',
+          headers: {
+            ...authHeaders,
+            'Content-Type': file.type || 'application/octet-stream',
+            'x-file-name': encodeURIComponent(file.name),
+            'x-uploaded-by': encodeURIComponent(profile.email || currentUserEmail || 'Guest'),
+          },
+          body: file,
+        }
+      );
+      const data = await res.json();
+      if (res.ok && data?.success && (data?.url || data?.file?.url)) {
+        const uploadedUrl = data.url || data.file.url;
+        setProfile((prev) => ({ ...prev, avatarUrl: uploadedUrl }));
+      } else {
+        setProfileSaveError(data?.message || 'Failed to upload profile photo.');
+      }
+    } catch {
+      setProfileSaveError('Network error while uploading profile photo.');
+    } finally {
+      setIsUploadingAvatar(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanEmail = (profile.email || currentUserEmail || '').trim().toLowerCase();
     const updated: CustomerProfile = {
@@ -228,22 +277,50 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
       city: profile.city?.trim() || '',
       state: profile.state?.trim() || '',
       country: 'Nigeria',
+      avatarUrl: (profile.avatarUrl || '').trim(),
       createdAt: guestProfile?.createdAt || new Date().toISOString(),
     };
 
-    if (onUpdateGuestProfile) {
-      onUpdateGuestProfile(updated);
-    }
-
+    setProfileSaveError('');
+    setIsSavingProfile(true);
     try {
-      const raw = localStorage.getItem('igho_db_customer_profiles');
-      const list: CustomerProfile[] = raw ? JSON.parse(raw) : [];
-      const filtered = list.filter((p) => p.email.toLowerCase() !== cleanEmail);
-      localStorage.setItem('igho_db_customer_profiles', JSON.stringify([updated, ...filtered]));
-    } catch {}
+      const authHeaders = await getAuthHeaders();
+      const res = await fetch('/api/users/profile', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-igho-user-email': cleanEmail,
+          ...authHeaders,
+        },
+        body: JSON.stringify({
+          ...updated,
+          fullName: `${updated.firstName} ${updated.lastName}`.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.success) {
+        setProfileSaveError(data?.message || 'Unable to save profile to server.');
+        return;
+      }
 
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 2500);
+      if (onUpdateGuestProfile) {
+        onUpdateGuestProfile(updated);
+      }
+
+      try {
+        const raw = localStorage.getItem('igho_db_customer_profiles');
+        const list: CustomerProfile[] = raw ? JSON.parse(raw) : [];
+        const filtered = list.filter((p) => p.email.toLowerCase() !== cleanEmail);
+        localStorage.setItem('igho_db_customer_profiles', JSON.stringify([updated, ...filtered]));
+      } catch {}
+
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 2500);
+    } catch {
+      setProfileSaveError('Failed to connect to server while saving profile.');
+    } finally {
+      setIsSavingProfile(false);
+    }
   };
 
   const effectiveEmail = (profile.email || currentUserEmail || '').trim().toLowerCase();
@@ -1091,6 +1168,58 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
           </div>
 
           <form onSubmit={handleSaveProfile} className="space-y-4">
+            {/* Profile Photo Upload */}
+            <div className="flex items-center gap-4 p-4 rounded-2xl border border-neutral-200 bg-neutral-50">
+              <div className="relative shrink-0">
+                {profile.avatarUrl ? (
+                  <img
+                    src={profile.avatarUrl}
+                    alt="Profile avatar"
+                    className="w-16 h-16 rounded-full object-cover border-2 border-white shadow-sm"
+                  />
+                ) : (
+                  <div className="w-16 h-16 rounded-full bg-black text-white font-extrabold flex items-center justify-center text-lg border-2 border-white shadow-sm">
+                    {((profile.firstName || profile.email || 'G').charAt(0) || 'G').toUpperCase()}
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 min-w-0 space-y-1.5">
+                <div className="text-xs font-bold text-neutral-900">Profile Picture</div>
+                <p className="text-[11px] text-neutral-500">
+                  Saved to your IGHO Stay account across devices and sessions.
+                </p>
+                <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                  <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-neutral-300 hover:bg-neutral-100 text-xs font-bold text-neutral-800 cursor-pointer transition-colors">
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>{isUploadingAvatar ? 'Uploading...' : profile.avatarUrl ? 'Change Photo' : 'Upload Photo'}</span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      onChange={handleAvatarUpload}
+                      disabled={isUploadingAvatar}
+                      className="hidden"
+                    />
+                  </label>
+                  {profile.avatarUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setProfile((prev) => ({ ...prev, avatarUrl: '' }))}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-[11px] font-bold text-rose-700 cursor-pointer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Remove</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {profileSaveError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-semibold">
+                {profileSaveError}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label className="block text-xs font-semibold text-neutral-700">Email</label>
@@ -1177,9 +1306,10 @@ export const GuestDashboard: React.FC<GuestDashboardProps> = ({
               <div className="flex items-center gap-3">
                 <button
                   type="submit"
-                  className="bg-black text-white px-6 py-2.5 rounded-full text-xs font-bold hover:bg-neutral-800 transition-all active:scale-95 shadow-2xs cursor-pointer"
+                  disabled={isSavingProfile || isUploadingAvatar}
+                  className="bg-black text-white px-6 py-2.5 rounded-full text-xs font-bold hover:bg-neutral-800 transition-all active:scale-95 shadow-2xs cursor-pointer disabled:opacity-50"
                 >
-                  Save changes
+                  {isSavingProfile ? 'Saving...' : 'Save changes'}
                 </button>
                 {savedSuccess && (
                   <span className="text-xs text-emerald-600 font-semibold flex items-center gap-1">

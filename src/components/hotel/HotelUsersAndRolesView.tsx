@@ -26,6 +26,7 @@ import {
   StaffRole,
   PermissionId,
   CustomRole,
+  PlanPrivileges,
 } from '../../types';
 import {
   PERMISSION_CATALOGUE,
@@ -38,6 +39,8 @@ export interface HotelUsersAndRolesViewProps {
   staff: StaffAccount[];
   invitations?: StaffInvitation[];
   customRoles?: CustomRole[];
+  privileges?: PlanPrivileges;
+  onRequestUpgrade?: () => void;
   onInviteStaff: (invite: StaffInvitation) => void;
   onAddStaffMember?: (newStaff: StaffAccount) => void;
   onDeactivateStaff?: (staffId: string) => void;
@@ -56,6 +59,8 @@ export const HotelUsersAndRolesView: React.FC<HotelUsersAndRolesViewProps> = ({
   staff,
   invitations = [],
   customRoles = [],
+  privileges,
+  onRequestUpgrade,
   onInviteStaff,
   onAddStaffMember,
   onDeactivateStaff,
@@ -68,6 +73,25 @@ export const HotelUsersAndRolesView: React.FC<HotelUsersAndRolesViewProps> = ({
   onUpdatePermissions,
   onUpdateStaffRole,
 }) => {
+  const effectivePrivileges: PlanPrivileges = privileges || hotel.privileges || {
+    hasGuestPortal: hotel.hasGuestPortal !== false && hotel.subscriptionPlanId !== 'plan-starter-30k',
+    maxRooms: hotel.subscriptionPlanId === 'plan-complete-50k' ? 999 : 20,
+    maxStaff: hotel.subscriptionPlanId === 'plan-complete-50k' ? 100 : 5,
+    maxBranches: hotel.subscriptionPlanId === 'plan-complete-50k' ? 25 : 1,
+    storageQuotaGb: hotel.subscriptionPlanId === 'plan-complete-50k' ? 10 : 1,
+    frontDeskPMS: true,
+    housekeeping: true,
+    guestFolios: true,
+    nightAudit: true,
+    cashierShifts: true,
+    maintenanceBlocks: true,
+    customRoles: hotel.subscriptionPlanId === 'plan-complete-50k',
+    multiBranch: hotel.subscriptionPlanId === 'plan-complete-50k',
+    cautionDeposits: hotel.subscriptionPlanId === 'plan-complete-50k',
+    financialExports: hotel.subscriptionPlanId === 'plan-complete-50k',
+    publicDirectoryListing: true,
+    prioritySupport: hotel.subscriptionPlanId === 'plan-complete-50k',
+  };
   const [subTab, setSubTab] = useState<'staff' | 'invitations' | 'roles'>('staff');
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
@@ -111,6 +135,11 @@ export const HotelUsersAndRolesView: React.FC<HotelUsersAndRolesViewProps> = ({
   const handleSendInvite = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inviteEmail.trim()) return;
+    if (hotelStaff.length >= effectivePrivileges.maxStaff) {
+      showToast(`Staff limit reached (${effectivePrivileges.maxStaff} seats on your current plan). Upgrade to Professional for more seats.`);
+      setShowInviteModal(false);
+      return;
+    }
 
     const token = `inv-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const newInvitation: StaffInvitation = {
@@ -128,27 +157,10 @@ export const HotelUsersAndRolesView: React.FC<HotelUsersAndRolesViewProps> = ({
 
     onInviteStaff(newInvitation);
 
-    // Also immediately add to active staff list for seamless dashboard testing
-    if (onAddStaffMember) {
-      const newStaff: StaffAccount = {
-        id: `staff-${Date.now()}`,
-        hotelId: hotel.id,
-        name: inviteName.trim() || inviteEmail.split('@')[0],
-        email: inviteEmail.trim().toLowerCase(),
-        role: inviteRole,
-        roles: [inviteRole],
-        status: 'active',
-        active: true,
-        permissions: DEFAULT_ROLE_PERMISSIONS[inviteRole] || ['reservations.view', 'rooms.view'],
-        addedDate: new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-      };
-      onAddStaffMember(newStaff);
-    }
-
     setInviteName('');
     setInviteEmail('');
     setShowInviteModal(false);
-    showToast(`Invitation sent to ${inviteEmail}`);
+    showToast(`Invitation sent to ${inviteEmail}. They will appear as active once they accept.`);
   };
 
   const handleCreateCustomRole = (e: React.FormEvent) => {
@@ -264,6 +276,10 @@ export const HotelUsersAndRolesView: React.FC<HotelUsersAndRolesViewProps> = ({
 
         <div className="flex flex-wrap items-center gap-2.5">
           {/* Sub Tab Switcher */}
+          <span className="text-[11px] font-mono font-bold px-3 py-1 rounded-full bg-neutral-100 border border-neutral-200 text-neutral-700">
+            {hotelStaff.length} / {effectivePrivileges.maxStaff >= 100 ? '100+' : effectivePrivileges.maxStaff} seats
+          </span>
+
           <div className="flex items-center bg-neutral-100 p-1 rounded-full text-xs font-semibold">
             <button
               onClick={() => setSubTab('staff')}
@@ -298,18 +314,25 @@ export const HotelUsersAndRolesView: React.FC<HotelUsersAndRolesViewProps> = ({
             </button>
             <button
               onClick={() => setSubTab('roles')}
-              className={`px-3.5 py-1.5 rounded-full transition-all ${
+              className={`px-3.5 py-1.5 rounded-full transition-all inline-flex items-center gap-1 ${
                 subTab === 'roles'
                   ? 'bg-black text-white shadow-xs font-bold'
                   : 'text-neutral-600 hover:text-black'
               }`}
             >
-              Custom Roles ({customRoles.length})
+              {!effectivePrivileges.customRoles && <Lock className="w-3 h-3" />}
+              <span>Custom Roles ({customRoles.length})</span>
             </button>
           </div>
 
           <button
-            onClick={() => setShowInviteModal(true)}
+            onClick={() => {
+              if (hotelStaff.length >= effectivePrivileges.maxStaff) {
+                showToast(`Staff limit reached (${effectivePrivileges.maxStaff} seats on your current plan). Upgrade to Professional for more.`);
+                return;
+              }
+              setShowInviteModal(true);
+            }}
             className="flex items-center gap-1.5 px-4 py-2 bg-black hover:bg-neutral-800 text-white rounded-full text-xs font-bold shadow-xs active:scale-95 transition-all"
           >
             <UserPlus className="w-3.5 h-3.5" />
@@ -571,13 +594,23 @@ export const HotelUsersAndRolesView: React.FC<HotelUsersAndRolesViewProps> = ({
                 Create and manage custom roles with granular permission grants tailored to your hotel operations.
               </p>
             </div>
-            <button
-              onClick={() => setShowCustomRoleModal(true)}
-              className="px-4 py-2 bg-black text-white text-xs font-bold rounded-full hover:bg-neutral-800 shadow-xs flex items-center gap-1.5 transition-all self-start sm:self-auto"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>New Custom Role</span>
-            </button>
+            {effectivePrivileges.customRoles ? (
+              <button
+                onClick={() => setShowCustomRoleModal(true)}
+                className="px-4 py-2 bg-black text-white text-xs font-bold rounded-full hover:bg-neutral-800 shadow-xs flex items-center gap-1.5 transition-all self-start sm:self-auto"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>New Custom Role</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => onRequestUpgrade?.()}
+                className="px-4 py-2 bg-amber-100 text-amber-950 border border-amber-300 text-xs font-bold rounded-full hover:bg-amber-200 shadow-xs flex items-center gap-1.5 transition-all self-start sm:self-auto"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>Upgrade to Professional for Custom Roles</span>
+              </button>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

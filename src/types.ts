@@ -170,6 +170,51 @@ export interface Room {
   branchName?: string;
 }
 
+export interface HotelSettings {
+  onlineBookings: boolean;
+  allowRegistration: boolean;
+  showPrices: boolean;
+  showAvailability: boolean;
+  requireIdVerification: boolean;
+}
+
+export interface PlanPrivileges {
+  hasGuestPortal: boolean;
+  maxRooms: number;
+  maxStaff: number;
+  maxBranches: number;
+  storageQuotaGb: number;
+  frontDeskPMS: boolean;
+  housekeeping: boolean;
+  guestFolios: boolean;
+  nightAudit: boolean;
+  cashierShifts: boolean;
+  maintenanceBlocks: boolean;
+  customRoles: boolean;
+  multiBranch: boolean;
+  cautionDeposits: boolean;
+  financialExports: boolean;
+  publicDirectoryListing: boolean;
+  prioritySupport: boolean;
+}
+
+export interface UserProfileRecord {
+  id: string;
+  userId?: string;
+  email: string;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  avatarUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Hotel {
   id: string;
   name: string;
@@ -219,14 +264,24 @@ export interface Hotel {
   subscriptionPlanId?: string;
   subscriptionPlanName?: string;
   hasGuestPortal?: boolean;
-  subscriptionStatus?: 'trial' | 'active' | 'pending' | 'expired' | 'none';
+  subscriptionStatus?: 'trial' | 'active' | 'pending' | 'expired' | 'past_due' | 'cancelled' | 'none';
   billingCycle?: 'monthly' | 'annual' | '5year_contract';
+  paymentMode?: 'paystack_recurring' | 'paystack_one_time' | 'trial_token' | string;
+  paystackMode?: 'test' | 'live';
+  autoRenew?: boolean;
+  cancelAtPeriodEnd?: boolean;
+  paystackCustomerCode?: string;
+  paystackSubscriptionCode?: string;
   trialCode?: string;
   trialStartDate?: string;
   trialEndDate?: string;
   subscriptionStartDate?: string;
   subscriptionEndDate?: string;
   isContractPlan?: boolean;
+  transferInstructions?: string;
+  settings?: HotelSettings;
+  privileges?: PlanPrivileges;
+  profileUpdatedAt?: string;
 }
 
 export interface Reservation {
@@ -315,6 +370,7 @@ export interface StaffAccount {
   permissions: PermissionId[];
   addedDate: string;
   active: boolean;
+  avatarUrl?: string;
 }
 
 export interface StaffInvitation {
@@ -359,6 +415,7 @@ export interface CustomerProfile {
   city?: string;
   state?: string;
   country?: string;
+  avatarUrl?: string;
   createdAt: string;
 }
 
@@ -429,6 +486,7 @@ export interface SubscriptionPlan {
   contractAnnualPrice?: number;
   contractFiveYearTotal?: number;
   contractDepositRequired?: number; // e.g. 20% deposit
+  privileges?: PlanPrivileges;
 }
 
 export interface HotelSubscription {

@@ -62,6 +62,7 @@ import { ConsoleSettingsView } from './console/ConsoleSettingsView';
 import { ConsoleAuditLogsView } from './console/ConsoleAuditLogsView';
 import { EditProfileModal } from './common/EditProfileModal';
 import { authService } from '../lib/authService';
+import { getAuthHeaders } from '../utils/storageUpload';
 
 interface SuperAdminConsoleProps {
   currentUserEmail?: string;
@@ -175,18 +176,62 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   const [demoRequests, setDemoRequests] = useState<DemoRequest[]>(initialDemoRequests);
 
   React.useEffect(() => {
-    // Sync platform users from backend
-    fetch('/api/console/users')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && Array.isArray(data.users) && data.users.length > 0) {
-          setPlatformUsers(data.users);
-          try {
-            localStorage.setItem('igho_platform_users', JSON.stringify(data.users));
-          } catch {}
-        }
-      })
-      .catch((err) => console.error(err));
+    (async () => {
+      const headers = await getAuthHeaders();
+
+      // Sync platform users from backend
+      fetch('/api/console/users', { headers })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.users) && data.users.length > 0) {
+            setPlatformUsers(data.users);
+            try {
+              localStorage.setItem('igho_platform_users', JSON.stringify(data.users));
+            } catch {}
+          }
+        })
+        .catch((err) => console.error(err));
+
+      // Sync demo requests from backend
+      fetch('/api/demo-requests', { headers })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.demoRequests)) {
+            setDemoRequests(data.demoRequests);
+            try {
+              localStorage.setItem('igho_demo_requests', JSON.stringify(data.demoRequests));
+              window.dispatchEvent(new Event('igho_demo_requests_updated'));
+            } catch {}
+            if (onUpdateDemoRequests) {
+              onUpdateDemoRequests(data.demoRequests);
+            }
+          }
+        })
+        .catch((err) => console.error(err));
+
+      // Sync console admin profile (name, avatar) from backend
+      const targetAdminEmail = (currentUserEmail || 'superadmin@igho.software').trim().toLowerCase();
+      fetch(`/api/users/profile?email=${encodeURIComponent(targetAdminEmail)}`, { headers })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data?.success && data?.profile) {
+            if (data.profile.fullName) setProfileName(data.profile.fullName);
+            if (data.profile.email) setProfileEmail(data.profile.email);
+            if (data.profile.avatarUrl !== undefined) setProfilePicture(data.profile.avatarUrl || '');
+          }
+        })
+        .catch(() => {});
+
+      // Sync audit logs from backend
+      fetch('/api/audit-logs', { headers })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.logs)) {
+            setAuditLogs(data.logs);
+          }
+        })
+        .catch((err) => console.error(err));
+    })();
 
     const handleUsersUpdated = () => {
       try {
@@ -196,7 +241,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
     };
     window.addEventListener('igho_users_updated', handleUsersUpdated);
     return () => window.removeEventListener('igho_users_updated', handleUsersUpdated);
-  }, []);
+  }, [currentUserEmail]);
 
   React.useEffect(() => {
     setHotels(initialHotels);
@@ -240,7 +285,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   };
 
   // Helper to record immutable audit log entry
-  const recordAuditLog = (
+  const recordAuditLog = async (
     action: PlatformAuditLog['action'],
     target: string,
     targetType: PlatformAuditLog['targetType'],
@@ -262,6 +307,15 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
       newValue,
     };
     setAuditLogs((prev) => [newLog, ...prev]);
+
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch('/api/audit-logs', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(newLog),
+      });
+    } catch {}
   };
 
   // Synchronize hotels to parent if onUpdateHotels passed
@@ -273,25 +327,35 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   };
 
   // 1. APPROVE HOTEL (Approved hotel must pay subscription or activate 1-month trial before going live)
-  const handleApproveHotel = (hotelId: string) => {
+  const handleApproveHotel = async (hotelId: string) => {
     const target = hotels.find((h) => h.id === hotelId);
     if (!target) return;
 
+    const approvalPatch = {
+      isLive: false,
+      status: 'active' as const,
+      approvalStatus: 'approved' as const,
+      paymentStatus: 'pending' as const,
+      subscriptionStatus: 'pending' as const,
+      reviewedBy: currentUserEmail || 'Platform Super Admin',
+      reviewedAt: new Date().toISOString(),
+    };
+
     const updated = hotels.map((h) =>
-      h.id === hotelId
-        ? {
-            ...h,
-            isLive: false, // Goes live immediately once they pay subscription or activate 1-month trial
-            status: 'active' as const,
-            approvalStatus: 'approved' as const,
-            paymentStatus: 'pending' as const,
-            subscriptionStatus: 'pending' as const,
-            reviewedBy: 'Super Admin',
-            reviewedAt: new Date().toISOString(),
-          }
-        : h
+      h.id === hotelId ? { ...h, ...approvalPatch } : h
     );
     updateHotelsList(updated);
+
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/console/organizations/${encodeURIComponent(hotelId)}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify(approvalPatch),
+      });
+    } catch (e) {
+      console.error('Failed to persist hotel approval:', e);
+    }
 
     recordAuditLog(
       'APPROVE_HOTEL',
@@ -304,24 +368,34 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   };
 
   // 2. REJECT HOTEL
-  const handleRejectHotel = (hotelId: string, reason: string) => {
+  const handleRejectHotel = async (hotelId: string, reason: string) => {
     const target = hotels.find((h) => h.id === hotelId);
     if (!target) return;
 
+    const rejectPatch = {
+      isLive: false,
+      status: 'rejected' as const,
+      approvalStatus: 'rejected' as const,
+      rejectionReason: reason,
+      reviewedBy: currentUserEmail || 'Platform Super Admin',
+      reviewedAt: new Date().toISOString(),
+    };
+
     const updated = hotels.map((h) =>
-      h.id === hotelId
-        ? {
-            ...h,
-            isLive: false,
-            status: 'rejected' as const,
-            approvalStatus: 'rejected' as const,
-            rejectionReason: reason,
-            reviewedBy: 'Super Admin',
-            reviewedAt: new Date().toISOString(),
-          }
-        : h
+      h.id === hotelId ? { ...h, ...rejectPatch } : h
     );
     updateHotelsList(updated);
+
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/console/organizations/${encodeURIComponent(hotelId)}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify(rejectPatch),
+      });
+    } catch (e) {
+      console.error('Failed to persist hotel rejection:', e);
+    }
 
     recordAuditLog(
       'REJECT_HOTEL',
@@ -334,7 +408,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   };
 
   // 3. SUSPEND HOTEL
-  const handleSuspendHotel = (hotelId: string, reason: string) => {
+  const handleSuspendHotel = async (hotelId: string, reason: string) => {
     const target = hotels.find((h) => h.id === hotelId);
     if (!target) return;
 
@@ -342,6 +416,17 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
       h.id === hotelId ? ({ ...h, isSuspended: true, suspensionReason: reason } as Hotel) : h
     );
     updateHotelsList(updated);
+
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/console/organizations/${encodeURIComponent(hotelId)}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ isSuspended: true, suspensionReason: reason }),
+      });
+    } catch (e) {
+      console.error('Failed to persist hotel suspension:', e);
+    }
 
     // Also update subscription status to suspended
     setSubscriptions((prev) =>
@@ -359,7 +444,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   };
 
   // 4. REACTIVATE HOTEL
-  const handleReactivateHotel = (hotelId: string) => {
+  const handleReactivateHotel = async (hotelId: string) => {
     const target = hotels.find((h) => h.id === hotelId);
     if (!target) return;
 
@@ -367,6 +452,17 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
       h.id === hotelId ? ({ ...h, isSuspended: false } as Hotel) : h
     );
     updateHotelsList(updated);
+
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/console/organizations/${encodeURIComponent(hotelId)}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ isSuspended: false, suspensionReason: '' }),
+      });
+    } catch (e) {
+      console.error('Failed to persist hotel reactivation:', e);
+    }
 
     setSubscriptions((prev) =>
       prev.map((s) => (s.hotelId === hotelId ? { ...s, status: 'active' } : s))
@@ -379,6 +475,58 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
       {},
       'isSuspended: true',
       'isSuspended: false'
+    );
+  };
+
+  // 4b. RENAME ORGANIZATION (Syncs across hotels, platformUsers, subscriptions & backend)
+  const handleRenameHotel = async (hotelId: string, newName: string) => {
+    const cleanName = newName.trim();
+    if (!cleanName) return;
+    const target = hotels.find((h) => h.id === hotelId);
+    const previousName = target?.name || hotelId;
+
+    const updatedHotels = hotels.map((h) =>
+      h.id === hotelId ? { ...h, name: cleanName } : h
+    );
+    updateHotelsList(updatedHotels);
+
+    setPlatformUsers((prev) => {
+      const next = prev.map((u) =>
+        u.organizationId === hotelId ||
+        (target?.email && u.email.toLowerCase() === target.email.toLowerCase()) ||
+        (target?.ownerEmail && u.email.toLowerCase() === target.ownerEmail.toLowerCase())
+          ? { ...u, organizationId: hotelId, organizationName: cleanName }
+          : u
+      );
+      try {
+        localStorage.setItem('igho_platform_users', JSON.stringify(next));
+        window.dispatchEvent(new Event('igho_users_updated'));
+      } catch {}
+      return next;
+    });
+
+    setSubscriptions((prev) =>
+      prev.map((s) => (s.hotelId === hotelId ? { ...s, hotelName: cleanName } : s))
+    );
+
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/console/organizations/${encodeURIComponent(hotelId)}/name`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ name: cleanName }),
+      });
+    } catch (e) {
+      console.error('Failed to persist organization rename:', e);
+    }
+
+    recordAuditLog(
+      'UPDATE_PLATFORM_SETTING',
+      `${cleanName} (${hotelId})`,
+      'hotel',
+      { organizationId: hotelId },
+      previousName,
+      cleanName
     );
   };
 
@@ -395,7 +543,11 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
     try {
       localStorage.setItem('igho_db_hotels', JSON.stringify(updated));
       window.dispatchEvent(new Event('igho_hotels_updated'));
-      await fetch(`/api/hotels/${hotelId}`, { method: 'DELETE' });
+      const headers = await getAuthHeaders();
+      await fetch(`/api/hotels/${encodeURIComponent(hotelId)}`, {
+        method: 'DELETE',
+        headers,
+      });
     } catch (e) {
       console.error('Failed to delete hotel from backend:', e);
     }
@@ -441,7 +593,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
   };
 
   // 7. USER STATUS TOGGLE / IN-CONSOLE BANNING
-  const handleToggleUserStatus = (
+  const handleToggleUserStatus = async (
     userId: string,
     explicitStatus?: 'active' | 'suspended' | 'deactivated',
     reason?: string
@@ -464,14 +616,19 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
     });
 
     // Call backend API for persistent database status update
-    fetch(`/api/console/users/${encodeURIComponent(userId)}/status`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        status: newStatus,
-        reason: reason || 'Administrative action via IGO Console',
-      }),
-    }).catch(console.error);
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/console/users/${encodeURIComponent(userId)}/status`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          status: newStatus,
+          reason: reason || 'Administrative action via IGO Console',
+        }),
+      });
+    } catch (err) {
+      console.error(err);
+    }
 
     // Record banned user in persistent blacklist in localStorage and broadcast event
     try {
@@ -1051,6 +1208,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
               onSuspendHotel={handleSuspendHotel}
               onReactivateHotel={handleReactivateHotel}
               onDeleteHotel={handleDeleteHotel}
+              onRenameHotel={handleRenameHotel}
               onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
             />
           )}
@@ -1133,6 +1291,7 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
               transactions={transactions}
               users={platformUsers}
               products={products}
+              adminEmail={profileEmail}
               onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
             />
           )}
@@ -1187,7 +1346,25 @@ export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
         currentName={profileName}
         currentEmail={profileEmail}
         currentPicture={profilePicture}
-        onSave={(data) => {
+        onSave={async (data) => {
+          const authHeaders = await getAuthHeaders();
+          const res = await fetch('/api/users/profile', {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-igho-user-email': data.email,
+              ...authHeaders,
+            },
+            body: JSON.stringify({
+              email: data.email,
+              fullName: data.name,
+              avatarUrl: data.picture,
+            }),
+          });
+          const result = await res.json();
+          if (!res.ok || !result?.success) {
+            throw new Error(result?.message || 'Failed to save console admin profile.');
+          }
           setProfileName(data.name);
           setProfileEmail(data.email);
           if (data.password) {

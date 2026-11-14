@@ -31,6 +31,7 @@ import {
 } from '../../types';
 import { ConsoleHotelDetailModal } from './ConsoleHotelDetailModal';
 import { formatHotelId } from '../../utils/hotelId';
+import { getAuthHeaders } from '../../utils/storageUpload';
 
 interface DemoRequestEntry {
   id: string;
@@ -57,6 +58,7 @@ interface ConsoleHotelsViewProps {
   onSuspendHotel: (hotelId: string, reason: string) => void;
   onReactivateHotel: (hotelId: string) => void;
   onDeleteHotel: (hotelId: string) => void;
+  onRenameHotel?: (hotelId: string, newName: string) => void;
   onNavigateBreadcrumb?: () => void;
 }
 
@@ -70,6 +72,7 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
   onSuspendHotel,
   onReactivateHotel,
   onDeleteHotel,
+  onRenameHotel,
   onNavigateBreadcrumb,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -91,6 +94,8 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
   const [demoCurrentPage, setDemoCurrentPage] = useState(1);
   const [schoolsCount, setSchoolsCount] = useState<number>(2);
   const [hospitalsCount, setHospitalsCount] = useState<number>(2);
+  const [registerInfoBanner, setRegisterInfoBanner] = useState(false);
+  const [confirmDeleteDemoId, setConfirmDeleteDemoId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/waitlists')
@@ -107,13 +112,27 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
   }, []);
 
   useEffect(() => {
-    const loadDemos = () => {
+    const loadDemos = async () => {
       try {
-        const stored = localStorage.getItem('igho_demo_requests');
-        const parsed = stored ? JSON.parse(stored) : [];
-        setDemoRequests(parsed);
-      } catch (e) {
-        console.error(e);
+        const headers = await getAuthHeaders();
+        const res = await fetch('/api/demo-requests', { headers });
+        const data = await res.json();
+        if (data.success && Array.isArray(data.demoRequests)) {
+          setDemoRequests(data.demoRequests);
+          try {
+            localStorage.setItem('igho_demo_requests', JSON.stringify(data.demoRequests));
+          } catch {}
+          return;
+        }
+        throw new Error('Fallback to local');
+      } catch {
+        try {
+          const stored = localStorage.getItem('igho_demo_requests');
+          const parsed = stored ? JSON.parse(stored) : [];
+          setDemoRequests(parsed);
+        } catch (e) {
+          console.error(e);
+        }
       }
     };
     loadDemos();
@@ -121,31 +140,46 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
     return () => window.removeEventListener('igho_demo_requests_updated', loadDemos);
   }, []);
 
-  const handleUpdateDemoStatus = (id: string, newStatus: 'pending' | 'scheduled' | 'completed' | 'cancelled') => {
+  const handleUpdateDemoStatus = async (id: string, newStatus: 'pending' | 'scheduled' | 'completed' | 'cancelled') => {
     try {
-      const stored = localStorage.getItem('igho_demo_requests');
-      const parsed = stored ? JSON.parse(stored) : [];
-      const updated = parsed.map((item: any) => item.id === id ? { ...item, status: newStatus } : item);
-      localStorage.setItem('igho_demo_requests', JSON.stringify(updated));
-      setDemoRequests(updated);
-    } catch (e) {
-      console.error(e);
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/demo-requests/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ status: newStatus }),
+      });
+    } catch (err) {
+      console.error(err);
     }
+
+    setDemoRequests((prev) => {
+      const updated = prev.map((item: any) => (item.id === id ? { ...item, status: newStatus } : item));
+      try {
+        localStorage.setItem('igho_demo_requests', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
   };
 
-  const handleDeleteDemo = (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this demo request? This action is irreversible.')) {
-      return;
-    }
+  const handleDeleteDemo = async (id: string) => {
     try {
-      const stored = localStorage.getItem('igho_demo_requests');
-      const parsed = stored ? JSON.parse(stored) : [];
-      const updated = parsed.filter((item: any) => item.id !== id);
-      localStorage.setItem('igho_demo_requests', JSON.stringify(updated));
-      setDemoRequests(updated);
-    } catch (e) {
-      console.error(e);
+      const headers = await getAuthHeaders();
+      await fetch(`/api/demo-requests/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers,
+      });
+    } catch (err) {
+      console.error(err);
     }
+
+    setDemoRequests((prev) => {
+      const updated = prev.filter((item: any) => item.id !== id);
+      try {
+        localStorage.setItem('igho_demo_requests', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    setConfirmDeleteDemoId(null);
   };
 
   // Dynamic real metrics
@@ -265,14 +299,29 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
           </div>
 
           <button
-            onClick={() => alert('Hotels register via the onboarding portal or can be added via the registrations review queue.')}
-            className="px-4 py-2.5 rounded-xl bg-black hover:bg-neutral-800 text-white font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm active:scale-95"
+            onClick={() => setRegisterInfoBanner((prev) => !prev)}
+            className="px-4 py-2.5 rounded-xl bg-black hover:bg-neutral-800 text-white font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Register Hotel</span>
           </button>
         </div>
       </div>
+
+      {registerInfoBanner && (
+        <div className="p-3.5 bg-neutral-900 text-white rounded-2xl text-xs flex items-center justify-between gap-3">
+          <span>
+            Hotels onboard via the public Hotel Onboarding portal and appear in the Registrations Review Queue for verification.
+          </span>
+          <button
+            type="button"
+            onClick={() => setRegisterInfoBanner(false)}
+            className="text-neutral-300 hover:text-white font-bold px-2 py-1 rounded-lg bg-white/10 cursor-pointer shrink-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {activeSubTab === 'directory' ? (
         <>
@@ -780,13 +829,30 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
                                   Cancel
                                 </button>
                               )}
-                              <button
-                                onClick={() => handleDeleteDemo(item.id)}
-                                className="p-1 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
-                                title="Delete Record"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                              {confirmDeleteDemoId === item.id ? (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => handleDeleteDemo(item.id)}
+                                    className="px-2 py-1 rounded-md bg-rose-600 text-white font-bold text-[10px] hover:bg-rose-700 cursor-pointer"
+                                  >
+                                    Confirm Delete
+                                  </button>
+                                  <button
+                                    onClick={() => setConfirmDeleteDemoId(null)}
+                                    className="px-2 py-1 rounded-md border border-neutral-200 text-neutral-600 font-semibold text-[10px] hover:bg-neutral-100 cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => setConfirmDeleteDemoId(item.id)}
+                                  className="p-1 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors cursor-pointer"
+                                  title="Delete Record"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -905,15 +971,15 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
       {/* Inspect Hotel Modal */}
       {inspectingHotel && (
         <ConsoleHotelDetailModal
-          hotel={inspectingHotel}
+          hotel={hotels.find((h) => h.id === inspectingHotel.id) || inspectingHotel}
           onClose={() => setInspectingHotel(null)}
           allRooms={rooms.filter((r) => r.hotelId === inspectingHotel.id || r.branchId === inspectingHotel.id || (!r.hotelId && inspectingHotel.id === 'hotel-lava'))}
           allReservations={reservations.filter((res) => res.hotelId === inspectingHotel.id)}
           allStaff={staff.filter((s) => s.hotelId === inspectingHotel.id)}
           subscription={subscriptions.find((s) => s.hotelId === inspectingHotel.id)}
           auditLogs={auditLogs}
-          onSuspend={() => {
-            onSuspendHotel(inspectingHotel.id, 'Manual super admin audit');
+          onSuspend={(_hotel, reason) => {
+            onSuspendHotel(inspectingHotel.id, reason || 'Manual super admin audit');
             setInspectingHotel(null);
           }}
           onReactivate={() => {
@@ -923,6 +989,11 @@ export const ConsoleHotelsView: React.FC<ConsoleHotelsViewProps> = ({
           onDeleteRequest={() => {
             onDeleteHotel(inspectingHotel.id);
             setInspectingHotel(null);
+          }}
+          onRenameHotel={(hotelId, newName) => {
+            if (onRenameHotel) {
+              onRenameHotel(hotelId, newName);
+            }
           }}
         />
       )}

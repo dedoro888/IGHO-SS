@@ -28,6 +28,8 @@ import { SubscriptionPlan, HotelSubscription, Hotel, PlatformSettings, TrialToke
 import { BackButton } from '../BackButton';
 import { KeyRound, Copy, Clock, RefreshCw, Check as CheckIcon, Tag } from 'lucide-react';
 import { INITIAL_PLANS } from '../../data/platformData';
+import { getAuthHeaders } from '../../utils/storageUpload';
+import { formatHotelId } from '../../utils/hotelId';
 
 interface ConsoleSubscriptionsViewProps {
   subscriptions: HotelSubscription[];
@@ -95,18 +97,22 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
   const [migratingHotelId, setMigratingHotelId] = useState<string | null>(null);
   const [migrationSuccessMsg, setMigrationSuccessMsg] = useState<string | null>(null);
   const [switcherSearchQuery, setSwitcherSearchQuery] = useState('');
+  const [actionErrorMsg, setActionErrorMsg] = useState<string | null>(null);
+  const [confirmDeleteTokenId, setConfirmDeleteTokenId] = useState<string | null>(null);
 
   const handleMigrateHotelPlan = async (hotelId: string, targetPlanId: string) => {
     try {
+      setActionErrorMsg(null);
       setMigratingHotelId(hotelId);
-      const res = await fetch(`/api/hotels/${hotelId}/plan`, {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      const res = await fetch(`/api/hotels/${encodeURIComponent(hotelId)}/plan`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ planId: targetPlanId }),
       });
       const data = await res.json();
       if (!res.ok) {
-        alert(data.message || 'Failed to update hotel plan.');
+        setActionErrorMsg(data.message || 'Failed to update hotel plan.');
         return;
       }
 
@@ -134,7 +140,7 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
       setTimeout(() => setMigrationSuccessMsg(null), 4500);
     } catch (err) {
       console.error(err);
-      alert('Network error communicating with server.');
+      setActionErrorMsg('Network error communicating with server.');
     } finally {
       setMigratingHotelId(null);
     }
@@ -147,7 +153,10 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
   const loadBackendTokens = async () => {
     try {
       setTokensLoading(true);
-      const res = await fetch('/api/trial-tokens');
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/trial-tokens', {
+        headers,
+      });
       const data = await res.json();
       if (data.success && Array.isArray(data.tokens)) {
         setTrialTokens(data.tokens);
@@ -187,12 +196,14 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
 
   const handleCreateToken = async (e: React.FormEvent) => {
     e.preventDefault();
+    setActionErrorMsg(null);
     const assignedHotel = hotels.find((h) => h.id === newTokenHotelId);
 
     try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
       const res = await fetch('/api/trial-tokens/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           durationDays: 30, // strictly 1 month
           assignedHotelId: newTokenHotelId === 'universal' ? undefined : newTokenHotelId,
@@ -205,7 +216,7 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
 
       const data = await res.json();
       if (!res.ok) {
-        alert(data.message || 'Failed to generate token.');
+        setActionErrorMsg(data.message || 'Failed to generate token.');
         return;
       }
 
@@ -216,7 +227,7 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
       setTimeout(() => setTokenGeneratedSuccess(null), 5000);
     } catch (err) {
       console.error(err);
-      alert('Error generating token from backend server.');
+      setActionErrorMsg('Error generating token from backend server.');
     }
   };
 
@@ -228,30 +239,45 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
 
   const handleRevokeToken = async (tokenId: string) => {
     try {
-      const res = await fetch(`/api/trial-tokens/${tokenId}`, {
+      setActionErrorMsg(null);
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      const res = await fetch(`/api/trial-tokens/${encodeURIComponent(tokenId)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ status: 'revoked' }),
       });
       if (res.ok) {
         setTrialTokens((prev) =>
           prev.map((t) => (t.id === tokenId ? { ...t, status: 'revoked' as const } : t))
         );
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setActionErrorMsg(data.message || 'Failed to revoke trial token.');
       }
     } catch (err) {
       console.error(err);
+      setActionErrorMsg('Network error revoking trial token.');
     }
   };
 
   const handleDeleteToken = async (tokenId: string) => {
-    if (!confirm('Are you sure you want to permanently delete this trial token?')) return;
     try {
-      const res = await fetch(`/api/trial-tokens/${tokenId}`, { method: 'DELETE' });
+      setActionErrorMsg(null);
+      const headers = await getAuthHeaders();
+      const res = await fetch(`/api/trial-tokens/${encodeURIComponent(tokenId)}`, {
+        method: 'DELETE',
+        headers,
+      });
       if (res.ok) {
         setTrialTokens((prev) => prev.filter((t) => t.id !== tokenId));
+        setConfirmDeleteTokenId(null);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setActionErrorMsg(data.message || 'Failed to delete trial token.');
       }
     } catch (err) {
       console.error(err);
+      setActionErrorMsg('Network error deleting trial token.');
     }
   };
 
@@ -515,6 +541,22 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
           <span className="text-[10px] text-amber-600 font-medium">Awaiting verification</span>
         </div>
       </div>
+
+      {actionErrorMsg && (
+        <div className="p-3 bg-rose-50 border border-rose-200 text-rose-900 rounded-xl text-xs flex items-center justify-between gap-2 animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span className="font-medium">{actionErrorMsg}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActionErrorMsg(null)}
+            className="text-rose-700 hover:text-rose-950 p-1 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* TAB 1: AVAILABLE PLANS CATALOG & FEATURE MANAGEMENT */}
       {activeSubTab === 'plans' && (
@@ -928,9 +970,7 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
                       const isMigrating = migratingHotelId === hotel.id;
 
                       const serialNumber = idx + 1;
-                      const formattedHotelId = hotel.id.startsWith('HTL-')
-                        ? hotel.id
-                        : `HTL-${hotel.id.replace(/[^0-9]/g, '').padStart(3, '0') || String(serialNumber).padStart(3, '0')}`;
+                      const formattedHotelId = formatHotelId(hotel.id);
 
                       return (
                         <tr key={hotel.id} className="hover:bg-neutral-50/70 transition-colors">
@@ -1080,7 +1120,7 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
                         <tr key={sub.id} className="hover:bg-neutral-50/80 transition-colors">
                           <td className="p-4">
                             <div className="font-bold text-neutral-900">{sub.hotelName || hotel?.name}</div>
-                            <div className="text-[11px] text-neutral-500 font-mono">{sub.hotelId}</div>
+                            <div className="text-[11px] text-neutral-500 font-mono">{formatHotelId(sub.hotelId)}</div>
                           </td>
                           <td className="p-4">
                             <span className="font-semibold text-black">{sub.planName}</span>
@@ -1353,7 +1393,9 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
                             {token.assignedHotelName ? (
                               <div>
                                 <span className="font-bold text-black">{token.assignedHotelName}</span>
-                                <span className="block text-[10px] font-mono text-neutral-400">{token.assignedHotelId}</span>
+                                <span className="block text-[10px] font-mono text-neutral-400">
+                                  {token.assignedHotelId ? formatHotelId(token.assignedHotelId) : ''}
+                                </span>
                               </div>
                             ) : (
                               <span className="text-neutral-500 italic">Universal (Any Hotel)</span>
@@ -1407,14 +1449,33 @@ export const ConsoleSubscriptionsView: React.FC<ConsoleSubscriptionsViewProps> =
                                   Revoke
                                 </button>
                               )}
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteToken(token.id)}
-                                className="p-1 hover:bg-rose-50 text-neutral-400 hover:text-rose-600 rounded transition-colors"
-                                title="Delete token"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              {confirmDeleteTokenId === token.id ? (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteToken(token.id)}
+                                    className="px-2 py-1 rounded-lg bg-rose-600 text-white text-[11px] font-bold hover:bg-rose-700"
+                                  >
+                                    Confirm
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteTokenId(null)}
+                                    className="px-2 py-1 rounded-lg border border-neutral-200 text-neutral-600 text-[11px] font-semibold hover:bg-neutral-100"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteTokenId(token.id)}
+                                  className="p-1 hover:bg-rose-50 text-neutral-400 hover:text-rose-600 rounded transition-colors"
+                                  title="Delete token"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>

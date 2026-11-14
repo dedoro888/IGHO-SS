@@ -130,9 +130,8 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
       setTrialClaimed(true);
       setIsSubmittingTrial(false);
       setShowPlanSelection(false);
-      alert(`Success! Your 30-day free trial has been activated for "${userHotel.name}". Your hotel dashboard is now fully unlocked!`);
-      window.location.reload();
-    }, 1200);
+      onNavigate('staff_portal');
+    }, 600);
   };
 
   const handlePaidActivation = () => {
@@ -150,8 +149,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
     localStorage.setItem('igho_db_hotels', JSON.stringify(updatedHotels));
     setHotels(updatedHotels);
     setShowPlanSelection(false);
-    alert(`Success! Payment received via Paystack. Your hotel dashboard for "${userHotel.name}" is now fully activated!`);
-    window.location.reload();
+    onNavigate('staff_portal');
   };
 
   // Close account menu when clicked outside

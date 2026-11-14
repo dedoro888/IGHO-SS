@@ -78,6 +78,7 @@ export const ConsoleHospitalsView: React.FC<ConsoleHospitalsViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'contacted' | 'approved'>('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Initialize and load waitlists
   useEffect(() => {
@@ -116,9 +117,7 @@ export const ConsoleHospitalsView: React.FC<ConsoleHospitalsViewProps> = ({
 
   // Delete waitlist entry
   const handleDeleteEntry = (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this waitlist entry? This action is irreversible.')) {
-      return;
-    }
+    setConfirmDeleteId(null);
     try {
       const stored = localStorage.getItem('igho_waitlists');
       const parsed: WaitlistEntry[] = stored ? JSON.parse(stored) : [];
@@ -382,13 +381,30 @@ export const ConsoleHospitalsView: React.FC<ConsoleHospitalsViewProps> = ({
                                 <Clock className="w-4 h-4" />
                               </button>
                             )}
-                            <button
-                              onClick={() => handleDeleteEntry(item.id)}
-                              className="p-1 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
-                              title="Delete Signup"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            {confirmDeleteId === item.id ? (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => handleDeleteEntry(item.id)}
+                                  className="px-2 py-1 rounded-md bg-rose-600 text-white font-bold text-[10px] hover:bg-rose-700 cursor-pointer"
+                                >
+                                  Confirm
+                                </button>
+                                <button
+                                  onClick={() => setConfirmDeleteId(null)}
+                                  className="px-2 py-1 rounded-md border border-neutral-200 text-neutral-600 font-semibold text-[10px] hover:bg-neutral-100 cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setConfirmDeleteId(item.id)}
+                                className="p-1 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors cursor-pointer"
+                                title="Delete Signup"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

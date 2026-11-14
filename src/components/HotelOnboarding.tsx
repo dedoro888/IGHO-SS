@@ -25,13 +25,15 @@ import { BackButton } from './BackButton';
 import { INITIAL_PLANS } from '../data/platformData';
 import { IghoOfficialEmblem, IghoLoadingEmblem } from './IghoLogo';
 import { PaystackSubscriptionModal } from './PaystackSubscriptionModal';
+import { uploadOrganizationFile, validateImageOrDocumentFile } from '../utils/storageUpload';
+import { formatHotelId } from '../utils/hotelId';
 
 interface HotelOnboardingProps {
   onNavigate: (screen: ActiveScreen) => void;
   onHotelCreated: (hotelData: any) => void;
   plans?: SubscriptionPlan[];
   payoutSettings?: PlatformSettings['subscriptionPayout'];
-  onRegisterRequest?: (hotelData: any) => void;
+  onRegisterRequest?: (hotelData: any) => string | void;
   existingHotels?: Hotel[];
 }
 
@@ -48,29 +50,22 @@ const DeviceImageUploader: React.FC<{
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
 
-  const processFile = (file: File) => {
+  const processFile = async (file: File) => {
     setUploadError(null);
-    if (!file.type.startsWith('image/')) {
-      setUploadError('Please select a valid image file (PNG, JPG, WEBP).');
-      return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      setUploadError('Image size exceeds 10MB limit. High-resolution photos up to 10MB are supported.');
+    const err = validateImageOrDocumentFile(file, { allowPdf: false });
+    if (err) {
+      setUploadError(err);
       return;
     }
     setUploading(true);
-    const reader = new FileReader();
-    reader.onload = (e) => {
+    try {
+      const res = await uploadOrganizationFile('hotel-onboarding-temp', file, 'guest_portal_media', 'Hotel Applicant', { allowPdf: false });
+      onChange(res.url);
+    } catch (error: any) {
+      setUploadError(error?.message || 'Error uploading image from your device.');
+    } finally {
       setUploading(false);
-      if (e.target?.result) {
-        onChange(e.target.result as string);
-      }
-    };
-    reader.onerror = () => {
-      setUploading(false);
-      setUploadError('Error reading image from your device.');
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -158,7 +153,7 @@ const DeviceImageUploader: React.FC<{
               <span>Choose image from device</span>
             </button>
             <p className="text-[11px] text-neutral-400 mt-1.5">
-              PNG, JPG, or WEBP up to 5MB (Drag & drop supported)
+              PNG, JPG, or WEBP up to 10MB (Drag & drop supported)
             </p>
           </div>
         )}
@@ -188,6 +183,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
   const [approvalStatus, setApprovalStatus] = useState<'pending' | 'approved' | 'rejected'>('pending');
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('monthly');
   const [showPaystackModal, setShowPaystackModal] = useState(false);
+  const [registeredHotelId, setRegisteredHotelId] = useState<string>('');
 
   // Form State - strictly blank by default for all new hotel registrants
   const [formData, setFormData] = useState({
@@ -365,9 +361,15 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
 
     setIsLoading(true);
 
+    const newHotelId = registeredHotelId || `hotel-${Date.now()}`;
+    setRegisteredHotelId(newHotelId);
+
     // Call registration request callback to add to platform registry
     if (onRegisterRequest) {
-      onRegisterRequest(formData);
+      const returnedId = onRegisterRequest({ ...formData, id: newHotelId });
+      if (typeof returnedId === 'string' && returnedId) {
+        setRegisteredHotelId(returnedId);
+      }
     }
 
     setTimeout(() => {
@@ -386,7 +388,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
     setStep(5); // Advance to Paystack
   };
 
-  const handlePaystackPaymentSuccess = (paymentRef: string) => {
+  const handlePaystackPaymentSuccess = (paymentRef: string, verificationResult?: any) => {
     setIsLoading(true);
     setFormData((prev) => ({ ...prev, paystackReference: paymentRef }));
 
@@ -394,14 +396,19 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
       setIsLoading(false);
       onHotelCreated({
         ...formData,
-        packageType: formData.selectedPlanId.includes('complete') ? 'complete' : 'management',
+        ...(verificationResult?.hotel || {}),
+        id: verificationResult?.hotel?.id || registeredHotelId || undefined,
+        packageType:
+          verificationResult?.hotel?.packageType ||
+          (formData.selectedPlanId.includes('complete') ? 'complete' : 'management'),
         approvalStatus: 'approved',
         paymentStatus: 'paid',
+        subscriptionStatus: verificationResult?.status || 'active',
         isLive: true,
         paystackReference: paymentRef,
       });
       setStep(6);
-    }, 600);
+    }, 400);
   };
 
   const selectedPlan = plans.find((p) => p.id === formData.selectedPlanId) || plans[0];
@@ -1173,8 +1180,8 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
                   <div className="text-[10px] text-neutral-400">Official IGHO Billing Settlement</div>
                 </div>
               </div>
-              <span className="text-[10px] bg-emerald-950 text-emerald-300 font-bold px-2 py-0.5 rounded-full border border-emerald-800">
-                Live Channels
+              <span className="text-[10px] bg-amber-950 text-amber-300 font-bold px-2 py-0.5 rounded-full border border-amber-800">
+                Test Mode Gateway
               </span>
             </div>
 
@@ -1182,38 +1189,38 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
               <div className="p-3 bg-neutral-800/80 rounded-xl border border-neutral-700/60">
                 <div className="font-bold text-white flex items-center gap-1.5">
                   <CreditCard className="w-3.5 h-3.5 text-[#0BA4DB]" />
-                  <span>Debit / Credit Card</span>
+                  <span>Card (Auto-Renew)</span>
                 </div>
-                <div className="text-[10px] text-neutral-400 mt-1">Mastercard, Visa, Verve</div>
+                <div className="text-[10px] text-neutral-400 mt-1">Monthly Paystack Plan</div>
               </div>
 
               <div className="p-3 bg-neutral-800/80 rounded-xl border border-neutral-700/60">
                 <div className="font-bold text-white flex items-center gap-1.5">
                   <Building2 className="w-3.5 h-3.5 text-[#0BA4DB]" />
-                  <span>Bank Direct Debit</span>
+                  <span>Bank Direct</span>
                 </div>
-                <div className="text-[10px] text-neutral-400 mt-1">Direct from Nigerian Banks</div>
+                <div className="text-[10px] text-neutral-400 mt-1">One-time (manual renewal)</div>
               </div>
 
               <div className="p-3 bg-neutral-800/80 rounded-xl border border-neutral-700/60">
                 <div className="font-bold text-white flex items-center gap-1.5">
                   <RefreshCw className="w-3.5 h-3.5 text-[#0BA4DB]" />
-                  <span>Paystack Transfer</span>
+                  <span>Bank Transfer</span>
                 </div>
-                <div className="text-[10px] text-neutral-400 mt-1">Dynamic virtual account</div>
+                <div className="text-[10px] text-neutral-400 mt-1">One-time (manual renewal)</div>
               </div>
 
               <div className="p-3 bg-neutral-800/80 rounded-xl border border-neutral-700/60">
                 <div className="font-bold text-white flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-[#0BA4DB]" />
-                  <span>USSD Fast Pay</span>
+                  <span>USSD Pay</span>
                 </div>
-                <div className="text-[10px] text-neutral-400 mt-1">*737#, *966#, *894#, *901#</div>
+                <div className="text-[10px] text-neutral-400 mt-1">One-time (manual renewal)</div>
               </div>
             </div>
 
             <p className="text-[11px] text-neutral-400 leading-relaxed">
-              Upon clicking "Pay via Paystack", you can select your preferred payment channel. Instant verification will automatically activate your hotel workspace.
+              Clicking &quot;Pay via Paystack&quot; redirects you to Paystack Hosted Checkout. Monthly card payments attach to your Paystack recurring subscription plan; bank transfers and USSD require manual renewal.
             </p>
           </div>
 
@@ -1259,8 +1266,10 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
         onClose={() => setShowPaystackModal(false)}
         plan={selectedPlan}
         billingCycle={billingCycle}
+        hotelId={registeredHotelId}
         customerEmail={formData.email}
         hotelName={formData.hotelName}
+        returnScreen="hotel_onboarding"
         onSuccess={handlePaystackPaymentSuccess}
       />
 
@@ -1281,7 +1290,7 @@ export const HotelOnboarding: React.FC<HotelOnboardingProps> = ({
           <div className="bg-neutral-50 rounded-2xl border border-neutral-200 p-5 text-left text-xs space-y-3">
             <div className="flex justify-between py-1 border-b border-neutral-200">
               <span className="text-neutral-500">Tenant ID</span>
-              <span className="font-mono font-bold text-black">HTL-{formData.hotelName.substring(0, 4).toUpperCase()}-001</span>
+              <span className="font-mono font-bold text-black">{formatHotelId(formData.hotelName.substring(0, 4))}</span>
             </div>
             <div className="flex justify-between py-1 border-b border-neutral-200">
               <span className="text-neutral-500">Active Package</span>

@@ -80,6 +80,11 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
   const [otpError, setOtpError] = useState<string | null>(null);
   const [showSmtpGuide, setShowSmtpGuide] = useState(false);
 
+  // Genuine Passwordless Email/Phone OTP Sign-In State
+  const [authChannel, setAuthChannel] = useState<'password' | 'email_otp' | 'phone_otp'>('password');
+  const [otpSentToTarget, setOtpSentToTarget] = useState<string | null>(null);
+  const [channelOtpCode, setChannelOtpCode] = useState('');
+
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pendingConfirmationEmail) return;
@@ -174,82 +179,86 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
     }
   };
 
-  const handleInstantBypassActivation = async (targetEmail: string) => {
-    const cleanEmail = targetEmail.trim().toLowerCase();
-    if (!cleanEmail) return;
-
-    setLoading(true);
-    setLoadingMessage('Activating account credentials...');
-
-    try {
-      // 1. Resolve user profile in local store or construct guest profile
-      let userProfile = getSavedCustomerProfile(cleanEmail);
-      if (!userProfile) {
-        const parts = (fullName.trim() || cleanEmail.split('@')[0]).split(/\s+/);
-        userProfile = {
-          id: `cust-${Date.now()}`,
-          email: cleanEmail,
-          firstName: parts[0] || 'Guest',
-          lastName: parts.slice(1).join(' ') || '',
-          phone: phone.trim() || '',
-          address: '',
-          city: '',
-          state: '',
-          country: 'Nigeria',
-          createdAt: new Date().toISOString(),
-        };
-        saveCustomerProfile(userProfile);
-      }
-
-      // 2. Resolve account permissions & role
-      const resolved = await authService.resolveAuthenticatedUser(`user-${Date.now()}`, cleanEmail);
-
-      setLoading(false);
-      setPendingConfirmationEmail(null);
-      setUnconfirmedEmailForResend(null);
-      setError(null);
-      onLoginSuccess(cleanEmail, userProfile, resolved);
-
-      if (resolved.isSuperAdmin) {
-        onNavigate('super_admin_console');
-      } else {
-        onNavigate(resolved.targetScreen || 'landing');
-      }
-    } catch (err: any) {
-      setLoading(false);
-      setError(err?.message || 'Activation failed. Please try again.');
-    }
-  };
-
-  const handleGoogleSignIn = async () => {
+  const handleSendChannelOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
     setError(null);
-    setLoading(true);
-    setLoadingMessage('Redirecting to Google Authentication...');
-    try {
-      const { error: oauthErr } = await authService.signInWithGoogle();
-      if (oauthErr) {
-        setLoading(false);
-        const msg = oauthErr.message || '';
-        if (
-          msg.toLowerCase().includes('provider is not enabled') ||
-          msg.toLowerCase().includes('not enabled') ||
-          msg.toLowerCase().includes('unauthorized') ||
-          msg.toLowerCase().includes('validation_failed')
-        ) {
-          setError(
-            'Google OAuth provider is not enabled in your Supabase project. To enable real Google Sign-In, go to Supabase Dashboard -> Authentication -> Providers -> Google, enable it, and enter your Google OAuth credentials.'
-          );
-        } else {
-          setError(msg || 'Failed to initiate Google OAuth sign-in.');
-        }
+    setResendStatusMessage(null);
+    if (authChannel === 'email_otp') {
+      const cleanEmail = email.trim().toLowerCase();
+      if (!cleanEmail) {
+        setError('Please enter your email address.');
         return;
       }
-      // Browser automatically redirects to Google OAuth endpoint
-    } catch (err: any) {
+      setLoading(true);
+      setLoadingMessage('Sending 6-digit email verification code...');
+      const { error: otpSendErr } = await authService.signInWithOtp(cleanEmail);
       setLoading(false);
-      setError(err?.message || 'Error initiating Google OAuth.');
+      if (otpSendErr) {
+        setError(otpSendErr.message || 'Unable to send email OTP code.');
+        return;
+      }
+      setOtpSentToTarget(cleanEmail);
+      setResendStatusMessage(`A 6-digit sign-in code was sent to ${cleanEmail}. Check your inbox or spam folder.`);
+    } else if (authChannel === 'phone_otp') {
+      const cleanPhone = phone.trim();
+      if (!cleanPhone) {
+        setError('Please enter your phone number in international format (e.g. +234...).');
+        return;
+      }
+      setLoading(true);
+      setLoadingMessage('Sending SMS verification code...');
+      const { error: smsErr } = await authService.signInWithPhoneOtp(cleanPhone);
+      setLoading(false);
+      if (smsErr) {
+        setError(smsErr.message || 'Unable to send SMS OTP code.');
+        return;
+      }
+      setOtpSentToTarget(cleanPhone);
+      setResendStatusMessage(`An SMS verification code was sent to ${cleanPhone}.`);
     }
   };
+
+  const handleVerifyChannelOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otpSentToTarget || channelOtpCode.trim().length < 6) return;
+    setError(null);
+    setLoading(true);
+    setLoadingMessage('Verifying OTP code...');
+    try {
+      if (authChannel === 'email_otp') {
+        const res = await authService.verifyOtp(otpSentToTarget, channelOtpCode.trim(), 'email');
+        const verifiedUser = res.data?.user;
+        if (res.error || !verifiedUser) {
+          setLoading(false);
+          setError(res.error?.message || 'Invalid or expired email OTP code.');
+          return;
+        }
+        const resolved = await authService.resolveAuthenticatedUser(verifiedUser.id, verifiedUser.email || otpSentToTarget);
+        const profile = getSavedCustomerProfile(verifiedUser.email || otpSentToTarget);
+        setLoading(false);
+        onLoginSuccess(verifiedUser.email || otpSentToTarget, profile || undefined, resolved);
+        onNavigate(resolved.isSuperAdmin ? 'super_admin_console' : resolved.targetScreen || 'landing');
+      } else {
+        const res = await authService.verifyPhoneOtp(otpSentToTarget, channelOtpCode.trim());
+        const verifiedUser = res.data?.user;
+        if (res.error || !verifiedUser) {
+          setLoading(false);
+          setError(res.error?.message || 'Invalid or expired SMS OTP code.');
+          return;
+        }
+        const cleanEmail = verifiedUser.email || email.trim().toLowerCase() || `${otpSentToTarget.replace(/[^0-9]/g, '')}@phone.igho.app`;
+        const resolved = await authService.resolveAuthenticatedUser(verifiedUser.id, cleanEmail);
+        const profile = getSavedCustomerProfile(cleanEmail);
+        setLoading(false);
+        onLoginSuccess(cleanEmail, profile || undefined, resolved);
+        onNavigate(resolved.isSuperAdmin ? 'super_admin_console' : resolved.targetScreen || 'landing');
+      }
+    } catch (err: any) {
+      setLoading(false);
+      setError(err?.message || 'Verification failed.');
+    }
+  };
+
 
   const executeLoginWithEmail = async (targetEmail: string, explicitPassword?: string) => {
     const cleanEmail = targetEmail.trim().toLowerCase();
@@ -630,24 +639,12 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
                   </button>
                 </form>
 
-                {/* Instant Activation Option for delayed SMTP / unreceived email */}
-                <div className="p-3.5 bg-neutral-900 text-white rounded-2xl text-left space-y-2.5 shadow-sm">
-                  <div className="flex items-start gap-2.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-bold text-xs text-white">Did not receive the confirmation email?</p>
-                      <p className="text-[11px] text-neutral-300 leading-relaxed mt-0.5">
-                        External mail servers can delay delivery. You can activate your account and proceed to sign in right now.
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleInstantBypassActivation(pendingConfirmationEmail)}
-                    className="w-full py-2.5 px-4 bg-white text-black hover:bg-neutral-100 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <span>Activate Account & Sign In Now</span>
-                  </button>
+                {/* Helpful guidance for delayed SMTP delivery */}
+                <div className="p-3.5 bg-neutral-50 border border-neutral-200 rounded-2xl text-left space-y-1.5">
+                  <p className="font-bold text-xs text-neutral-900">Did not receive the confirmation email?</p>
+                  <p className="text-[11px] text-neutral-600 leading-relaxed">
+                    Check your Spam or Promotions folder, then tap Resend Verification Code below or open the Supabase SMTP setup guide for production delivery settings.
+                  </p>
                 </div>
 
                 <div className="space-y-2 pt-1">
@@ -727,25 +724,15 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
                       <span className="leading-relaxed">{error}</span>
                     </div>
                     {unconfirmedEmailForResend && (
-                      <div className="pt-2 border-t border-rose-200/60 space-y-2 text-[11px]">
-                        <div className="flex items-center justify-between">
-                          <span className="text-rose-700 font-medium">Email not arriving?</span>
-                          <button
-                            type="button"
-                            disabled={resendingEmail}
-                            onClick={() => handleResendConfirmation(unconfirmedEmailForResend)}
-                            className="font-bold underline text-rose-800 hover:text-rose-950 cursor-pointer disabled:opacity-50"
-                          >
-                            {resendingEmail ? 'Sending...' : 'Resend Email'}
-                          </button>
-                        </div>
+                      <div className="pt-2 border-t border-rose-200/60 flex items-center justify-between text-[11px]">
+                        <span className="text-rose-700 font-medium">Email not arriving? Check spam or resend:</span>
                         <button
                           type="button"
-                          onClick={() => handleInstantBypassActivation(unconfirmedEmailForResend)}
-                          className="w-full py-2 px-3 bg-black hover:bg-neutral-800 text-white rounded-xl font-bold text-xs shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                          disabled={resendingEmail}
+                          onClick={() => handleResendConfirmation(unconfirmedEmailForResend)}
+                          className="font-bold underline text-rose-800 hover:text-rose-950 cursor-pointer disabled:opacity-50"
                         >
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                          <span>Activate Account & Sign In Now</span>
+                          {resendingEmail ? 'Sending...' : 'Resend Confirmation Email'}
                         </button>
                       </div>
                     )}
@@ -772,55 +759,19 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
                   </div>
                 )}
 
-                {/* Genuine Google OAuth Button */}
-                <div className="space-y-2">
-                  <button
-                    type="button"
-                    onClick={handleGoogleSignIn}
-                    disabled={loading}
-                    className="w-full flex items-center justify-center gap-3 py-2.5 px-4 rounded-xl border border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50/80 text-xs font-semibold text-neutral-800 transition-all active:scale-[0.99] shadow-2xs cursor-pointer disabled:opacity-60"
-                  >
-                    <svg className="w-4 h-4" viewBox="0 0 24 24">
-                      <path
-                        fill="#4285F4"
-                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                      />
-                      <path
-                        fill="#34A853"
-                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                      />
-                      <path
-                        fill="#FBBC05"
-                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                      />
-                      <path
-                        fill="#EA4335"
-                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                      />
-                    </svg>
-                    <span>Continue with Google</span>
-                  </button>
-                </div>
 
-        {/* Clean Center-Aligned Divider */}
-        <div className="flex items-center gap-3 my-1">
-          <div className="h-px flex-1 bg-neutral-200" />
-          <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider shrink-0 select-none">
-            or with email
-          </span>
-          <div className="h-px flex-1 bg-neutral-200" />
-        </div>
-
-        {/* Tab Toggle: Sign In vs Register */}
+        {/* Tab Toggle: Sign In vs Create Account */}
         <div className="flex p-1 bg-neutral-100 rounded-xl">
           <button
             type="button"
             onClick={() => {
               setIsRegister(false);
+              setAuthChannel('password');
+              setOtpSentToTarget(null);
               setError(null);
             }}
             className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-              !isRegister
+              !isRegister && authChannel === 'password'
                 ? 'bg-white text-black shadow-xs'
                 : 'text-neutral-500 hover:text-black'
             }`}
@@ -831,17 +782,145 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
             type="button"
             onClick={() => {
               setIsRegister(true);
+              setAuthChannel('password');
+              setOtpSentToTarget(null);
               setError(null);
             }}
             className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-              isRegister
+              isRegister && authChannel === 'password'
                 ? 'bg-white text-black shadow-xs'
                 : 'text-neutral-500 hover:text-black'
             }`}
           >
             Create account
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsRegister(false);
+              setAuthChannel((prev) => (prev === 'phone_otp' ? 'phone_otp' : 'email_otp'));
+              setOtpSentToTarget(null);
+              setError(null);
+            }}
+            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+              authChannel !== 'password'
+                ? 'bg-white text-black shadow-xs'
+                : 'text-neutral-500 hover:text-black'
+            }`}
+          >
+            OTP Sign in
+          </button>
         </div>
+
+        {authChannel !== 'password' ? (
+          <div className="space-y-3.5 text-xs">
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthChannel('email_otp');
+                  setOtpSentToTarget(null);
+                  setChannelOtpCode('');
+                  setError(null);
+                }}
+                className={`flex-1 py-1.5 rounded-full text-[11px] font-bold border transition-colors ${
+                  authChannel === 'email_otp'
+                    ? 'bg-neutral-900 text-white border-neutral-900'
+                    : 'bg-white text-neutral-600 border-neutral-200 hover:border-neutral-400'
+                }`}
+              >
+                Email Code (OTP)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthChannel('phone_otp');
+                  setOtpSentToTarget(null);
+                  setChannelOtpCode('');
+                  setError(null);
+                }}
+                className={`flex-1 py-1.5 rounded-full text-[11px] font-bold border transition-colors ${
+                  authChannel === 'phone_otp'
+                    ? 'bg-neutral-900 text-white border-neutral-900'
+                    : 'bg-white text-neutral-600 border-neutral-200 hover:border-neutral-400'
+                }`}
+              >
+                Phone SMS OTP
+              </button>
+            </div>
+
+            {!otpSentToTarget ? (
+              <form onSubmit={handleSendChannelOtp} className="space-y-3">
+                {authChannel === 'email_otp' ? (
+                  <div className="space-y-1">
+                    <label className="block font-semibold text-neutral-700">Email address</label>
+                    <input
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@domain.com"
+                      className="w-full px-3 py-2.5 rounded-xl border border-neutral-200 bg-neutral-50/50 text-neutral-900 focus:outline-none focus:border-black focus:bg-white"
+                    />
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <label className="block font-semibold text-neutral-700">Phone number (E.164)</label>
+                    <input
+                      type="tel"
+                      required
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="+2348000000000"
+                      className="w-full px-3 py-2.5 rounded-xl border border-neutral-200 bg-neutral-50/50 text-neutral-900 focus:outline-none focus:border-black focus:bg-white"
+                    />
+                  </div>
+                )}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-black text-white py-3 rounded-full font-bold text-xs hover:bg-neutral-800 transition-all cursor-pointer disabled:opacity-60"
+                >
+                  {loading ? 'Sending OTP...' : 'Send 6-Digit Verification Code'}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleVerifyChannelOtp} className="space-y-3">
+                <p className="text-[11px] text-neutral-600">
+                  Enter the 6-digit code sent to <strong className="text-black">{otpSentToTarget}</strong>
+                </p>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  required
+                  value={channelOtpCode}
+                  onChange={(e) => setChannelOtpCode(e.target.value.replace(/\D/g, ''))}
+                  placeholder="000000"
+                  className="w-full text-center tracking-[0.5em] font-mono text-lg font-bold py-2.5 px-4 bg-neutral-50 border border-neutral-300 rounded-xl text-neutral-900 focus:outline-none focus:border-black"
+                />
+                <button
+                  type="submit"
+                  disabled={loading || channelOtpCode.trim().length < 6}
+                  className="w-full bg-black text-white py-3 rounded-full font-bold text-xs hover:bg-neutral-800 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {loading ? 'Verifying...' : 'Verify Code & Sign In'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOtpSentToTarget(null);
+                    setChannelOtpCode('');
+                  }}
+                  className="w-full py-2 text-[11px] font-semibold text-neutral-500 hover:text-black"
+                >
+                  Use another {authChannel === 'email_otp' ? 'email' : 'phone number'}
+                </button>
+              </form>
+            )}
+          </div>
+        ) : (
+        <>
 
         {/* Form with Clean Placeholders */}
         <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
@@ -987,6 +1066,8 @@ export const GuestAuth: React.FC<GuestAuthProps> = ({
             )}
           </button>
         </form>
+        </>
+        )}
               </>
             )}
           </>

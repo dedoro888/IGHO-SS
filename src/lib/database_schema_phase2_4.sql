@@ -28,17 +28,48 @@ CREATE TABLE IF NOT EXISTS public.platform_subscription_plans (
   has_guest_portal BOOLEAN NOT NULL DEFAULT FALSE,
   max_rooms INTEGER NOT NULL DEFAULT 20,
   max_staff INTEGER NOT NULL DEFAULT 5,
+  paystack_test_plan_code VARCHAR(64),
+  paystack_live_plan_code VARCHAR(64),
+  privileges JSONB NOT NULL DEFAULT '{}'::jsonb,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE public.platform_subscription_plans ADD COLUMN IF NOT EXISTS privileges JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 -- Seed official plans if not present
 INSERT INTO public.platform_subscription_plans (
-  id, name, description, monthly_price_kobo, annual_price_kobo, trial_duration_days, has_guest_portal, max_rooms, max_staff, is_active
+  id, name, description, monthly_price_kobo, annual_price_kobo, trial_duration_days, has_guest_portal, max_rooms, max_staff, paystack_test_plan_code, privileges, is_active
 ) VALUES 
-  ('plan-starter-30k', 'Plan 1 — Standard Operations (PMS)', 'Core front desk, room inventory, housekeeping & staff management. Guest portal not included.', 3000000, 30000000, 14, FALSE, 20, 5, TRUE),
-  ('plan-complete-50k', 'Plan 2 — Complete Hospitality Cloud', 'Unlimited rooms, direct guest booking portal, multi-branch, custom editable roles, and caution deposits.', 5000000, 50000000, 30, TRUE, 999, 100, TRUE)
+  (
+    'plan-starter-30k',
+    'IGHO Stay Starter',
+    'Core front desk, room inventory, housekeeping & staff management. Guest portal not included.',
+    3000000,
+    30000000,
+    14,
+    FALSE,
+    20,
+    5,
+    'PLN_672y4vfa529gnlb',
+    '{"hasGuestPortal":false,"maxRooms":20,"maxStaff":5,"maxBranches":1,"storageQuotaGb":1,"frontDeskPMS":true,"housekeeping":true,"guestFolios":true,"nightAudit":true,"cashierShifts":true,"maintenanceBlocks":true,"customRoles":false,"multiBranch":false,"cautionDeposits":false,"financialExports":false,"publicDirectoryListing":false,"prioritySupport":false}'::jsonb,
+    TRUE
+  ),
+  (
+    'plan-complete-50k',
+    'IGHO Stay Professional',
+    'Unlimited rooms, direct guest booking portal, multi-branch, custom editable roles, and caution deposits.',
+    5000000,
+    50000000,
+    30,
+    TRUE,
+    999,
+    100,
+    'PLN_ggbmt8eyb51o6t5',
+    '{"hasGuestPortal":true,"maxRooms":999,"maxStaff":100,"maxBranches":25,"storageQuotaGb":10,"frontDeskPMS":true,"housekeeping":true,"guestFolios":true,"nightAudit":true,"cashierShifts":true,"maintenanceBlocks":true,"customRoles":true,"multiBranch":true,"cautionDeposits":true,"financialExports":true,"publicDirectoryListing":true,"prioritySupport":true}'::jsonb,
+    TRUE
+  )
 ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name,
   description = EXCLUDED.description,
@@ -46,19 +77,27 @@ ON CONFLICT (id) DO UPDATE SET
   annual_price_kobo = EXCLUDED.annual_price_kobo,
   has_guest_portal = EXCLUDED.has_guest_portal,
   max_rooms = EXCLUDED.max_rooms,
-  max_staff = EXCLUDED.max_staff;
+  max_staff = EXCLUDED.max_staff,
+  paystack_test_plan_code = EXCLUDED.paystack_test_plan_code,
+  privileges = EXCLUDED.privileges;
 
 CREATE TABLE IF NOT EXISTS public.organization_subscriptions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
   plan_id VARCHAR(64) NOT NULL REFERENCES public.platform_subscription_plans(id),
-  status VARCHAR(32) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'past_due', 'canceled', 'trialing', 'paused', 'expired')),
-  billing_interval VARCHAR(16) NOT NULL DEFAULT 'monthly' CHECK (billing_interval IN ('monthly', 'annual')),
+  status VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'past_due', 'canceled', 'cancelled', 'trialing', 'paused', 'expired')),
+  billing_interval VARCHAR(24) NOT NULL DEFAULT 'monthly' CHECK (billing_interval IN ('monthly', 'annual', '5year_contract')),
+  payment_mode VARCHAR(32) NOT NULL DEFAULT 'paystack_recurring' CHECK (payment_mode IN ('paystack_recurring', 'paystack_one_time', 'trial')),
+  paystack_mode VARCHAR(16) NOT NULL DEFAULT 'test' CHECK (paystack_mode IN ('test', 'live')),
+  auto_renew BOOLEAN NOT NULL DEFAULT FALSE,
+  cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
   currency VARCHAR(3) NOT NULL DEFAULT 'NGN',
   amount_kobo BIGINT NOT NULL,
   paystack_fee_absorbed_kobo BIGINT NOT NULL DEFAULT 0,
   current_period_start TIMESTAMPTZ NOT NULL,
   current_period_end TIMESTAMPTZ NOT NULL,
+  pending_reference VARCHAR(128),
+  paystack_plan_code VARCHAR(64),
   paystack_subscription_code TEXT,
   paystack_customer_code TEXT,
   paystack_email_token TEXT,
@@ -77,11 +116,12 @@ CREATE TABLE IF NOT EXISTS public.platform_subscription_invoices (
   organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
   subscription_id UUID REFERENCES public.organization_subscriptions(id) ON DELETE SET NULL,
   invoice_number VARCHAR(64) NOT NULL UNIQUE,
+  paystack_invoice_code VARCHAR(128),
   plan_snapshot JSONB NOT NULL,
   base_amount_kobo BIGINT NOT NULL,
   paystack_fee_absorbed_kobo BIGINT NOT NULL DEFAULT 0,
   total_charged_kobo BIGINT NOT NULL,
-  status VARCHAR(32) NOT NULL DEFAULT 'paid' CHECK (status IN ('pending', 'paid', 'failed', 'refunded')),
+  status VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'failed', 'refunded')),
   billing_period_start TIMESTAMPTZ NOT NULL,
   billing_period_end TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -93,12 +133,23 @@ CREATE TABLE IF NOT EXISTS public.platform_subscription_payments (
   invoice_id UUID REFERENCES public.platform_subscription_invoices(id) ON DELETE SET NULL,
   paystack_reference VARCHAR(128) NOT NULL UNIQUE,
   paystack_transaction_id BIGINT,
+  paystack_mode VARCHAR(16) NOT NULL DEFAULT 'test',
   amount_charged_kobo BIGINT NOT NULL,
   fee_deducted_kobo BIGINT NOT NULL DEFAULT 0,
   net_settled_kobo BIGINT NOT NULL,
   channel VARCHAR(32),
   paid_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.paystack_webhook_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_key VARCHAR(255) NOT NULL UNIQUE,
+  event_type VARCHAR(64) NOT NULL,
+  reference VARCHAR(128),
+  paystack_mode VARCHAR(16) NOT NULL DEFAULT 'test',
+  payload JSONB NOT NULL,
+  processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- =============================================================================
@@ -765,6 +816,75 @@ BEGIN
 END;
 $$;
 
+-- =============================================================================
+-- STAGE 5: USER PROFILES, HOTEL MEDIA/PROFILES & ORGANIZATION ENTITLEMENTS
+-- =============================================================================
+
+ALTER TABLE public.organization_subscriptions ADD COLUMN IF NOT EXISTS privileges JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+ALTER TABLE public.organizations ADD COLUMN IF NOT EXISTS logo_image_url TEXT;
+ALTER TABLE public.organizations ADD COLUMN IF NOT EXISTS cover_image_url TEXT;
+ALTER TABLE public.organizations ADD COLUMN IF NOT EXISTS description TEXT;
+
+CREATE TABLE IF NOT EXISTS public.user_profiles (
+  id TEXT PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  full_name VARCHAR(255) NOT NULL DEFAULT '',
+  first_name VARCHAR(128) NOT NULL DEFAULT '',
+  last_name VARCHAR(128) NOT NULL DEFAULT '',
+  phone VARCHAR(64) DEFAULT '',
+  address TEXT DEFAULT '',
+  city VARCHAR(128) DEFAULT '',
+  state VARCHAR(128) DEFAULT '',
+  country VARCHAR(128) DEFAULT 'Nigeria',
+  avatar_url TEXT DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.hotel_profiles (
+  organization_id TEXT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  description TEXT DEFAULT '',
+  logo_image_url TEXT DEFAULT '',
+  cover_image_url TEXT DEFAULT '',
+  address TEXT DEFAULT '',
+  city VARCHAR(128) DEFAULT '',
+  state VARCHAR(128) DEFAULT '',
+  country VARCHAR(128) DEFAULT 'Nigeria',
+  phone VARCHAR(64) DEFAULT '',
+  email VARCHAR(255) DEFAULT '',
+  website TEXT DEFAULT '',
+  instagram VARCHAR(255) DEFAULT '',
+  facebook VARCHAR(255) DEFAULT '',
+  bank_name VARCHAR(128) DEFAULT '',
+  account_name VARCHAR(255) DEFAULT '',
+  account_number VARCHAR(32) DEFAULT '',
+  transfer_instructions TEXT DEFAULT '',
+  online_bookings_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  allow_customer_registration BOOLEAN NOT NULL DEFAULT TRUE,
+  show_room_prices BOOLEAN NOT NULL DEFAULT TRUE,
+  show_room_availability BOOLEAN NOT NULL DEFAULT TRUE,
+  require_id_verification BOOLEAN NOT NULL DEFAULT FALSE,
+  branches JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_by VARCHAR(255) DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.organization_entitlements (
+  organization_id TEXT PRIMARY KEY,
+  plan_id VARCHAR(64) NOT NULL REFERENCES public.platform_subscription_plans(id),
+  plan_name VARCHAR(255) NOT NULL,
+  subscription_status VARCHAR(32) NOT NULL DEFAULT 'active',
+  has_guest_portal BOOLEAN NOT NULL DEFAULT FALSE,
+  max_rooms INTEGER NOT NULL DEFAULT 20,
+  max_staff INTEGER NOT NULL DEFAULT 5,
+  storage_quota_bytes BIGINT NOT NULL DEFAULT 5368709120,
+  privileges JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Enable RLS across all tables
 ALTER TABLE public.platform_subscription_plans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.organization_subscriptions ENABLE ROW LEVEL SECURITY;
@@ -784,6 +904,31 @@ ALTER TABLE public.reservation_caution_deposits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.caution_deposit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.custom_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.staff_invitations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hotel_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.organization_entitlements ENABLE ROW LEVEL SECURITY;
+
+-- Policies for user_profiles, hotel_profiles, and organization_entitlements
+DROP POLICY IF EXISTS "Users can view own profile row" ON public.user_profiles;
+CREATE POLICY "Users can view own profile row" ON public.user_profiles
+  FOR SELECT TO authenticated
+  USING (auth.uid() = user_id OR lower(email) = lower(coalesce(auth.jwt() ->> 'email', '')));
+
+DROP POLICY IF EXISTS "Users can upsert own profile row" ON public.user_profiles;
+CREATE POLICY "Users can upsert own profile row" ON public.user_profiles
+  FOR ALL TO authenticated
+  USING (auth.uid() = user_id OR lower(email) = lower(coalesce(auth.jwt() ->> 'email', '')))
+  WITH CHECK (auth.uid() = user_id OR lower(email) = lower(coalesce(auth.jwt() ->> 'email', '')));
+
+DROP POLICY IF EXISTS "Public can read active hotel profiles" ON public.hotel_profiles;
+CREATE POLICY "Public can read active hotel profiles" ON public.hotel_profiles
+  FOR SELECT TO anon, authenticated
+  USING (TRUE);
+
+DROP POLICY IF EXISTS "Authenticated staff can view org entitlements" ON public.organization_entitlements;
+CREATE POLICY "Authenticated staff can view org entitlements" ON public.organization_entitlements
+  FOR SELECT TO authenticated
+  USING (TRUE);
 
 -- Grant EXECUTE to authenticated users
 GRANT EXECUTE ON FUNCTION public.has_tenant_permission(UUID, TEXT) TO authenticated;

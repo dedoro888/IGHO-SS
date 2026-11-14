@@ -159,19 +159,29 @@ export const MaintenanceBlocksView: React.FC<MaintenanceBlocksViewProps> = ({
     }
   };
 
+  const [moveSuccessBanner, setMoveSuccessBanner] = useState<string | null>(null);
+
   const handleExecuteRoomMove = () => {
     if (!movingReservation || !targetRoomId) return;
     if (onRoomMoved) {
       onRoomMoved(movingReservation.id, targetRoomId);
     }
+    const movedName = movingReservation.guestName;
     setRoomMoveModal(false);
     setConflictAlert(null);
     setMovingReservation(null);
-    alert(`Guest ${movingReservation.guestName} successfully moved to target room.`);
+    setMoveSuccessBanner(`Guest ${movedName} successfully moved to target room.`);
+    setTimeout(() => setMoveSuccessBanner(null), 5000);
   };
 
   return (
     <div className="space-y-6 text-neutral-900 pb-12">
+      {moveSuccessBanner && (
+        <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-900 text-xs font-semibold flex items-center justify-between">
+          <span>{moveSuccessBanner}</span>
+          <button type="button" onClick={() => setMoveSuccessBanner(null)} className="text-emerald-700 font-bold hover:text-emerald-950">✕</button>
+        </div>
+      )}
       {/* Header Banner */}
       <div className="bg-white border border-neutral-200 rounded-3xl p-6 sm:p-7 shadow-3xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>

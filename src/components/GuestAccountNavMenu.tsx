@@ -95,9 +95,17 @@ export const GuestAccountNavMenu: React.FC<GuestAccountNavMenuProps> = ({
         title="Logged in account & profile options"
         aria-expanded={menuOpen}
       >
-        <div className="w-6 h-6 rounded-full bg-black text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0">
-          {initialLetter}
-        </div>
+        {currentGuestProfile?.avatarUrl ? (
+          <img
+            src={currentGuestProfile.avatarUrl}
+            alt={displayName}
+            className="w-6 h-6 rounded-full object-cover flex-shrink-0 border border-neutral-300"
+          />
+        ) : (
+          <div className="w-6 h-6 rounded-full bg-black text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0">
+            {initialLetter}
+          </div>
+        )}
         <div className="flex flex-col text-left">
           <span className="max-w-[120px] sm:max-w-[150px] truncate text-neutral-900 font-bold leading-tight">
             {displayName}
@@ -116,9 +124,17 @@ export const GuestAccountNavMenu: React.FC<GuestAccountNavMenuProps> = ({
           {/* Account Profile Header */}
           <div className="px-3.5 py-3 bg-neutral-50 rounded-xl border border-neutral-100 mb-1.5">
             <div className="flex items-center gap-2 mb-1">
-              <div className="w-7 h-7 rounded-full bg-black text-white text-xs font-bold flex items-center justify-center flex-shrink-0">
-                {initialLetter}
-              </div>
+              {currentGuestProfile?.avatarUrl ? (
+                <img
+                  src={currentGuestProfile.avatarUrl}
+                  alt={displayName}
+                  className="w-7 h-7 rounded-full object-cover flex-shrink-0 border border-neutral-300"
+                />
+              ) : (
+                <div className="w-7 h-7 rounded-full bg-black text-white text-xs font-bold flex items-center justify-center flex-shrink-0">
+                  {initialLetter}
+                </div>
+              )}
               <div className="overflow-hidden">
                 <div className="text-xs font-bold text-neutral-900 truncate">
                   {displayName}

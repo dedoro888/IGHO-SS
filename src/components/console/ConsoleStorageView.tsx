@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { Hotel, Room, Reservation, StaffAccount } from '../../types';
 import { IghoLoadingEmblem } from '../IghoLogo';
+import { getAuthHeaders } from '../../utils/storageUpload';
 
 interface ConsoleStorageViewProps {
   hotels: Hotel[];
@@ -142,6 +143,7 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
   const [customQuotaGb, setCustomQuotaGb] = useState<number>(1);
   const [quotaUpdating, setQuotaUpdating] = useState(false);
   const [quotaSuccessMsg, setQuotaSuccessMsg] = useState<string | null>(null);
+  const [quotaErrorMsg, setQuotaErrorMsg] = useState<string | null>(null);
 
   // Auto-select first hotel so the detailed breakdown is immediately visible
   useEffect(() => {
@@ -153,7 +155,10 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
   // Fetch real storage data from backend API silently in background
   const fetchOrgStorage = async (hotelId: string) => {
     try {
-      const res = await fetch(`/api/storage/${hotelId}`);
+      const headers = await getAuthHeaders();
+      const res = await fetch(`/api/storage/${encodeURIComponent(hotelId)}`, {
+        headers,
+      });
       if (res.ok) {
         const data = await res.json();
         setOrgStorageData((prev) => ({ ...prev, [hotelId]: data }));
@@ -182,16 +187,18 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
   // Handle Custom Quota Update from Super Admin
   const handleSaveCustomQuota = async () => {
     if (!selectedHotel) return;
+    setQuotaErrorMsg(null);
     try {
       setQuotaUpdating(true);
-      const res = await fetch(`/api/storage/${selectedHotel.id}/quota`, {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      const res = await fetch(`/api/storage/${encodeURIComponent(selectedHotel.id)}/quota`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ quotaGb: customQuotaGb }),
       });
       const data = await res.json();
       if (!res.ok) {
-        alert(data.message || 'Failed to update organization quota.');
+        setQuotaErrorMsg(data.message || 'Failed to update organization quota.');
         return;
       }
       // Re-fetch storage data for this hotel
@@ -201,7 +208,7 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
       setTimeout(() => setQuotaSuccessMsg(null), 4000);
     } catch (err) {
       console.error(err);
-      alert('Error communicating with backend storage controller.');
+      setQuotaErrorMsg('Error communicating with backend storage controller.');
     } finally {
       setQuotaUpdating(false);
     }
@@ -331,7 +338,7 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
         </button>
       </div>
 
-      {/* Success Notification Banner */}
+      {/* Success / Error Notification Banners */}
       {quotaSuccessMsg && (
         <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-950 rounded-2xl text-xs font-semibold flex items-center justify-between gap-2 animate-in fade-in">
           <div className="flex items-center gap-2">
@@ -342,6 +349,18 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
             type="button"
             onClick={() => setQuotaSuccessMsg(null)}
             className="text-emerald-700 hover:text-emerald-950 p-1"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+      {quotaErrorMsg && !quotaModalOpen && (
+        <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-900 rounded-2xl text-xs font-semibold flex items-center justify-between gap-2">
+          <span>{quotaErrorMsg}</span>
+          <button
+            type="button"
+            onClick={() => setQuotaErrorMsg(null)}
+            className="text-rose-700 hover:text-rose-950 p-1"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -957,12 +976,21 @@ export const ConsoleStorageView: React.FC<ConsoleStorageViewProps> = ({
                   <span className="font-bold text-emerald-700">Strict Backend Pre-upload Gate</span>
                 </div>
               </div>
+
+              {quotaErrorMsg && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-semibold">
+                  {quotaErrorMsg}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-100">
               <button
                 type="button"
-                onClick={() => setQuotaModalOpen(false)}
+                onClick={() => {
+                  setQuotaErrorMsg(null);
+                  setQuotaModalOpen(false);
+                }}
                 className="px-4 py-2 rounded-xl text-xs font-semibold text-neutral-700 hover:bg-neutral-100"
               >
                 Cancel

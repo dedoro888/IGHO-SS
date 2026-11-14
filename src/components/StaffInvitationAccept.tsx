@@ -47,7 +47,7 @@ export const StaffInvitationAccept: React.FC<StaffInvitationAcceptProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -62,9 +62,26 @@ export const StaffInvitationAccept: React.FC<StaffInvitationAcceptProps> = ({
     }
 
     setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
-      const newAccount: StaffAccount = {
+    try {
+      const res = await fetch(`/api/hotels/${encodeURIComponent(invitationData.hotelId)}/invitations/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invitationId: invitationData.id,
+          email: invitationData.email,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          role: safeRole,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setError(data?.message || 'Could not accept invitation. Please ask your hotel owner to resend.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      const newAccount: StaffAccount = data.staff || {
         id: `staff-${Date.now()}`,
         hotelId: invitationData.hotelId,
         name: `${firstName} ${lastName}`.trim() || 'Staff Member',
@@ -83,7 +100,11 @@ export const StaffInvitationAccept: React.FC<StaffInvitationAcceptProps> = ({
 
       setSuccess(true);
       onComplete(newAccount);
-    }, 700);
+    } catch {
+      setError('Network error accepting invitation. Please retry.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

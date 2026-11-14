@@ -67,30 +67,65 @@ export class SupabaseAuthService {
   }
 
   /**
-   * Initiate genuine Google OAuth with Supabase.
-   * Prompts user with Google account chooser (select_account) and redirects back.
+   * Send Email OTP / magic link sign-in code via Supabase Auth.
    */
-  async signInWithGoogle(redirectTo?: string): Promise<{ data: any; error: any }> {
+  async signInWithOtp(email: string): Promise<{ data: any; error: any }> {
     const supabase = await getSupabaseClient();
     if (!supabase) {
       return { data: null, error: new Error('Supabase client is not configured.') };
     }
-
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const redirect = redirectTo || (origin ? `${origin}/` : undefined);
-
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: redirect,
-        queryParams: {
-          prompt: 'select_account',
-          access_type: 'offline',
-        },
-      },
+    const cleanEmail = email.trim().toLowerCase();
+    const { data, error } = await supabase.auth.signInWithOtp({
+      email: cleanEmail,
+      options: { shouldCreateUser: true },
     });
-
     return { data, error };
+  }
+
+  /**
+   * Send SMS OTP code via Supabase Auth (when phone provider is enabled).
+   */
+  async signInWithPhoneOtp(phone: string): Promise<{ data: any; error: any }> {
+    const supabase = await getSupabaseClient();
+    if (!supabase) {
+      return { data: null, error: new Error('Supabase client is not configured.') };
+    }
+    const { data, error } = await supabase.auth.signInWithOtp({
+      phone: phone.trim(),
+    });
+    return { data, error };
+  }
+
+  /**
+   * Verify SMS OTP code.
+   */
+  async verifyPhoneOtp(phone: string, token: string): Promise<{ data: any; error: any }> {
+    const supabase = await getSupabaseClient();
+    if (!supabase) {
+      return { data: null, error: new Error('Supabase client is not configured.') };
+    }
+    const { data, error } = await supabase.auth.verifyOtp({
+      phone: phone.trim(),
+      token: token.trim(),
+      type: 'sms',
+    });
+    return { data, error };
+  }
+
+  /**
+   * Check authoritative server-side ban status by email.
+   */
+  async checkServerBanStatus(email: string): Promise<{ banned: boolean; reason?: string }> {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) return { banned: false };
+    try {
+      const res = await fetch(`/api/auth/ban-status?email=${encodeURIComponent(cleanEmail)}`);
+      if (res.ok) {
+        const data = await res.json();
+        return { banned: Boolean(data.banned), reason: data.reason };
+      }
+    } catch {}
+    return { banned: false };
   }
 
   /**
@@ -153,6 +188,11 @@ export class SupabaseAuthService {
     this.sessionGeneration++;
     this.inFlightResolutions.clear();
     this.activeUserId = null;
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem('igho_active_user_email');
+      } catch {}
+    }
     const supabase = await getSupabaseClient();
     if (!supabase) return { error: null };
     return await supabase.auth.signOut();
@@ -386,10 +426,11 @@ export class SupabaseAuthService {
       // Helper to ensure an outdated session or sign-out cannot authorise a newer session
       const isStale = () => this.sessionGeneration !== generationAtStart;
 
-      // 0. Check in-console banned list first (instant lockout without DB roundtrip)
+      // 0. Check both cached and authoritative server banned list (persisted across sessions/browsers)
+      const normalizedEmail = email.trim().toLowerCase();
       try {
         const bannedList: string[] = JSON.parse(localStorage.getItem('igho_banned_users') || '[]');
-        if (bannedList.includes(email.trim().toLowerCase())) {
+        if (bannedList.includes(normalizedEmail)) {
           return {
             ...baseResult,
             accessGranted: false,
@@ -398,6 +439,20 @@ export class SupabaseAuthService {
           };
         }
       } catch {}
+
+      const serverBan = await this.checkServerBanStatus(normalizedEmail);
+      if (isStale()) {
+        return { ...baseResult, accessGranted: false, denialReason: 'Session changed or signed out during resolution.' };
+      }
+      if (serverBan.banned) {
+        return {
+          ...baseResult,
+          accessGranted: false,
+          denialReason:
+            serverBan.reason ||
+            'This account has been suspended by platform administration. Please contact support@igho.com.ng for assistance.',
+        };
+      }
 
       // 1. Fetch user profile from public.profiles
       const { profile, error: profileError } = await this.getProfile(userId);

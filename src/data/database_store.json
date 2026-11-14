@@ -103,16 +103,55 @@
       "city": "Victoria Island",
       "state": "Lagos",
       "country": "Nigeria",
+      "address": "Plot 1412, Ahmadu Bello Way, Victoria Island, Lagos",
+      "email": "info@lavahotel.ng",
+      "phone": "+234 811 223 3445",
+      "ownerEmail": "avendoorcompany@gmail.com",
+      "coverImage": "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80",
+      "logoImage": "",
+      "description": "Boutique hospitality with 6 elegantly appointed rooms and suites located in Victoria Island, Lagos.",
+      "bankName": "Providus Bank",
+      "accountName": "Lava Hotel & Suites Limited",
+      "accountNumber": "1014529384",
       "subscriptionPlanId": "plan-starter-30k",
-      "subscriptionPlanName": "Plan 1 — Standard Operations (PMS)",
+      "subscriptionPlanName": "IGHO Stay Starter",
       "packageType": "management",
       "hasGuestPortal": false,
+      "subscriptionStatus": "active",
+      "paymentStatus": "paid",
+      "approvalStatus": "approved",
+      "status": "active",
       "startingPrice": 40000,
       "roomCount": 6,
-      "isLive": true
+      "isLive": true,
+      "settings": {
+        "onlineBookings": true,
+        "allowRegistration": true,
+        "showPrices": true,
+        "showAvailability": true,
+        "requireIdVerification": false
+      },
+      "branches": [
+        {
+          "id": "branch-lava-main",
+          "hotelId": "hotel-lava",
+          "code": "LAVA-VI",
+          "name": "Victoria Island Flagship",
+          "address": "Plot 1412, Ahmadu Bello Way, Victoria Island, Lagos",
+          "city": "Victoria Island",
+          "state": "Lagos",
+          "phone": "+234 811 223 3445",
+          "email": "info@lavahotel.ng",
+          "roomCount": 6,
+          "isMain": true,
+          "isActive": true
+        }
+      ]
     }
   ],
   "storageCustomQuotas": {
     "hotel-lava": 10737418240
-  }
+  },
+  "userProfiles": {},
+  "organizationEntitlements": {}
 }

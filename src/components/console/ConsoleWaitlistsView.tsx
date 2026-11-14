@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { WaitlistEntry } from '../../types';
 import { BackButton } from '../BackButton';
+import { getAuthHeaders } from '../../utils/storageUpload';
 
 interface ConsoleWaitlistsViewProps {
   onNavigateBreadcrumb?: () => void;
@@ -36,6 +37,8 @@ export const ConsoleWaitlistsView: React.FC<ConsoleWaitlistsViewProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [inspectingEntry, setInspectingEntry] = useState<WaitlistEntry | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [waitlistBanner, setWaitlistBanner] = useState<string | null>(null);
   const pageSize = 10;
 
   // Load waitlist from server and localStorage
@@ -85,9 +88,10 @@ export const ConsoleWaitlistsView: React.FC<ConsoleWaitlistsViewProps> = ({
   // Update entry status
   const handleUpdateStatus = async (id: string, newStatus: WaitlistEntry['status']) => {
     try {
-      await fetch(`/api/waitlists/${id}`, {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/waitlists/${encodeURIComponent(id)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ status: newStatus }),
       });
     } catch (err) {
@@ -109,12 +113,13 @@ export const ConsoleWaitlistsView: React.FC<ConsoleWaitlistsViewProps> = ({
 
   // Delete waitlist entry
   const handleDeleteEntry = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this waitlist entry? This action is irreversible.')) {
-      return;
-    }
-
+    setConfirmDeleteId(null);
     try {
-      await fetch(`/api/waitlists/${id}`, { method: 'DELETE' });
+      const headers = await getAuthHeaders();
+      await fetch(`/api/waitlists/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers,
+      });
     } catch (err) {
       console.error('Error deleting waitlist on server:', err);
     }
@@ -133,7 +138,8 @@ export const ConsoleWaitlistsView: React.FC<ConsoleWaitlistsViewProps> = ({
   // Export to CSV
   const handleExportCsv = () => {
     if (waitlist.length === 0) {
-      alert('No waitlist entries to export.');
+      setWaitlistBanner('No waitlist entries to export.');
+      setTimeout(() => setWaitlistBanner(null), 3000);
       return;
     }
     const headers = ['ID', 'Product', 'Full Name', 'Email', 'Phone', 'Organization', 'Type', 'City', 'State', 'Status', 'Submitted At', 'Comments'];
@@ -232,6 +238,12 @@ export const ConsoleWaitlistsView: React.FC<ConsoleWaitlistsViewProps> = ({
           </button>
         </div>
       </div>
+
+      {waitlistBanner && (
+        <div className="p-3 bg-neutral-900 text-white rounded-xl text-xs font-semibold">
+          {waitlistBanner}
+        </div>
+      )}
 
       {/* Metric Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3.5">
@@ -474,14 +486,33 @@ export const ConsoleWaitlistsView: React.FC<ConsoleWaitlistsViewProps> = ({
                           {item.status === 'pending' ? 'Mark Contacted' : item.status === 'contacted' ? 'Approve' : 'Reset'}
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteEntry(item.id)}
-                          className="p-1 rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-300 hover:bg-rose-50 transition-colors cursor-pointer"
-                          title="Delete entry"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {confirmDeleteId === item.id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteEntry(item.id)}
+                              className="px-2 py-1 rounded-lg bg-rose-600 text-white font-bold text-[10px] hover:bg-rose-700 cursor-pointer"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(null)}
+                              className="px-2 py-1 rounded-lg border border-neutral-200 text-neutral-600 font-semibold text-[10px] hover:bg-neutral-100 cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(item.id)}
+                            className="p-1 rounded-lg border border-neutral-200 text-neutral-400 hover:text-rose-600 hover:border-rose-300 hover:bg-rose-50 transition-colors cursor-pointer"
+                            title="Delete entry"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

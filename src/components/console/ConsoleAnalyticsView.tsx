@@ -25,6 +25,7 @@ interface ConsoleAnalyticsViewProps {
   transactions: PlatformTransaction[];
   users: PlatformUser[];
   products: PlatformProduct[];
+  adminEmail?: string;
   onNavigateBreadcrumb?: () => void;
 }
 
@@ -35,6 +36,7 @@ export const ConsoleAnalyticsView: React.FC<ConsoleAnalyticsViewProps> = ({
   transactions,
   users,
   products,
+  adminEmail,
   onNavigateBreadcrumb,
 }) => {
   const [timeframe, setTimeframe] = useState<'7d' | '30d' | '90d' | '12m'>('30d');
@@ -54,56 +56,117 @@ export const ConsoleAnalyticsView: React.FC<ConsoleAnalyticsViewProps> = ({
   const averageRevenuePerOrg =
     activeHotels.length > 0 ? Math.round(totalRevenue / activeHotels.length) : 0;
 
-  const comparativeMetrics: MetricConfig[] = [
-    {
-      id: 'revenue',
-      name: 'Total Platform Revenue',
-      unit: '',
-      isCurrency: true,
-      data: [
-        { label: 'Week 1', current: 485000, previous: 380000 },
-        { label: 'Week 2', current: 620000, previous: 490000 },
-        { label: 'Week 3', current: 790000, previous: 580000 },
-        { label: 'Week 4', current: 950000, previous: 710000 },
-      ],
-    },
-    {
-      id: 'subscriptions',
-      name: 'Active Subscriptions',
-      unit: 'Hotels',
-      isCurrency: false,
-      data: [
-        { label: 'Week 1', current: 12, previous: 9 },
-        { label: 'Week 2', current: 18, previous: 11 },
-        { label: 'Week 3', current: 24, previous: 15 },
-        { label: 'Week 4', current: Math.max(subscriptions.length, 28), previous: 18 },
-      ],
-    },
-    {
-      id: 'registrations',
-      name: 'Hotel Registrations',
-      unit: 'Hotels',
-      isCurrency: false,
-      data: [
-        { label: 'Week 1', current: 8, previous: 5 },
-        { label: 'Week 2', current: 14, previous: 7 },
-        { label: 'Week 3', current: 19, previous: 12 },
-        { label: 'Week 4', current: Math.max(hotels.length, 25), previous: 14 },
-      ],
-    },
-    {
-      id: 'bookings',
-      name: 'Guest Bookings',
-      unit: 'Stays',
-      isCurrency: false,
-      data: [
-        { label: 'Week 1', current: 35, previous: 22 },
-        { label: 'Week 2', current: 52, previous: 34 },
-        { label: 'Week 3', current: 68, previous: 46 },
-        { label: 'Week 4', current: Math.max(reservations.length, 85), previous: 58 },
-      ],
-    },
-  ];
+  const comparativeMetrics: MetricConfig[] = React.useMemo(() => {
+    const now = Date.now();
+    const daysWindow = timeframe === '7d' ? 7 : timeframe === '30d' ? 30 : timeframe === '90d' ? 90 : 365;
+    const bucketMs = (daysWindow * 86400000) / 4;
+
+    const bucketFor = (dateStr?: string): number => {
+      if (!dateStr) return 3;
+      const t = new Date(dateStr).getTime();
+      if (Number.isNaN(t)) return 3;
+      const diff = now - t;
+      if (diff < 0) return 3;
+      const idx = 3 - Math.floor(diff / bucketMs);
+      if (idx < 0 || idx > 3) return -1;
+      return idx;
+    };
+
+    const prevBucketFor = (dateStr?: string): number => {
+      if (!dateStr) return -1;
+      const t = new Date(dateStr).getTime();
+      if (Number.isNaN(t)) return -1;
+      const windowMs = daysWindow * 86400000;
+      const diff = now - windowMs - t;
+      if (diff < 0 || diff > windowMs) return -1;
+      const idx = 3 - Math.floor(diff / bucketMs);
+      return idx >= 0 && idx <= 3 ? idx : -1;
+    };
+
+    const revCurr = [0, 0, 0, 0];
+    const revPrev = [0, 0, 0, 0];
+    transactions
+      .filter((t) => t.paymentStatus === 'successful')
+      .forEach((t) => {
+        const c = bucketFor(t.timestamp);
+        if (c >= 0) revCurr[c] += Number(t.amount || 0);
+        const p = prevBucketFor(t.timestamp);
+        if (p >= 0) revPrev[p] += Number(t.amount || 0);
+      });
+    // Include active reservation totals if platform transactions haven't logged yet
+    if (revCurr.every((v) => v === 0) && totalRevenue === 0) {
+      reservations.forEach((r) => {
+        const c = bucketFor(r.createdAt || r.checkIn);
+        if (c >= 0) revCurr[c] += Number(r.total || r.totalAmount || 0);
+      });
+    }
+
+    const subCurr = [0, 0, 0, 0];
+    const subPrev = [0, 0, 0, 0];
+    subscriptions.forEach((s) => {
+      const c = bucketFor(s.startDate);
+      if (c >= 0) subCurr[c] += 1;
+      const p = prevBucketFor(s.startDate);
+      if (p >= 0) subPrev[p] += 1;
+    });
+
+    const regCurr = [0, 0, 0, 0];
+    const regPrev = [0, 0, 0, 0];
+    hotels.forEach((h) => {
+      const c = bucketFor(h.joinedDate || h.reviewedAt);
+      if (c >= 0) regCurr[c] += 1;
+      const p = prevBucketFor(h.joinedDate || h.reviewedAt);
+      if (p >= 0) regPrev[p] += 1;
+    });
+
+    const bookCurr = [0, 0, 0, 0];
+    const bookPrev = [0, 0, 0, 0];
+    reservations.forEach((r) => {
+      const c = bucketFor(r.createdAt || r.checkIn);
+      if (c >= 0) bookCurr[c] += 1;
+      const p = prevBucketFor(r.createdAt || r.checkIn);
+      if (p >= 0) bookPrev[p] += 1;
+    });
+
+    const labels = timeframe === '7d'
+      ? ['Day 1-2', 'Day 3-4', 'Day 5-6', 'Today']
+      : timeframe === '30d'
+      ? ['Week 1', 'Week 2', 'Week 3', 'Week 4']
+      : timeframe === '90d'
+      ? ['Days 1-22', 'Days 23-45', 'Days 46-68', 'Recent']
+      : ['Q1', 'Q2', 'Q3', 'Q4'];
+
+    return [
+      {
+        id: 'revenue',
+        name: 'Total Platform Revenue',
+        unit: '',
+        isCurrency: true,
+        data: labels.map((label, i) => ({ label, current: revCurr[i], previous: revPrev[i] })),
+      },
+      {
+        id: 'subscriptions',
+        name: 'Active Subscriptions',
+        unit: 'Hotels',
+        isCurrency: false,
+        data: labels.map((label, i) => ({ label, current: subCurr[i], previous: subPrev[i] })),
+      },
+      {
+        id: 'registrations',
+        name: 'Hotel Registrations',
+        unit: 'Hotels',
+        isCurrency: false,
+        data: labels.map((label, i) => ({ label, current: regCurr[i], previous: regPrev[i] })),
+      },
+      {
+        id: 'bookings',
+        name: 'Guest Bookings',
+        unit: 'Stays',
+        isCurrency: false,
+        data: labels.map((label, i) => ({ label, current: bookCurr[i], previous: bookPrev[i] })),
+      },
+    ];
+  }, [timeframe, transactions, subscriptions, hotels, reservations, totalRevenue]);
 
   return (
     <div className="space-y-6 text-neutral-900">
@@ -235,7 +298,7 @@ export const ConsoleAnalyticsView: React.FC<ConsoleAnalyticsViewProps> = ({
           <div className="space-y-2 pt-1 text-xs">
             <div className="flex justify-between py-1.5 border-b border-neutral-100">
               <span className="text-neutral-500">Console Admin Email:</span>
-              <span className="font-mono font-bold text-black">rumeobire@gmail.com</span>
+              <span className="font-mono font-bold text-black">{adminEmail || 'superadmin@igho.software'}</span>
             </div>
             <div className="flex justify-between py-1.5 border-b border-neutral-100">
               <span className="text-neutral-500">Authentication Protocol:</span>

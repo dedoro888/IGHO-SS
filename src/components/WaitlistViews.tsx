@@ -51,11 +51,13 @@ export const WaitlistView: React.FC<WaitlistViewProps> = ({ type: initialType, o
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedEntryId, setSubmittedEntryId] = useState<string>('');
+  const [formError, setFormError] = useState<string | null>(null);
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
     if (!fullName || !email || !phone || !orgName || !institutionType || !city || !stateName) {
-      alert('Please fill out all required fields.');
+      setFormError('Please fill out all required fields.');
       return;
     }
 
@@ -289,6 +291,12 @@ export const WaitlistView: React.FC<WaitlistViewProps> = ({ type: initialType, o
                   </span>
                 </div>
               </div>
+
+              {formError && (
+                <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-200 text-xs font-medium">
+                  {formError}
+                </div>
+              )}
 
               <form onSubmit={handleFormSubmit} className="space-y-4 text-xs">
                 {/* Product Select Field (Hidden verification & option to swap) */}
