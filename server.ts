@@ -20,8 +20,120 @@ async function createServer() {
   );
 
   const UPLOADS_ROOT = path.join(__dirname, 'uploads');
+  const PRIVATE_UPLOADS_ROOT = path.join(__dirname, 'private_uploads');
   fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
-  app.use('/uploads', express.static(UPLOADS_ROOT, { maxAge: '7d' }));
+  fs.mkdirSync(PRIVATE_UPLOADS_ROOT, { recursive: true });
+
+  const PUBLIC_STORAGE_CATEGORIES = new Set(['guest_portal_media', 'room_galleries']);
+  const PRIVATE_STORAGE_CATEGORIES = new Set([
+    'payment_proofs',
+    'hotel_documents',
+    'general_operational',
+    'identity_documents',
+    'health_records',
+  ]);
+  const STORAGE_SIGNING_SECRET =
+    String(process.env.STORAGE_SIGNING_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim() ||
+    crypto.randomBytes(32).toString('hex');
+
+  function signPrivateFileToken(params: { fileId: string; organizationId: string; exp: number }): string {
+    return crypto
+      .createHmac('sha256', STORAGE_SIGNING_SECRET)
+      .update(`${params.organizationId}:${params.fileId}:${params.exp}`, 'utf8')
+      .digest('hex');
+  }
+
+  function verifyPrivateFileToken(params: {
+    fileId: string;
+    organizationId: string;
+    expRaw: string;
+    sigRaw: string;
+  }): boolean {
+    const exp = Number(params.expRaw);
+    if (!Number.isFinite(exp) || exp < Math.floor(Date.now() / 1000)) {
+      return false;
+    }
+    const expected = signPrivateFileToken({
+      fileId: params.fileId,
+      organizationId: params.organizationId,
+      exp,
+    });
+    const cleanSig = String(params.sigRaw || '').trim();
+    if (!cleanSig || cleanSig.length !== expected.length) return false;
+    try {
+      return crypto.timingSafeEqual(Buffer.from(cleanSig, 'hex'), Buffer.from(expected, 'hex'));
+    } catch {
+      return false;
+    }
+  }
+
+  function buildCanonicalPrivateFileRef(organizationId: string, fileId: string): string {
+    return `/api/storage/${encodeURIComponent(organizationId)}/files/${encodeURIComponent(fileId)}/content`;
+  }
+
+  function stripSignedQueryFromPrivateRef(url?: string): string {
+    const raw = String(url || '').trim();
+    if (!raw) return '';
+    const match = raw.match(/^(\/api\/storage\/[^/]+\/files\/[^/?#]+\/content)(?:\?.*)?$/);
+    if (match) return match[1];
+    return raw;
+  }
+
+  function mintSignedPrivateFileUrl(organizationId: string, fileId: string, ttlSeconds: number = 300): string {
+    const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
+    const sig = signPrivateFileToken({ fileId, organizationId, exp });
+    return `${buildCanonicalPrivateFileRef(organizationId, fileId)}?exp=${exp}&sig=${sig}`;
+  }
+
+  // Replace unauthenticated express.static('/uploads') with guarded public-only delivery.
+  // Private categories (payment_proofs, hotel_documents, general_operational, identity_documents, health_records)
+  // and files marked isPrivate are strictly denied unauthenticated access.
+  app.get('/uploads/:orgId/:category/:fileName', async (req, res) => {
+    const { orgId, category, fileName } = req.params;
+    const safeSegment = /^[a-zA-Z0-9_.-]+$/;
+    if (!safeSegment.test(orgId) || !safeSegment.test(category) || !safeSegment.test(fileName)) {
+      return res.status(400).json({ error: 'INVALID_FILE_PATH', message: 'Invalid file path.' });
+    }
+    if (orgId.includes('..') || category.includes('..') || fileName.includes('..')) {
+      return res.status(400).json({ error: 'INVALID_FILE_PATH', message: 'Invalid file path.' });
+    }
+
+    const state = getDbState() || {};
+    const storageFiles: any[] = Array.isArray(state.storageFiles) ? state.storageFiles : [];
+    const expectedPath = `/uploads/${orgId}/${category}/${fileName}`;
+    const fileRecord = storageFiles.find(
+      (f: any) =>
+        f.path === expectedPath ||
+        (f.organizationId === orgId && f.category === category && String(f.path || '').endsWith(`/${fileName}`))
+    );
+
+    const isPublicCategory = PUBLIC_STORAGE_CATEGORIES.has(category);
+    const isPrivateFile = !isPublicCategory || PRIVATE_STORAGE_CATEGORIES.has(category) || Boolean(fileRecord?.isPrivate);
+
+    if (isPrivateFile) {
+      return res.status(403).json({
+        error: 'PRIVATE_FILE_ACCESS_DENIED',
+        message: 'Private files cannot be accessed via public /uploads URLs. Use the authorized private delivery endpoint.',
+      });
+    }
+
+    const resolvedRoot = path.resolve(UPLOADS_ROOT);
+    const absPath = path.resolve(UPLOADS_ROOT, orgId, category, fileName);
+    if (!absPath.startsWith(resolvedRoot + path.sep) || !fs.existsSync(absPath)) {
+      return res.status(404).json({ error: 'FILE_NOT_FOUND', message: 'Requested public asset was not found.' });
+    }
+
+    res.setHeader('Cache-Control', 'public, max-age=604800');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.sendFile(absPath);
+  });
+
+  app.use('/uploads', (_req, res) => {
+    return res.status(403).json({
+      error: 'PUBLIC_UPLOAD_ACCESS_DENIED',
+      message: 'Direct unauthenticated directory or private asset access under /uploads is disabled.',
+    });
+  });
 
   // Database path (inside src/data so it can be committed/saved or preserved)
   const DB_PATH = path.join(__dirname, 'src', 'data', 'database_store.json');
@@ -183,6 +295,26 @@ async function createServer() {
           .maybeSingle();
         if (roleRow?.role === 'super_admin') {
           return { email, userId, role: 'super_admin', isSuperAdmin: !banned, banned, verifiedJwt, accessToken };
+        }
+      } catch {}
+    }
+
+    if (verifiedJwt && accessToken && supabaseUrlEnv && process.env.SUPABASE_PUBLISHABLE_KEY) {
+      try {
+        const rpcResp = await fetch(`${supabaseUrlEnv.replace(/\/+$/, '')}/rest/v1/rpc/is_platform_super_admin`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: process.env.SUPABASE_PUBLISHABLE_KEY,
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: '{}',
+        });
+        if (rpcResp.ok) {
+          const isSuper = await rpcResp.json();
+          if (isSuper === true) {
+            return { email, userId, role: 'super_admin', isSuperAdmin: !banned, banned, verifiedJwt, accessToken };
+          }
         }
       } catch {}
     }
@@ -369,6 +501,8 @@ async function createServer() {
     maxStaff: number;
     maxBranches: number;
     storageQuotaGb: number;
+    backupFrequency: 'weekly' | 'daily';
+    monthlyNotificationLimit: number | null;
     frontDeskPMS: boolean;
     housekeeping: boolean;
     guestFolios: boolean;
@@ -379,8 +513,13 @@ async function createServer() {
     multiBranch: boolean;
     cautionDeposits: boolean;
     financialExports: boolean;
+    advancedReports: boolean;
+    scheduledReports: boolean;
+    brandedReceipts: boolean;
     publicDirectoryListing: boolean;
     prioritySupport: boolean;
+    featureRequestsAccess: boolean;
+    prioritySla: boolean;
   }
 
   const DEFAULT_STARTER_PRIVILEGES: ServerPlanPrivileges = {
@@ -388,27 +527,36 @@ async function createServer() {
     maxRooms: 20,
     maxStaff: 5,
     maxBranches: 1,
-    storageQuotaGb: 1,
+    storageQuotaGb: 10,
+    backupFrequency: 'weekly',
+    monthlyNotificationLimit: 100,
     frontDeskPMS: true,
-    housekeeping: true,
-    guestFolios: true,
-    nightAudit: true,
-    cashierShifts: true,
-    maintenanceBlocks: true,
+    housekeeping: false,
+    guestFolios: false,
+    nightAudit: false,
+    cashierShifts: false,
+    maintenanceBlocks: false,
     customRoles: false,
     multiBranch: false,
     cautionDeposits: false,
-    financialExports: false,
+    financialExports: true,
+    advancedReports: false,
+    scheduledReports: false,
+    brandedReceipts: false,
     publicDirectoryListing: false,
     prioritySupport: false,
+    featureRequestsAccess: true,
+    prioritySla: false,
   };
 
   const DEFAULT_PROFESSIONAL_PRIVILEGES: ServerPlanPrivileges = {
     hasGuestPortal: true,
-    maxRooms: 999,
-    maxStaff: 100,
-    maxBranches: 25,
-    storageQuotaGb: 10,
+    maxRooms: 60,
+    maxStaff: 15,
+    maxBranches: 3,
+    storageQuotaGb: 50,
+    backupFrequency: 'daily',
+    monthlyNotificationLimit: null,
     frontDeskPMS: true,
     housekeeping: true,
     guestFolios: true,
@@ -419,8 +567,13 @@ async function createServer() {
     multiBranch: true,
     cautionDeposits: true,
     financialExports: true,
+    advancedReports: true,
+    scheduledReports: true,
+    brandedReceipts: true,
     publicDirectoryListing: true,
     prioritySupport: true,
+    featureRequestsAccess: true,
+    prioritySla: true,
   };
 
   interface OfficialPlanConfig {
@@ -432,6 +585,7 @@ async function createServer() {
     hasGuestPortal: boolean;
     maxRooms: number;
     maxStaff: number;
+    maxBranches: number;
     storageQuotaBytes: number;
     paystackTestPlanCode: string;
     availableForPurchase: boolean;
@@ -448,7 +602,8 @@ async function createServer() {
       hasGuestPortal: false,
       maxRooms: 20,
       maxStaff: 5,
-      storageQuotaBytes: 1 * 1024 * 1024 * 1024, // 1 GB
+      maxBranches: 1,
+      storageQuotaBytes: 10 * 1024 * 1024 * 1024, // 10 GB
       paystackTestPlanCode: 'PLN_672y4vfa529gnlb',
       availableForPurchase: true,
       privileges: { ...DEFAULT_STARTER_PRIVILEGES },
@@ -462,7 +617,8 @@ async function createServer() {
       hasGuestPortal: false,
       maxRooms: 20,
       maxStaff: 5,
-      storageQuotaBytes: 1 * 1024 * 1024 * 1024,
+      maxBranches: 1,
+      storageQuotaBytes: 10 * 1024 * 1024 * 1024,
       paystackTestPlanCode: 'PLN_672y4vfa529gnlb',
       availableForPurchase: true,
       privileges: { ...DEFAULT_STARTER_PRIVILEGES },
@@ -474,9 +630,10 @@ async function createServer() {
       annualPrice: 500000,
       contractAnnualPrice: 522000,
       hasGuestPortal: true,
-      maxRooms: 999,
-      maxStaff: 100,
-      storageQuotaBytes: 10 * 1024 * 1024 * 1024, // 10 GB
+      maxRooms: 60,
+      maxStaff: 15,
+      maxBranches: 3,
+      storageQuotaBytes: 50 * 1024 * 1024 * 1024, // 50 GB
       paystackTestPlanCode: 'PLN_ggbmt8eyb51o6t5',
       availableForPurchase: true,
       privileges: { ...DEFAULT_PROFESSIONAL_PRIVILEGES },
@@ -488,14 +645,53 @@ async function createServer() {
       annualPrice: 500000,
       contractAnnualPrice: 522000,
       hasGuestPortal: true,
-      maxRooms: 999,
-      maxStaff: 100,
-      storageQuotaBytes: 10 * 1024 * 1024 * 1024,
+      maxRooms: 60,
+      maxStaff: 15,
+      maxBranches: 3,
+      storageQuotaBytes: 50 * 1024 * 1024 * 1024,
       paystackTestPlanCode: 'PLN_ggbmt8eyb51o6t5',
       availableForPurchase: true,
       privileges: { ...DEFAULT_PROFESSIONAL_PRIVILEGES },
     },
   };
+
+  function slugifyServerHotelName(name?: string): string {
+    return (
+      String(name || 'hotel')
+        .toLowerCase()
+        .replace(/&/g, 'and')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'hotel'
+    );
+  }
+
+  function pushUserNotification(entry: {
+    recipientEmail: string;
+    title: string;
+    message: string;
+    type?: 'info' | 'success' | 'warning' | 'action_required';
+    ctaLabel?: string;
+    ctaScreen?: string;
+  }) {
+    const recipient = String(entry.recipientEmail || '').trim().toLowerCase();
+    if (!recipient) return null;
+    const state = getDbState() || {};
+    const notif = {
+      id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      recipientEmail: recipient,
+      title: entry.title,
+      message: entry.message,
+      type: entry.type || 'info',
+      ctaLabel: entry.ctaLabel || undefined,
+      ctaScreen: entry.ctaScreen || undefined,
+      read: false,
+      createdAt: new Date().toISOString(),
+    };
+    state.userNotifications = [notif, ...(state.userNotifications || [])].slice(0, 500);
+    saveDbState(state);
+    broadcastLiveEvent('user_notification_created', notif);
+    return notif;
+  }
 
   const DEFAULT_HOTEL_SETTINGS = {
     onlineBookings: true,
@@ -508,6 +704,7 @@ async function createServer() {
   const DEFAULT_HOTELS = [
     {
       id: 'hotel-lava',
+      slug: 'lava-hotel-suites',
       name: 'Lava Hotel & Suites',
       location: 'Victoria Island, Lagos',
       city: 'Victoria Island',
@@ -517,8 +714,7 @@ async function createServer() {
       email: 'info@lavahotel.ng',
       phone: '+234 811 223 3445',
       ownerEmail: 'avendoorcompany@gmail.com',
-      coverImage:
-        'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80',
+      coverImage: '',
       logoImage: '',
       description:
         'Boutique hospitality with 6 elegantly appointed rooms and suites located in Victoria Island, Lagos.',
@@ -557,6 +753,7 @@ async function createServer() {
   ];
 
   function resolveHotelEntitlements(hotel: any) {
+    const state = getDbState() || {};
     const planId = hotel?.subscriptionPlanId || 'plan-starter-30k';
     const plan = OFFICIAL_PLANS[planId] || OFFICIAL_PLANS['plan-starter-30k'];
     const subStatus = String(hotel?.subscriptionStatus || (hotel?.isLive ? 'active' : 'pending')).toLowerCase();
@@ -568,7 +765,27 @@ async function createServer() {
       (subStatus === 'cancelled' &&
         Boolean(hotel?.subscriptionEndDate && new Date(hotel.subscriptionEndDate).getTime() > Date.now()));
 
-    const basePrivs = plan.privileges;
+    const exceptionsMap = state.subscriptionExceptions || {};
+    const ex = hotel?.id ? exceptionsMap[hotel.id] || hotel?.subscriptionException : null;
+    const activeEx = ex && (!ex.expiresAt || new Date(ex.expiresAt).getTime() > Date.now()) ? ex : null;
+
+    const basePrivs = { ...plan.privileges };
+    if (activeEx) {
+      if (typeof activeEx.maxRoomsOverride === 'number' && activeEx.maxRoomsOverride > 0) {
+        basePrivs.maxRooms = activeEx.maxRoomsOverride;
+      }
+      if (typeof activeEx.maxStaffOverride === 'number' && activeEx.maxStaffOverride > 0) {
+        basePrivs.maxStaff = activeEx.maxStaffOverride;
+      }
+      if (typeof activeEx.maxBranchesOverride === 'number' && activeEx.maxBranchesOverride > 0) {
+        basePrivs.maxBranches = activeEx.maxBranchesOverride;
+        if (activeEx.maxBranchesOverride > 1) basePrivs.multiBranch = true;
+      }
+      if (typeof activeEx.storageQuotaGbOverride === 'number' && activeEx.storageQuotaGbOverride > 0) {
+        basePrivs.storageQuotaGb = activeEx.storageQuotaGbOverride;
+      }
+    }
+
     const effectivePrivileges: ServerPlanPrivileges = isEntitlementActive
       ? {
           ...basePrivs,
@@ -579,12 +796,20 @@ async function createServer() {
       : {
           ...basePrivs,
           hasGuestPortal: false,
+          housekeeping: false,
+          guestFolios: false,
+          nightAudit: false,
+          cashierShifts: false,
+          maintenanceBlocks: false,
           customRoles: false,
           multiBranch: false,
           cautionDeposits: false,
-          financialExports: false,
+          advancedReports: false,
+          scheduledReports: false,
+          brandedReceipts: false,
           publicDirectoryListing: false,
           prioritySupport: false,
+          prioritySla: false,
         };
 
     return {
@@ -592,6 +817,7 @@ async function createServer() {
       subStatus,
       isEntitlementActive,
       privileges: effectivePrivileges,
+      exception: activeEx,
     };
   }
 
@@ -603,6 +829,9 @@ async function createServer() {
       if (v !== undefined) {
         merged[k] = v;
       }
+    }
+    if (!merged.slug && merged.name) {
+      merged.slug = slugifyServerHotelName(merged.name);
     }
     if (!merged.settings) {
       merged.settings = { ...DEFAULT_HOTEL_SETTINGS };
@@ -618,7 +847,41 @@ async function createServer() {
     merged.hasGuestPortal = ent.privileges.hasGuestPortal;
     merged.packageType = ent.plan.hasGuestPortal ? 'complete' : 'management';
     merged.privileges = ent.privileges;
+    merged.subscriptionException = ent.exception || null;
     return merged;
+  }
+
+  function enforceHotelFeatureAccess(
+    hotelId: string,
+    feature: keyof ServerPlanPrivileges,
+    customMessage?: string
+  ): { ok: boolean; hotel?: any; ent?: ReturnType<typeof resolveHotelEntitlements>; status?: number; body?: any } {
+    const state = getDbState() || {};
+    const rawHotels = Array.isArray(state.hotels) && state.hotels.length > 0 ? state.hotels : [...DEFAULT_HOTELS];
+    const hotel = rawHotels.find((h: any) => h.id === hotelId);
+    if (!hotel) {
+      return {
+        ok: false,
+        status: 404,
+        body: { error: 'HOTEL_NOT_FOUND', message: 'Hotel not found.' },
+      };
+    }
+    const ent = resolveHotelEntitlements(hotel);
+    if (!ent.privileges[feature]) {
+      return {
+        ok: false,
+        status: 403,
+        body: {
+          error: 'PLAN_UPGRADE_REQUIRED',
+          feature,
+          currentPlan: ent.plan.canonicalId,
+          message:
+            customMessage ||
+            `This feature (${String(feature)}) requires IGHO Stay Professional. Please upgrade your subscription plan to unlock it.`,
+        },
+      };
+    }
+    return { ok: true, hotel, ent };
   }
 
   // Helper to compute absorbed Paystack processing fee: 1.5% + 100 NGN, capped at 2,000 NGN
@@ -630,14 +893,47 @@ async function createServer() {
     return Math.min(Math.round(fee), 2000);
   }
 
-  function resolveAppOrigin(req: express.Request): string {
+  function isSafeOriginUrl(raw: string): string | null {
+    const trimmed = String(raw || '').trim().replace(/\/+$/, '');
+    if (!trimmed) return null;
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.protocol === 'https:') {
+        return parsed.origin;
+      }
+      if (
+        parsed.protocol === 'http:' &&
+        (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
+      ) {
+        return parsed.origin;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  function resolveAppOrigin(req: express.Request, explicitClientOrigin?: string): string {
+    const clientOrigin = isSafeOriginUrl(explicitClientOrigin || '');
+    if (clientOrigin && !clientOrigin.includes('localhost') && !clientOrigin.includes('127.0.0.1')) {
+      return clientOrigin;
+    }
+    const headerOrigin = isSafeOriginUrl(String(req.headers['origin'] || ''));
+    if (headerOrigin && !headerOrigin.includes('localhost') && !headerOrigin.includes('127.0.0.1')) {
+      return headerOrigin;
+    }
+    const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+    const host = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
+    if (host && !host.includes('localhost') && !host.includes('127.0.0.1')) {
+      return `${proto}://${host}`;
+    }
     const configured = String(process.env.APP_URL || '').trim().replace(/\/+$/, '');
     if (configured && /^https?:\/\//i.test(configured)) {
       return configured;
     }
-    const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
-    const host = String(req.headers['x-forwarded-host'] || req.get('host') || 'localhost:3000').split(',')[0].trim();
-    return `${proto}://${host}`;
+    if (clientOrigin) return clientOrigin;
+    if (headerOrigin) return headerOrigin;
+    return `${proto || 'http'}://${host || 'localhost:3000'}`;
   }
 
   async function getCallerAuthorizedOrganizations(caller: {
@@ -809,6 +1105,232 @@ async function createServer() {
     if (!hotel) return null;
     const { paystackEmailToken: _hiddenEmailToken, ...safeHotel } = hotel;
     return safeHotel;
+  }
+
+  function sanitizePublicHotelResponse(hotel: any) {
+    if (!hotel) return null;
+    const {
+      paystackEmailToken: _hiddenEmailToken,
+      paystackCustomerCode: _hiddenCust,
+      paystackSubscriptionCode: _hiddenSub,
+      ownerEmail: _hiddenOwnerEmail,
+      ownerName: _hiddenOwnerName,
+      cacNumber: _hiddenCac,
+      subscriptionException: _hiddenEx,
+      adminNotes: _hiddenNotes,
+      ...publicHotel
+    } = hotel;
+    return publicHotel;
+  }
+
+  async function verifyCallerActiveProfile(caller: Awaited<ReturnType<typeof resolveCaller>>): Promise<{
+    ok: boolean;
+    status?: number;
+    error?: string;
+    message?: string;
+  }> {
+    const supabaseConfigured = Boolean(
+      supabaseUrlEnv && (supabaseServiceKeyEnv || process.env.SUPABASE_PUBLISHABLE_KEY)
+    );
+    if (supabaseConfigured && !caller.verifiedJwt) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'AUTHENTICATION_REQUIRED',
+        message: 'A valid authenticated session is required to access this resource.',
+      };
+    }
+    if (!caller.email && !caller.userId) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'AUTHENTICATION_REQUIRED',
+        message: 'Authentication is required.',
+      };
+    }
+    if (caller.banned) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'ACCOUNT_SUSPENDED',
+        message: 'This account has been suspended by platform administration.',
+      };
+    }
+
+    if (caller.userId && supabaseAdminClient) {
+      try {
+        const { data: profile } = await supabaseAdminClient
+          .from('profiles')
+          .select('account_status')
+          .eq('id', caller.userId)
+          .maybeSingle();
+        if (profile && String(profile.account_status || 'active').toLowerCase() !== 'active') {
+          return {
+            ok: false,
+            status: 403,
+            error: 'ACCOUNT_INACTIVE',
+            message: `Your user profile status (${profile.account_status}) is not active.`,
+          };
+        }
+      } catch {}
+    } else if (caller.userId && caller.accessToken && supabaseUrlEnv && process.env.SUPABASE_PUBLISHABLE_KEY) {
+      try {
+        const resp = await fetch(
+          `${supabaseUrlEnv.replace(/\/+$/, '')}/rest/v1/profiles?id=eq.${encodeURIComponent(
+            caller.userId
+          )}&select=account_status`,
+          {
+            headers: {
+              apikey: process.env.SUPABASE_PUBLISHABLE_KEY,
+              Authorization: `Bearer ${caller.accessToken}`,
+            },
+          }
+        );
+        if (resp.ok) {
+          const rows: any[] = await resp.json();
+          const profile = Array.isArray(rows) ? rows[0] : null;
+          if (profile && String(profile.account_status || 'active').toLowerCase() !== 'active') {
+            return {
+              ok: false,
+              status: 403,
+              error: 'ACCOUNT_INACTIVE',
+              message: `Your user profile status (${profile.account_status}) is not active.`,
+            };
+          }
+        }
+      } catch {}
+    }
+
+    return { ok: true };
+  }
+
+  async function getCallerAllOrgMemberships(
+    caller: Awaited<ReturnType<typeof resolveCaller>>
+  ): Promise<Array<{ organizationId: string; role: string; permissions: string[]; name?: string }>> {
+    const supabaseConfigured = Boolean(
+      supabaseUrlEnv && (supabaseServiceKeyEnv || process.env.SUPABASE_PUBLISHABLE_KEY)
+    );
+    if ((supabaseConfigured && !caller.verifiedJwt) || caller.banned || !caller.email) {
+      return [];
+    }
+
+    const orgMap = new Map<string, { organizationId: string; role: string; permissions: string[]; name?: string }>();
+    const cleanEmail = caller.email.trim().toLowerCase();
+
+    // 1. Authoritative Supabase organization_memberships query
+    if (caller.userId && supabaseAdminClient) {
+      try {
+        const { data: memberships } = await supabaseAdminClient
+          .from('organization_memberships')
+          .select('organization_id, role, status')
+          .eq('user_id', caller.userId);
+        for (const m of memberships || []) {
+          const role = String(m.role || '').toLowerCase();
+          if (String(m.status || '').toLowerCase() === 'active' && role !== 'customer' && m.organization_id) {
+            orgMap.set(String(m.organization_id), {
+              organizationId: String(m.organization_id),
+              role,
+              permissions: [],
+            });
+          }
+        }
+      } catch {}
+    } else if (caller.userId && caller.accessToken && supabaseUrlEnv && process.env.SUPABASE_PUBLISHABLE_KEY) {
+      try {
+        const resp = await fetch(
+          `${supabaseUrlEnv.replace(/\/+$/, '')}/rest/v1/organization_memberships?user_id=eq.${encodeURIComponent(
+            caller.userId
+          )}&select=organization_id,role,status`,
+          {
+            headers: {
+              apikey: process.env.SUPABASE_PUBLISHABLE_KEY,
+              Authorization: `Bearer ${caller.accessToken}`,
+            },
+          }
+        );
+        if (resp.ok) {
+          const rows: any[] = await resp.json();
+          for (const m of rows || []) {
+            const role = String(m.role || '').toLowerCase();
+            if (String(m.status || '').toLowerCase() === 'active' && role !== 'customer' && m.organization_id) {
+              orgMap.set(String(m.organization_id), {
+                organizationId: String(m.organization_id),
+                role,
+                permissions: [],
+              });
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 2. Correlate with persisted backend hotels, active staff, and custom roles
+    const state = getDbState() || {};
+    const hotels: any[] = Array.isArray(state.hotels) ? state.hotels : [];
+    const staffList: any[] = Array.isArray(state.staff) ? state.staff : [];
+    const platformUsers: any[] = Array.isArray(state.platformUsers) ? state.platformUsers : [];
+
+    for (const h of hotels) {
+      const ownerEmail = String(h.ownerEmail || '').trim().toLowerCase();
+      const hotelEmail = String(h.email || '').trim().toLowerCase();
+      if (ownerEmail === cleanEmail || hotelEmail === cleanEmail) {
+        orgMap.set(String(h.id), {
+          organizationId: String(h.id),
+          role: 'owner',
+          permissions: [],
+          name: h.name,
+        });
+      }
+    }
+
+    for (const s of staffList) {
+      const sEmail = String(s.email || '').trim().toLowerCase();
+      const sRole = String(s.role || '').toLowerCase();
+      const isActive = (s.status || 'active') === 'active' && s.active !== false;
+      if (sEmail === cleanEmail && isActive && s.hotelId) {
+        const existing = orgMap.get(String(s.hotelId));
+        const perms = Array.isArray(s.permissions) ? s.permissions : [];
+        if (!existing) {
+          orgMap.set(String(s.hotelId), {
+            organizationId: String(s.hotelId),
+            role: sRole || 'staff',
+            permissions: perms,
+          });
+        } else {
+          existing.permissions = Array.from(new Set([...existing.permissions, ...perms]));
+        }
+      }
+    }
+
+    for (const u of platformUsers) {
+      const uEmail = String(u.email || '').trim().toLowerCase();
+      const uRole = String(u.role || '').toLowerCase();
+      if (
+        uEmail === cleanEmail &&
+        u.status === 'active' &&
+        uRole !== 'customer' &&
+        uRole !== 'super_admin' &&
+        u.organizationId
+      ) {
+        if (!orgMap.has(String(u.organizationId))) {
+          orgMap.set(String(u.organizationId), {
+            organizationId: String(u.organizationId),
+            role: uRole,
+            permissions: [],
+            name: u.organizationName,
+          });
+        }
+      }
+    }
+
+    for (const [orgId, info] of orgMap.entries()) {
+      if (!info.name) {
+        const h = hotels.find((item: any) => item.id === orgId);
+        if (h?.name) info.name = h.name;
+      }
+    }
+
+    return Array.from(orgMap.values());
   }
 
   function applyVerifiedSubscriptionEntitlements(options: {
@@ -1128,9 +1650,11 @@ async function createServer() {
         annualPrice: OFFICIAL_PLANS['plan-starter-30k'].annualPrice,
         contractAnnualPrice: OFFICIAL_PLANS['plan-starter-30k'].contractAnnualPrice,
         hasGuestPortal: false,
-        maxRooms: 20,
-        maxStaff: 5,
-        storageQuotaGb: 1,
+        maxRooms: OFFICIAL_PLANS['plan-starter-30k'].privileges.maxRooms,
+        maxStaff: OFFICIAL_PLANS['plan-starter-30k'].privileges.maxStaff,
+        maxBranches: OFFICIAL_PLANS['plan-starter-30k'].privileges.maxBranches,
+        storageQuotaGb: OFFICIAL_PLANS['plan-starter-30k'].privileges.storageQuotaGb,
+        backupFrequency: OFFICIAL_PLANS['plan-starter-30k'].privileges.backupFrequency,
         recurringSupportedCycles: ['monthly'],
         availableForPurchase: true,
         privileges: OFFICIAL_PLANS['plan-starter-30k'].privileges,
@@ -1142,9 +1666,11 @@ async function createServer() {
         annualPrice: OFFICIAL_PLANS['plan-complete-50k'].annualPrice,
         contractAnnualPrice: OFFICIAL_PLANS['plan-complete-50k'].contractAnnualPrice,
         hasGuestPortal: true,
-        maxRooms: 999,
-        maxStaff: 100,
-        storageQuotaGb: 10,
+        maxRooms: OFFICIAL_PLANS['plan-complete-50k'].privileges.maxRooms,
+        maxStaff: OFFICIAL_PLANS['plan-complete-50k'].privileges.maxStaff,
+        maxBranches: OFFICIAL_PLANS['plan-complete-50k'].privileges.maxBranches,
+        storageQuotaGb: OFFICIAL_PLANS['plan-complete-50k'].privileges.storageQuotaGb,
+        backupFrequency: OFFICIAL_PLANS['plan-complete-50k'].privileges.backupFrequency,
         recurringSupportedCycles: ['monthly'],
         availableForPurchase: true,
         privileges: OFFICIAL_PLANS['plan-complete-50k'].privileges,
@@ -1162,8 +1688,15 @@ async function createServer() {
   app.post('/api/subscriptions/initialize', async (req, res) => {
     try {
       const caller = await resolveCaller(req);
-      const { planId, billingCycle = 'monthly', paymentMode = 'paystack_recurring', organizationId: requestedOrgId, hotelId, returnScreen } =
-        req.body || {};
+      const {
+        planId,
+        billingCycle = 'monthly',
+        paymentMode = 'paystack_recurring',
+        organizationId: requestedOrgId,
+        hotelId,
+        returnScreen,
+        clientOrigin,
+      } = req.body || {};
 
       const orgAuth = await resolveAuthorizedOrganizationForBilling(caller, requestedOrgId || hotelId);
       if ('error' in orgAuth) {
@@ -1239,7 +1772,7 @@ async function createServer() {
     const reference = `pstk_test_${safeOrgSlug}_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
     const pendingSubscriptionId = `pend_sub_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
 
-    const appOrigin = resolveAppOrigin(req);
+    const appOrigin = resolveAppOrigin(req, typeof clientOrigin === 'string' ? clientOrigin : undefined);
     const callbackUrl = `${appOrigin}/?paystack_callback=1&subscription_id=${encodeURIComponent(
       pendingSubscriptionId
     )}`;
@@ -2107,9 +2640,9 @@ async function createServer() {
   });
 
   // Super Admin Hotel Plan Migration & Switcher Endpoint
-  app.patch('/api/hotels/:hotelId/plan', (req, res) => {
+  app.patch('/api/hotels/:hotelId/plan', requireSuperAdmin, (req, res) => {
     const { hotelId } = req.params;
-    const { planId } = req.body;
+    const { planId, subscriptionStatus, approvalStatus, isLive } = req.body;
 
     const targetPlan = OFFICIAL_PLANS[planId];
     if (!targetPlan) {
@@ -2130,7 +2663,7 @@ async function createServer() {
         state: defaultMatch?.state || 'Nigeria',
         country: 'Nigeria',
         subscriptionPlanId: 'plan-starter-30k',
-        subscriptionPlanName: 'Plan 1 — Standard Operations (PMS)',
+        subscriptionPlanName: 'IGHO Stay Starter',
         packageType: 'management',
         hasGuestPortal: false,
         roomCount: 6,
@@ -2140,8 +2673,8 @@ async function createServer() {
       index = hotels.length - 1;
     }
 
-
     const currentHotel = hotels[index];
+    const previousPlanId = currentHotel.subscriptionPlanId || 'plan-starter-30k';
     const isComplete = targetPlan.hasGuestPortal;
     const standardPlanId = isComplete ? 'plan-complete-50k' : 'plan-starter-30k';
 
@@ -2151,9 +2684,13 @@ async function createServer() {
       subscriptionPlanName: targetPlan.name,
       packageType: isComplete ? 'complete' : 'management',
       hasGuestPortal: isComplete,
+      ...(subscriptionStatus ? { subscriptionStatus } : {}),
+      ...(approvalStatus ? { approvalStatus } : {}),
+      ...(typeof isLive === 'boolean' ? { isLive } : {}),
       privileges: { ...targetPlan.privileges },
     };
 
+    // Preserve ALL existing rooms, staff, branches, reservations, and records safely on downgrade/upgrade
     hotels[index] = updatedHotel;
     state.hotels = hotels;
 
@@ -2167,19 +2704,31 @@ async function createServer() {
         hasGuestPortal: isComplete,
         maxRooms: targetPlan.maxRooms,
         maxStaff: targetPlan.maxStaff,
+        maxBranches: targetPlan.maxBranches,
         storageQuotaBytes: targetPlan.storageQuotaBytes,
         privileges: { ...targetPlan.privileges },
         updatedAt: new Date().toISOString(),
       },
     };
 
-    // Synchronize storage allowance if not explicitly custom overridden
+    // Synchronize storage allowance if not explicitly custom overridden (10 GB Starter / 50 GB Pro)
     let customQuotas = state.storageCustomQuotas || {};
     if (customQuotas[hotelId] === undefined) {
-      // Default to 1 GB (Starter) or 10 GB (Complete)
-      customQuotas[hotelId] = isComplete ? 10 * 1024 * 1024 * 1024 : 1 * 1024 * 1024 * 1024;
+      customQuotas[hotelId] = isComplete ? 50 * 1024 * 1024 * 1024 : 10 * 1024 * 1024 * 1024;
       state.storageCustomQuotas = customQuotas;
     }
+
+    const historyEntry = {
+      id: `sub-hist-${Date.now()}`,
+      organizationId: hotelId,
+      previousPlanId,
+      newPlanId: standardPlanId,
+      actionType: previousPlanId === standardPlanId ? 'plan_sync' : isComplete ? 'upgrade' : 'downgrade',
+      actorEmail: String(req.headers['x-igho-user-email'] || 'superadmin@igho.software'),
+      notes: `Plan transitioned from ${previousPlanId} to ${standardPlanId}. Existing organization data preserved.`,
+      createdAt: new Date().toISOString(),
+    };
+    state.subscriptionHistory = [historyEntry, ...(state.subscriptionHistory || [])].slice(0, 500);
 
     saveDbState(state);
 
@@ -2195,11 +2744,12 @@ async function createServer() {
 
     res.json({
       success: true,
-      message: `Successfully migrated ${updatedHotel.name} to ${targetPlan.name}.`,
-      hotel: updatedHotel,
+      message: `Successfully migrated ${updatedHotel.name} to ${targetPlan.name}. All existing hotel records preserved.`,
+      hotel: enrichHotelWithDefaultsAndPrivileges(updatedHotel),
       hasGuestPortal: isComplete,
       privileges: { ...targetPlan.privileges },
       storageQuotaBytes: customQuotas[hotelId],
+      historyEntry,
     });
   });
 
@@ -2348,6 +2898,8 @@ async function createServer() {
   // =========================================================================
   app.get('/api/hotels/:hotelId/night-audit/status', (req, res) => {
     const { hotelId } = req.params;
+    const gate = enforceHotelFeatureAccess(hotelId, 'nightAudit', 'Night Audit requires IGHO Stay Professional.');
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
     const state = getDbState() || {};
     const auditStatus = (state.businessDateStatuses || {})[hotelId] || {
       hotelId,
@@ -2366,6 +2918,8 @@ async function createServer() {
 
   app.post('/api/hotels/:hotelId/night-audit/run', (req, res) => {
     const { hotelId } = req.params;
+    const gate = enforceHotelFeatureAccess(hotelId, 'nightAudit', 'Night Audit requires IGHO Stay Professional.');
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
     const { auditorEmail, auditNotes, inHouseRoomsCount = 0, totalRoomRevenuePosted = 0, totalVatPosted = 0, totalConsumptionTaxPosted = 0 } = req.body;
 
     const state = getDbState() || {};
@@ -2429,6 +2983,8 @@ async function createServer() {
   // =========================================================================
   app.get('/api/hotels/:hotelId/cashier-shifts', (req, res) => {
     const { hotelId } = req.params;
+    const gate = enforceHotelFeatureAccess(hotelId, 'cashierShifts', 'Cashier Shift Management requires IGHO Stay Professional.');
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
     const state = getDbState() || {};
     const shifts = (state.cashierShifts || []).filter((s: any) => s.hotelId === hotelId);
     const activeShift = shifts.find((s: any) => s.status === 'open');
@@ -2442,6 +2998,8 @@ async function createServer() {
 
   app.post('/api/hotels/:hotelId/cashier-shifts/open', (req, res) => {
     const { hotelId } = req.params;
+    const gate = enforceHotelFeatureAccess(hotelId, 'cashierShifts', 'Cashier Shift Management requires IGHO Stay Professional.');
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
     const { cashierEmail, cashierName, openingFloat = 20000, terminalId = 'FRONT-DESK-01' } = req.body;
 
     const state = getDbState() || {};
@@ -2477,6 +3035,8 @@ async function createServer() {
 
   app.post('/api/hotels/:hotelId/cashier-shifts/close', (req, res) => {
     const { hotelId } = req.params;
+    const gate = enforceHotelFeatureAccess(hotelId, 'cashierShifts', 'Cashier Shift Management requires IGHO Stay Professional.');
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
     const { shiftId, closingCashCount, handoverTo, handoverNotes } = req.body;
 
     const state = getDbState() || {};
@@ -2516,6 +3076,8 @@ async function createServer() {
   // =========================================================================
   app.get('/api/hotels/:hotelId/folios', (req, res) => {
     const { hotelId } = req.params;
+    const gate = enforceHotelFeatureAccess(hotelId, 'guestFolios', 'Guest Folios & Linked Reversals require IGHO Stay Professional.');
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
     const state = getDbState() || {};
     const folios = (state.guestFolios || []).filter((f: any) => f.hotelId === hotelId);
     res.json({ success: true, folios });
@@ -2523,6 +3085,8 @@ async function createServer() {
 
   app.post('/api/hotels/:hotelId/folios/charges', (req, res) => {
     const { hotelId } = req.params;
+    const gate = enforceHotelFeatureAccess(hotelId, 'guestFolios', 'Guest Folios & Linked Reversals require IGHO Stay Professional.');
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
     const { folioId, description, category, amount, postedBy, businessDate } = req.body;
 
     const state = getDbState() || {};
@@ -2577,6 +3141,8 @@ async function createServer() {
 
   app.post('/api/hotels/:hotelId/folios/reversal', (req, res) => {
     const { hotelId } = req.params;
+    const gate = enforceHotelFeatureAccess(hotelId, 'guestFolios', 'Guest Folios & Linked Reversals require IGHO Stay Professional.');
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
     const { folioId, chargeId, reversalReason, approverEmail, requestedBy } = req.body;
 
     if (!folioId || !chargeId || !reversalReason || !approverEmail) {
@@ -2731,6 +3297,8 @@ async function createServer() {
   // =========================================================================
   app.get('/api/hotels/:hotelId/maintenance', (req, res) => {
     const { hotelId } = req.params;
+    const gate = enforceHotelFeatureAccess(hotelId, 'maintenanceBlocks', 'Maintenance & Room Blocks require IGHO Stay Professional.');
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
     const state = getDbState() || {};
     const orders = (state.maintenanceOrders || []).filter((m: any) => m.hotelId === hotelId);
     res.json({ success: true, orders });
@@ -2738,6 +3306,8 @@ async function createServer() {
 
   app.post('/api/hotels/:hotelId/maintenance', (req, res) => {
     const { hotelId } = req.params;
+    const gate = enforceHotelFeatureAccess(hotelId, 'maintenanceBlocks', 'Maintenance & Room Blocks require IGHO Stay Professional.');
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
     const { roomId, roomNumber, category, title, description, priority = 'routine', startDate, expectedEndDate, blocksRoom = false, reportedBy } = req.body;
 
     const state = getDbState() || {};
@@ -2832,6 +3402,8 @@ async function createServer() {
 
   app.get('/api/hotels/:hotelId/downtime-pack', (req, res) => {
     const { hotelId } = req.params;
+    const gate = enforceHotelFeatureAccess(hotelId, 'nightAudit', 'Downtime & Compliance Pack requires IGHO Stay Professional.');
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
     const state = getDbState() || {};
     const reservations = (state.reservations || []).filter((r: any) => r.hotelId === hotelId);
     const rooms = (state.rooms || []).filter((r: any) => r.hotelId === hotelId);
@@ -2932,176 +3504,1373 @@ async function createServer() {
     res.json({ success: true, message: 'Custom role deleted.' });
   });
 
-  // Staff Invitations API
-  app.get('/api/hotels/:hotelId/invitations', (req, res) => {
-    const { hotelId } = req.params;
-    const state = getDbState() || {};
-    const invitations = (state.invitations || []).filter((i: any) => i.hotelId === hotelId);
-    res.json({ success: true, invitations });
-  });
+  // =========================================================================
+  // 3B. SECURE STAFF INVITATIONS, EMAIL DELIVERY & OTP VERIFICATION
+  // =========================================================================
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const ALLOWED_BUILT_IN_INVITE_ROLES = new Set(['manager', 'receptionist', 'finance', 'housekeeping']);
+  const FORBIDDEN_INVITE_ROLES = new Set(['owner', 'hotel_owner', 'super_admin', 'admin', 'platform_admin']);
 
-  app.post('/api/hotels/:hotelId/invitations', (req, res) => {
-    const { hotelId } = req.params;
-    const { email, role, invitedBy = 'Hotel Owner', hotelName } = req.body;
+  function sha256Hex(value: string): string {
+    return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
+  }
 
-    if (!email || !email.trim()) {
-      return res.status(400).json({ error: 'EMAIL_REQUIRED', message: 'Staff email is required.' });
+  function timingSafeHexEqual(a: string, b: string): boolean {
+    if (!a || !b || a.length !== b.length) return false;
+    try {
+      return crypto.timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
+    } catch {
+      return false;
+    }
+  }
+
+  function sanitizeInvitationForClient(inv: any) {
+    if (!inv || typeof inv !== 'object') return inv;
+    const {
+      token: _rawToken,
+      tokenHash: _tokenHash,
+      otpHash: _otpHash,
+      otpSalt: _otpSalt,
+      verificationProofHash: _vpHash,
+      verifiedSupabaseAccessToken: _accessTok,
+      ...safe
+    } = inv;
+    return safe;
+  }
+
+  function resolveInviteRolePermissions(state: any, hotelId: string, role: string): string[] {
+    const cleanRole = String(role || 'receptionist').trim().toLowerCase();
+    const rolePermissionsMap: Record<string, string[]> = {
+      manager: [
+        'dashboard.view',
+        'reservations.view',
+        'reservations.create',
+        'reservations.edit',
+        'reservations.check_in',
+        'reservations.check_out',
+        'rooms.view',
+        'rooms.create',
+        'rooms.edit',
+        'guests.view',
+        'billing.view',
+        'billing.create',
+        'housekeeping.view',
+        'reports.view',
+        'users.view',
+      ],
+      receptionist: [
+        'dashboard.view',
+        'reservations.view',
+        'reservations.create',
+        'reservations.edit',
+        'reservations.check_in',
+        'reservations.check_out',
+        'rooms.view',
+        'guests.view',
+        'guests.create',
+        'billing.view',
+      ],
+      finance: [
+        'dashboard.view',
+        'reservations.view',
+        'billing.view',
+        'billing.create',
+        'billing.edit',
+        'billing.refund',
+        'reports.view',
+        'reports.export',
+      ],
+      housekeeping: [
+        'dashboard.view',
+        'rooms.view',
+        'housekeeping.view',
+        'housekeeping.create',
+        'housekeeping.edit',
+      ],
+    };
+
+    if (rolePermissionsMap[cleanRole]) {
+      return rolePermissionsMap[cleanRole];
+    }
+
+    const customRole = (state.customRoles || []).find(
+      (cr: any) =>
+        cr.hotelId === hotelId &&
+        cr.active !== false &&
+        (String(cr.id || '').toLowerCase() === cleanRole || String(cr.name || '').toLowerCase() === cleanRole)
+    );
+    if (customRole && Array.isArray(customRole.permissions)) {
+      return customRole.permissions;
+    }
+
+    return rolePermissionsMap.receptionist;
+  }
+
+  function validateAssignableInviteRole(
+    state: any,
+    hotel: any,
+    hotelId: string,
+    requestedRole: string
+  ): { ok: true; role: string } | { ok: false; status: number; error: string; message: string } {
+    const cleanRole = String(requestedRole || '').trim().toLowerCase();
+    if (!cleanRole) {
+      return { ok: false, status: 400, error: 'ROLE_REQUIRED', message: 'A valid staff role is required.' };
+    }
+    if (FORBIDDEN_INVITE_ROLES.has(cleanRole)) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'PRIVILEGED_ROLE_FORBIDDEN',
+        message: 'Administrator, Hotel Owner, and Super Admin roles cannot be assigned via staff invitations.',
+      };
+    }
+    if (ALLOWED_BUILT_IN_INVITE_ROLES.has(cleanRole)) {
+      return { ok: true, role: cleanRole };
+    }
+    const ent = hotel ? resolveHotelEntitlements(hotel) : null;
+    if (ent && !ent.privileges.customRoles) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'CUSTOM_ROLES_UPGRADE_REQUIRED',
+        message: 'Custom staff roles require IGHO Stay Professional.',
+      };
+    }
+    const customMatch = (state.customRoles || []).find(
+      (cr: any) =>
+        cr.hotelId === hotelId &&
+        cr.active !== false &&
+        (String(cr.id || '').toLowerCase() === cleanRole || String(cr.name || '').toLowerCase() === cleanRole)
+    );
+    if (!customMatch) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'INVALID_STAFF_ROLE',
+        message: `Role "${requestedRole}" is not a recognized role for this hotel.`,
+      };
+    }
+    return { ok: true, role: String(customMatch.name || cleanRole).toLowerCase() };
+  }
+
+  async function authorizeHotelStaffInviteAdmin(
+    req: express.Request,
+    hotelId: string
+  ): Promise<
+    | { ok: true; caller: Awaited<ReturnType<typeof resolveCaller>> }
+    | { ok: false; status: number; error: string; message: string }
+  > {
+    const caller = await resolveCaller(req);
+    if (caller.banned) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'ACCOUNT_SUSPENDED',
+        message: 'This account has been suspended by platform administration.',
+      };
+    }
+
+    const supabaseConfigured = Boolean(
+      supabaseUrlEnv && (supabaseServiceKeyEnv || process.env.SUPABASE_PUBLISHABLE_KEY)
+    );
+    if (supabaseConfigured && !caller.verifiedJwt) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'AUTHENTICATION_REQUIRED',
+        message: 'An authenticated administrator session is required to manage hotel staff invitations.',
+      };
+    }
+
+    if (caller.isSuperAdmin) {
+      return { ok: true, caller };
+    }
+
+    const cleanEmail = String(caller.email || '').trim().toLowerCase();
+    if (!cleanEmail) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'AUTHENTICATION_REQUIRED',
+        message: 'Administrator identity is required to manage hotel staff invitations.',
+      };
     }
 
     const state = getDbState() || {};
-    let invitations = state.invitations || [];
     const hotel = (state.hotels || []).find((h: any) => h.id === hotelId);
-    if (hotel) {
-      const ent = resolveHotelEntitlements(hotel);
-      const activeStaffCount = (state.staff || []).filter(
-        (s: any) => s.hotelId === hotelId && s.status !== 'deactivated' && s.active !== false
-      ).length;
-      const pendingInviteCount = invitations.filter(
-        (i: any) => i.hotelId === hotelId && i.status === 'pending'
-      ).length;
-      if (activeStaffCount + pendingInviteCount >= ent.privileges.maxStaff) {
-        return res.status(403).json({
-          error: 'STAFF_QUOTA_EXCEEDED',
-          feature: 'maxStaff',
-          maxStaff: ent.privileges.maxStaff,
-          message: `Your current plan (${ent.plan.name}) supports up to ${ent.privileges.maxStaff} staff accounts/invitations. Upgrade to IGHO Stay Professional to expand team capacity.`,
-        });
+    if (!hotel) {
+      return { ok: false, status: 404, error: 'HOTEL_NOT_FOUND', message: 'Hotel not found.' };
+    }
+
+    const ownerMatch =
+      String(hotel.ownerEmail || '').trim().toLowerCase() === cleanEmail ||
+      String(hotel.email || '').trim().toLowerCase() === cleanEmail;
+    if (ownerMatch) {
+      return { ok: true, caller };
+    }
+
+    if (caller.verifiedJwt) {
+      const authorizedOrgs = await getCallerAuthorizedOrganizations(caller);
+      const membership = authorizedOrgs.find((o) => o.organizationId === hotelId);
+      if (membership && ['owner', 'hotel_owner', 'manager', 'hotel_manager'].includes(membership.role)) {
+        return { ok: true, caller };
       }
     }
 
-    const token = `inv-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-    const newInvite = {
-      id: `inv-${Date.now()}`,
-      hotelId,
-      hotelName: hotelName || hotel?.name || 'Partner Hotel',
-      email: email.trim().toLowerCase(),
-      role: role || 'receptionist',
-      token,
-      status: 'pending',
-      invitedBy,
-      invitedAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+    const activeStaff = (state.staff || []).find(
+      (s: any) =>
+        s.hotelId === hotelId &&
+        String(s.email || '').trim().toLowerCase() === cleanEmail &&
+        s.active !== false &&
+        s.status !== 'deactivated' &&
+        s.status !== 'inactive'
+    );
+    if (activeStaff) {
+      const sRole = String(activeStaff.role || '').toLowerCase();
+      const perms: string[] = Array.isArray(activeStaff.permissions) ? activeStaff.permissions : [];
+      if (
+        ['owner', 'hotel_owner', 'manager', 'hotel_manager'].includes(sRole) ||
+        perms.includes('users.invite')
+      ) {
+        return { ok: true, caller };
+      }
+    }
+
+    return {
+      ok: false,
+      status: 403,
+      error: 'CROSS_ORGANIZATION_DENIED',
+      message: 'Only an authorized administrator of this hotel may invite or manage staff.',
     };
+  }
 
-    invitations = [newInvite, ...invitations];
-    state.invitations = invitations;
-    saveDbState(state);
+  function resolveOriginUrl(req: express.Request): string {
+    const envUrl = String(process.env.APP_URL || '').trim();
+    if (envUrl && /^https?:\/\//i.test(envUrl)) {
+      return envUrl.replace(/\/+$/, '');
+    }
+    const host = req.get('x-forwarded-host') || req.get('host');
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+    if (host) {
+      return `${proto}://${host}`.replace(/\/+$/, '');
+    }
+    return 'http://localhost:3000';
+  }
 
-    broadcastLiveEvent('staff_invitation_created', newInvite);
-    res.json({ success: true, invitation: newInvite, invitationUrl: `/#accept-invite?token=${token}` });
+  function escapeEmailHtml(value: string): string {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function buildInvitationEmailHtml(params: {
+    hotelName: string;
+    invitedName: string;
+    roleLabel: string;
+    otpCode: string;
+    inviteUrl: string;
+  }) {
+    const safeHotel = escapeEmailHtml(params.hotelName);
+    const safeInvitedName = escapeEmailHtml(params.invitedName);
+    const safeRole = escapeEmailHtml(params.roleLabel);
+    const safeOtp = escapeEmailHtml(params.otpCode);
+    const safeUrl = escapeEmailHtml(params.inviteUrl);
+    const greeting = safeInvitedName ? `Hello ${safeInvitedName},` : 'Hello,';
+    return `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 28px 24px; color: #111827; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 16px;">
+        <div style="margin-bottom: 20px;">
+          <span style="display: inline-block; background: #000000; color: #ffffff; font-weight: 800; font-size: 12px; padding: 6px 12px; border-radius: 999px;">IGHO SOFTWARE SYSTEMS</span>
+        </div>
+        <h2 style="margin: 0 0 10px; font-size: 20px; font-weight: 800; color: #111827;">Staff Invitation — ${safeHotel}</h2>
+        <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.6; color: #374151;">
+          ${greeting} You have been invited to join <strong>${safeHotel}</strong> on IGHO Stay as <strong>${safeRole}</strong>.
+        </p>
+        <div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin-bottom: 18px; text-align: center;">
+          <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #6b7280; margin-bottom: 6px;">Your 6-Digit Email Verification OTP</div>
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 28px; font-weight: 900; letter-spacing: 0.2em; color: #000000;">${safeOtp}</div>
+          <div style="font-size: 11px; color: #6b7280; margin-top: 6px;">Valid for 15 minutes · Single use</div>
+        </div>
+        <p style="margin: 0 0 18px; font-size: 13px; color: #374151;">
+          Open your secure invitation link below, enter the OTP above to verify email ownership, and create your password:
+        </p>
+        <div style="text-align: center; margin-bottom: 20px;">
+          <a href="${safeUrl}" style="display: inline-block; background: #000000; color: #ffffff; text-decoration: none; font-weight: 700; font-size: 13px; padding: 12px 24px; border-radius: 999px;">Accept Staff Invitation</a>
+        </div>
+        <p style="margin: 0; font-size: 11px; color: #6b7280; word-break: break-all;">Or copy link: ${safeUrl}</p>
+      </div>
+    `;
+  }
+
+  async function dispatchStaffInvitationEmail(params: {
+    toEmail: string;
+    hotelId: string;
+    hotelName: string;
+    invitedName: string;
+    role: string;
+    inviteUrl: string;
+  }): Promise<
+    | {
+        ok: true;
+        provider: 'resend_api' | 'supabase_smtp';
+        deliveryMode: 'supabase_otp' | 'resend_custom_otp';
+        providerMessageId?: string;
+        otpHash?: string;
+        otpSalt?: string;
+        otpExpiresAt?: string;
+        details?: string;
+      }
+    | {
+        ok: false;
+        statusCode: number;
+        error: string;
+        message: string;
+        provider: string;
+      }
+  > {
+    const cleanEmail = params.toEmail.trim().toLowerCase();
+    const roleLabel = params.role.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    const resendApiKey = String(process.env.RESEND_API_KEY || '').trim();
+    const resendFrom = String(
+      process.env.RESEND_FROM_EMAIL || 'IGHO Software Systems <onboarding@resend.dev>'
+    ).trim();
+    const supabaseKey = String(supabaseServiceKeyEnv || process.env.SUPABASE_PUBLISHABLE_KEY || '').trim();
+
+    // Path 1: Direct Resend API (when RESEND_API_KEY is configured in server environment)
+    if (resendApiKey) {
+      let otpToEmail = '';
+      let deliveryMode: 'supabase_otp' | 'resend_custom_otp' = 'resend_custom_otp';
+      let otpSalt: string | undefined;
+      let otpHash: string | undefined;
+      let otpExpiresAt: string | undefined;
+
+      // Prefer generating a real unconfirmed Supabase Auth OTP when supabaseAdminClient is active
+      if (supabaseAdminClient) {
+        const { data: linkData, error: linkErr } = await supabaseAdminClient.auth.admin.generateLink({
+          type: 'magiclink',
+          email: cleanEmail,
+          options: {
+            redirectTo: params.inviteUrl,
+            data: {
+              full_name: params.invitedName || '',
+              invited_hotel_id: params.hotelId,
+              invited_hotel_name: params.hotelName,
+              invited_role: params.role,
+              invitation_flow: true,
+            },
+          },
+        });
+        if (linkErr || !linkData?.properties?.email_otp) {
+          console.error('[Staff Invite Email] Supabase generateLink failed:', linkErr);
+          return {
+            ok: false,
+            statusCode: 502,
+            error: 'SUPABASE_OTP_GENERATION_FAILED',
+            message:
+              linkErr?.message ||
+              'Failed to generate Supabase email OTP for this recipient.',
+            provider: 'resend_api',
+          };
+        }
+        otpToEmail = String(linkData.properties.email_otp);
+        deliveryMode = 'supabase_otp';
+      } else {
+        otpToEmail = String(crypto.randomInt(100000, 1000000));
+        otpSalt = crypto.randomBytes(16).toString('hex');
+        otpHash = sha256Hex(`${otpSalt}:${otpToEmail}`);
+        otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      }
+
+      try {
+        const resendResp = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${resendApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: resendFrom,
+            to: [cleanEmail],
+            subject: `Staff Invitation: Join ${params.hotelName} (${roleLabel}) — OTP ${otpToEmail}`,
+            html: buildInvitationEmailHtml({
+              hotelName: params.hotelName,
+              invitedName: params.invitedName,
+              roleLabel,
+              otpCode: otpToEmail,
+              inviteUrl: params.inviteUrl,
+            }),
+            text: `You have been invited to join ${params.hotelName} as ${roleLabel}.\nYour 6-digit verification OTP: ${otpToEmail}\nAccept invitation: ${params.inviteUrl}`,
+          }),
+        });
+
+        const resendData: any = await resendResp.json().catch(() => ({}));
+        console.log(
+          `[Staff Invite Email] Resend API response: status=${resendResp.status} id=${resendData?.id || 'none'} recipient=${cleanEmail}`
+        );
+
+        if (!resendResp.ok || !resendData?.id) {
+          const rawMsg =
+            resendData?.message ||
+            resendData?.error ||
+            `Resend rejected email delivery (HTTP ${resendResp.status}).`;
+          const testingHint =
+            rawMsg.toLowerCase().includes('testing emails') || rawMsg.toLowerCase().includes('verify a domain')
+              ? ' Note: While using onboarding@resend.dev without a verified custom domain, Resend restricts emails to your Resend account owner email.'
+              : '';
+          return {
+            ok: false,
+            statusCode: resendResp.status || 502,
+            error: 'RESEND_DELIVERY_REJECTED',
+            message: `${rawMsg}${testingHint}`,
+            provider: 'resend_api',
+          };
+        }
+
+        return {
+          ok: true,
+          provider: 'resend_api',
+          deliveryMode,
+          providerMessageId: String(resendData.id),
+          otpHash,
+          otpSalt,
+          otpExpiresAt,
+          details: `Accepted by Resend (ID: ${resendData.id}).`,
+        };
+      } catch (err: any) {
+        console.error('[Staff Invite Email] Resend network error:', err);
+        return {
+          ok: false,
+          statusCode: 502,
+          error: 'RESEND_NETWORK_ERROR',
+          message: err?.message || 'Network failure contacting Resend API.',
+          provider: 'resend_api',
+        };
+      }
+    }
+
+    // Path 2: Supabase Auth /auth/v1/otp (uses Resend SMTP configured in Supabase Dashboard)
+    if (supabaseUrlEnv && supabaseKey) {
+      try {
+        const otpEndpoint = `${supabaseUrlEnv.replace(/\/+$/, '')}/auth/v1/otp`;
+        const otpResp = await fetch(otpEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: supabaseKey,
+            ...(supabaseServiceKeyEnv ? { Authorization: `Bearer ${supabaseServiceKeyEnv}` } : {}),
+          },
+          body: JSON.stringify({
+            email: cleanEmail,
+            create_user: true,
+            email_redirect_to: params.inviteUrl,
+            data: {
+              full_name: params.invitedName || '',
+              invited_hotel_id: params.hotelId,
+              invited_hotel_name: params.hotelName,
+              invited_role: params.role,
+              invitation_flow: true,
+            },
+          }),
+        });
+
+        const otpData: any = await otpResp.json().catch(() => ({}));
+        console.log(
+          `[Staff Invite Email] Supabase /auth/v1/otp -> status=${otpResp.status} recipient=${cleanEmail}`
+        );
+
+        if (!otpResp.ok) {
+          const rawMsg =
+            otpData?.msg ||
+            otpData?.error_description ||
+            otpData?.message ||
+            otpData?.error ||
+            `Supabase Auth OTP dispatch failed (HTTP ${otpResp.status}).`;
+          const testingHint =
+            otpResp.status === 429
+              ? ' Rate limit reached — wait 60 seconds before retrying.'
+              : rawMsg.toLowerCase().includes('smtp') ||
+                rawMsg.toLowerCase().includes('sending') ||
+                rawMsg.toLowerCase().includes('unexpected_failure')
+              ? ' Check Supabase SMTP (Resend): when using onboarding@resend.dev, Resend only delivers to your Resend account email until a custom domain is verified.'
+              : '';
+          return {
+            ok: false,
+            statusCode: otpResp.status || 502,
+            error: 'SUPABASE_SMTP_DELIVERY_FAILED',
+            message: `${rawMsg}${testingHint}`,
+            provider: 'supabase_smtp',
+          };
+        }
+
+        return {
+          ok: true,
+          provider: 'supabase_smtp',
+          deliveryMode: 'supabase_otp',
+          providerMessageId: otpData?.message_id ? String(otpData.message_id) : undefined,
+          details: 'Accepted by Supabase Auth OTP via configured Resend SMTP.',
+        };
+      } catch (err: any) {
+        console.error('[Staff Invite Email] Supabase /auth/v1/otp error:', err);
+        return {
+          ok: false,
+          statusCode: 502,
+          error: 'SUPABASE_AUTH_NETWORK_ERROR',
+          message: err?.message || 'Network error calling Supabase Auth OTP endpoint.',
+          provider: 'supabase_smtp',
+        };
+      }
+    }
+
+    // Path 3: Neither Supabase Auth nor Resend API key is configured on this server
+    console.warn(
+      `[Staff Invite Email] Blocked fake success for ${cleanEmail}: neither SUPABASE_URL+KEY nor RESEND_API_KEY is configured.`
+    );
+    return {
+      ok: false,
+      statusCode: 503,
+      error: 'EMAIL_DELIVERY_NOT_CONFIGURED',
+      message:
+        'Email delivery provider is not configured on the backend server. Set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY (with Resend SMTP enabled in Supabase) or RESEND_API_KEY in your server environment secrets.',
+      provider: 'none',
+    };
+  }
+
+  async function syncInvitationToPostgres(inviteRecord: any) {
+    if (!supabaseAdminClient) return;
+    if (!UUID_REGEX.test(String(inviteRecord.hotelId || ''))) return;
+    try {
+      const payload: any = {
+        organization_id: inviteRecord.hotelId,
+        email: inviteRecord.email,
+        role: inviteRecord.role,
+        token: inviteRecord.tokenHash,
+        status: inviteRecord.status,
+        invited_at: inviteRecord.invitedAt,
+        expires_at: inviteRecord.expiresAt,
+      };
+      if (UUID_REGEX.test(String(inviteRecord.invitedByUserId || ''))) {
+        payload.invited_by = inviteRecord.invitedByUserId;
+      }
+      if (UUID_REGEX.test(String(inviteRecord.id || ''))) {
+        payload.id = inviteRecord.id;
+      }
+      const { error } = await supabaseAdminClient.from('staff_invitations').upsert(payload, {
+        onConflict: 'token',
+      });
+      if (error) {
+        console.warn('[Staff Invite] Postgres staff_invitations sync error:', error.message);
+      }
+    } catch (err) {
+      console.warn('[Staff Invite] Postgres sync warning:', err);
+    }
+  }
+
+  // List Hotel Invitations (Admin-only, sanitized)
+  app.get('/api/hotels/:hotelId/invitations', async (req, res) => {
+    const { hotelId } = req.params;
+    const auth = await authorizeHotelStaffInviteAdmin(req, hotelId);
+    if ('error' in auth) {
+      return res.status(auth.status).json({ error: auth.error, message: auth.message });
+    }
+    const state = getDbState() || {};
+    const invitations = (state.invitations || [])
+      .filter((i: any) => i.hotelId === hotelId)
+      .map(sanitizeInvitationForClient);
+    res.json({ success: true, invitations });
   });
 
-  // Accept Staff Invitation and activate credentials in backend + Supabase Auth
-  app.post('/api/hotels/:hotelId/invitations/accept', async (req, res) => {
+  // Create & Dispatch Staff Invitation Email (Real Provider Confirmation Required)
+  app.post('/api/hotels/:hotelId/invitations', async (req, res) => {
     const { hotelId } = req.params;
-    const { token, invitationId, email, fullName, password } = req.body;
+    const auth = await authorizeHotelStaffInviteAdmin(req, hotelId);
+    if ('error' in auth) {
+      return res.status(auth.status).json({ success: false, emailSent: false, error: auth.error, message: auth.message });
+    }
 
-    if (!fullName || !password || String(password).length < 6) {
+    const { email, role, name, invitedName, hotelName } = req.body || {};
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
       return res.status(400).json({
-        error: 'INVALID_CREDENTIALS',
-        message: 'Full name and a password of at least 6 characters are required.',
+        success: false,
+        emailSent: false,
+        error: 'INVALID_EMAIL',
+        message: 'A valid staff email address is required.',
       });
     }
 
     const state = getDbState() || {};
-    let invitations = state.invitations || [];
-    const cleanEmail = email ? String(email).trim().toLowerCase() : '';
+    const hotel = (state.hotels || []).find((h: any) => h.id === hotelId);
+    if (!hotel) {
+      return res.status(404).json({
+        success: false,
+        emailSent: false,
+        error: 'HOTEL_NOT_FOUND',
+        message: 'Target hotel was not found.',
+      });
+    }
 
-    const idx = invitations.findIndex(
-      (inv: any) =>
-        (token && inv.token === token) ||
-        (invitationId && inv.id === invitationId) ||
-        (cleanEmail && inv.email?.toLowerCase() === cleanEmail && inv.hotelId === hotelId)
+    const roleCheck = validateAssignableInviteRole(state, hotel, hotelId, role);
+    if ('error' in roleCheck) {
+      return res.status(roleCheck.status).json({
+        success: false,
+        emailSent: false,
+        error: roleCheck.error,
+        message: roleCheck.message,
+      });
+    }
+
+    const existingActiveStaff = (state.staff || []).find(
+      (s: any) =>
+        s.hotelId === hotelId &&
+        String(s.email || '').trim().toLowerCase() === cleanEmail &&
+        s.status !== 'deactivated' &&
+        s.status !== 'inactive' &&
+        s.active !== false
+    );
+    if (existingActiveStaff) {
+      return res.status(409).json({
+        success: false,
+        emailSent: false,
+        error: 'STAFF_ALREADY_ACTIVE',
+        message: `${cleanEmail} is already an active staff member of ${hotel.name}.`,
+      });
+    }
+
+    let invitations: any[] = Array.isArray(state.invitations) ? [...state.invitations] : [];
+    const existingPendingIdx = invitations.findIndex(
+      (i: any) =>
+        i.hotelId === hotelId &&
+        String(i.email || '').trim().toLowerCase() === cleanEmail &&
+        (i.status === 'pending' || i.status === 'expired')
     );
 
-    if (idx >= 0) {
-      const invite = invitations[idx];
-      if (invite.status === 'accepted') {
-        return res.status(409).json({
-          error: 'INVITE_ALREADY_ACCEPTED',
-          message: 'This invitation link has already been accepted. Please sign in on the Staff Portal.',
-        });
-      }
-      if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now()) {
-        invitations[idx] = { ...invite, status: 'expired' };
-        state.invitations = invitations;
-        saveDbState(state);
-        return res.status(410).json({
-          error: 'INVITE_EXPIRED',
-          message: 'This staff invitation link has expired. Request a fresh invitation from your hotel administrator.',
-        });
-      }
+    // Enforce plan active-staff + pending-invite quota (retry for same pending email does not consume an extra seat)
+    const ent = resolveHotelEntitlements(hotel);
+    const activeStaffCount = (state.staff || []).filter(
+      (s: any) => s.hotelId === hotelId && s.status !== 'deactivated' && s.status !== 'inactive' && s.active !== false
+    ).length;
+    const pendingOtherCount = invitations.filter(
+      (i: any) =>
+        i.hotelId === hotelId &&
+        i.status === 'pending' &&
+        String(i.email || '').trim().toLowerCase() !== cleanEmail
+    ).length;
+    if (activeStaffCount + pendingOtherCount >= ent.privileges.maxStaff) {
+      return res.status(403).json({
+        success: false,
+        emailSent: false,
+        error: 'STAFF_QUOTA_EXCEEDED',
+        feature: 'maxStaff',
+        maxStaff: ent.privileges.maxStaff,
+        message: `Your current plan (${ent.plan.name}) supports up to ${ent.privileges.maxStaff} active staff/pending invitations. Deactivate an unused seat or upgrade to IGHO Stay Professional.`,
+      });
     }
 
-    const matchedInvite = idx >= 0 ? invitations[idx] : null;
-    const finalEmail = matchedInvite?.email || cleanEmail;
-    const finalHotelId = matchedInvite?.hotelId || hotelId;
-    const finalRole = (matchedInvite?.role || req.body.role || 'receptionist').toLowerCase();
-    const hotel = (state.hotels || []).find((h: any) => h.id === finalHotelId);
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = sha256Hex(rawToken);
+    const inviteId =
+      existingPendingIdx >= 0
+        ? invitations[existingPendingIdx].id
+        : UUID_REGEX.test(hotelId)
+        ? crypto.randomUUID()
+        : `inv-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    const resolvedHotelName = hotel.name || hotelName || 'Partner Hotel';
+    const cleanInvitedName = String(invitedName || name || '').trim();
+    const origin = resolveOriginUrl(req);
+    const inviteUrl = `${origin}/#accept-invite?token=${rawToken}`;
 
-    if (!finalEmail) {
-      return res.status(400).json({ error: 'EMAIL_REQUIRED', message: 'Valid invitation email is required.' });
+    // Dispatch actual email BEFORE confirming success or persisting broken invites
+    const emailResult = await dispatchStaffInvitationEmail({
+      toEmail: cleanEmail,
+      hotelId,
+      hotelName: resolvedHotelName,
+      invitedName: cleanInvitedName,
+      role: roleCheck.role,
+      inviteUrl,
+    });
+
+    if ('error' in emailResult) {
+      appendAuditLog({
+        actorEmail: auth.caller.email || 'hotel_admin',
+        action: 'STAFF_INVITATION_EMAIL_FAILED',
+        target: cleanEmail,
+        targetType: 'staff_invitation',
+        newValue: emailResult.error,
+        metadata: { hotelId, role: roleCheck.role, provider: emailResult.provider, message: emailResult.message },
+      });
+      return res.status(emailResult.statusCode || 502).json({
+        success: false,
+        emailSent: false,
+        provider: emailResult.provider,
+        error: emailResult.error,
+        message: emailResult.message,
+      });
     }
 
-    // Create/activate Supabase user when admin client is configured
-    if (supabaseAdminClient) {
+    const nowIso = new Date().toISOString();
+    const inviteRecord: any = {
+      id: inviteId,
+      hotelId,
+      hotelName: resolvedHotelName,
+      email: cleanEmail,
+      invitedName: cleanInvitedName,
+      role: roleCheck.role,
+      tokenHash,
+      tokenHint: `${rawToken.slice(0, 6)}...${rawToken.slice(-4)}`,
+      status: 'pending',
+      invitedBy: auth.caller.email || 'Hotel Administrator',
+      invitedByUserId: auth.caller.userId,
+      invitedAt: nowIso,
+      expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+      deliveryMode: emailResult.deliveryMode,
+      emailProvider: emailResult.provider,
+      emailDeliveryStatus: 'sent',
+      providerMessageId: emailResult.providerMessageId,
+      lastEmailSentAt: nowIso,
+      otpAttempts: 0,
+      ...(emailResult.otpHash
+        ? {
+            otpHash: emailResult.otpHash,
+            otpSalt: emailResult.otpSalt,
+            otpExpiresAt: emailResult.otpExpiresAt,
+          }
+        : {}),
+    };
+
+    if (existingPendingIdx >= 0) {
+      invitations[existingPendingIdx] = inviteRecord;
+    } else {
+      invitations = [inviteRecord, ...invitations];
+    }
+    state.invitations = invitations;
+    saveDbState(state);
+    await syncInvitationToPostgres(inviteRecord);
+
+    appendAuditLog({
+      actorEmail: auth.caller.email || 'hotel_admin',
+      action: 'STAFF_INVITATION_SENT',
+      target: cleanEmail,
+      targetType: 'staff_invitation',
+      newValue: `${roleCheck.role}@${hotelId}`,
+      metadata: {
+        invitationId: inviteId,
+        provider: emailResult.provider,
+        providerMessageId: emailResult.providerMessageId,
+      },
+    });
+
+    const sanitizedInvite = sanitizeInvitationForClient(inviteRecord);
+    broadcastLiveEvent('staff_invitation_created', sanitizedInvite);
+
+    res.json({
+      success: true,
+      emailSent: true,
+      provider: emailResult.provider,
+      deliveryMode: emailResult.deliveryMode,
+      providerMessageId: emailResult.providerMessageId,
+      details: emailResult.details,
+      invitation: sanitizedInvite,
+      invitationUrl: `/#accept-invite?token=${rawToken}`,
+    });
+  });
+
+  // Resend Staff Invitation OTP & Rotate Token
+  app.post('/api/hotels/:hotelId/invitations/:invitationId/resend', async (req, res) => {
+    const { hotelId, invitationId } = req.params;
+    const auth = await authorizeHotelStaffInviteAdmin(req, hotelId);
+    if ('error' in auth) {
+      return res.status(auth.status).json({ success: false, emailSent: false, error: auth.error, message: auth.message });
+    }
+
+    const state = getDbState() || {};
+    let invitations: any[] = Array.isArray(state.invitations) ? [...state.invitations] : [];
+    const idx = invitations.findIndex((i: any) => i.id === invitationId && i.hotelId === hotelId);
+    if (idx === -1) {
+      return res.status(404).json({ success: false, emailSent: false, error: 'INVITE_NOT_FOUND', message: 'Invitation not found.' });
+    }
+    if (invitations[idx].status === 'accepted') {
+      return res.status(409).json({
+        success: false,
+        emailSent: false,
+        error: 'INVITE_ALREADY_ACCEPTED',
+        message: 'This invitation has already been accepted.',
+      });
+    }
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = sha256Hex(rawToken);
+    const origin = resolveOriginUrl(req);
+    const inviteUrl = `${origin}/#accept-invite?token=${rawToken}`;
+    const existing = invitations[idx];
+
+    const emailResult = await dispatchStaffInvitationEmail({
+      toEmail: existing.email,
+      hotelId,
+      hotelName: existing.hotelName || 'Partner Hotel',
+      invitedName: existing.invitedName || '',
+      role: existing.role,
+      inviteUrl,
+    });
+
+    if ('error' in emailResult) {
+      return res.status(emailResult.statusCode || 502).json({
+        success: false,
+        emailSent: false,
+        provider: emailResult.provider,
+        error: emailResult.error,
+        message: emailResult.message,
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const updatedInvite = {
+      ...existing,
+      status: 'pending',
+      tokenHash,
+      tokenHint: `${rawToken.slice(0, 6)}...${rawToken.slice(-4)}`,
+      expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+      deliveryMode: emailResult.deliveryMode,
+      emailProvider: emailResult.provider,
+      emailDeliveryStatus: 'sent',
+      providerMessageId: emailResult.providerMessageId,
+      lastEmailSentAt: nowIso,
+      otpAttempts: 0,
+      otpVerifiedAt: undefined,
+      verificationProofHash: undefined,
+      verificationProofExpiresAt: undefined,
+      ...(emailResult.otpHash
+        ? {
+            otpHash: emailResult.otpHash,
+            otpSalt: emailResult.otpSalt,
+            otpExpiresAt: emailResult.otpExpiresAt,
+          }
+        : {}),
+    };
+    invitations[idx] = updatedInvite;
+    state.invitations = invitations;
+    saveDbState(state);
+    await syncInvitationToPostgres(updatedInvite);
+
+    res.json({
+      success: true,
+      emailSent: true,
+      provider: emailResult.provider,
+      providerMessageId: emailResult.providerMessageId,
+      invitation: sanitizeInvitationForClient(updatedInvite),
+      invitationUrl: `/#accept-invite?token=${rawToken}`,
+    });
+  });
+
+  // Revoke / Cancel Staff Invitation
+  app.delete('/api/hotels/:hotelId/invitations/:invitationId', async (req, res) => {
+    const { hotelId, invitationId } = req.params;
+    const auth = await authorizeHotelStaffInviteAdmin(req, hotelId);
+    if ('error' in auth) {
+      return res.status(auth.status).json({ error: auth.error, message: auth.message });
+    }
+
+    const state = getDbState() || {};
+    let invitations: any[] = Array.isArray(state.invitations) ? [...state.invitations] : [];
+    const idx = invitations.findIndex((i: any) => i.id === invitationId && i.hotelId === hotelId);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'INVITE_NOT_FOUND', message: 'Invitation not found.' });
+    }
+    const targetEmail = invitations[idx].email;
+    const targetTokenHash = invitations[idx].tokenHash;
+    invitations = invitations.filter((i: any) => !(i.id === invitationId && i.hotelId === hotelId));
+    state.invitations = invitations;
+    saveDbState(state);
+
+    if (supabaseAdminClient && targetTokenHash) {
       try {
-        const { data: created, error: createErr } = await supabaseAdminClient.auth.admin.createUser({
-          email: finalEmail,
-          password,
-          email_confirm: true,
-          user_metadata: { full_name: fullName.trim() },
+        await supabaseAdminClient
+          .from('staff_invitations')
+          .update({ status: 'revoked' })
+          .eq('token', targetTokenHash);
+      } catch {}
+    }
+
+    appendAuditLog({
+      actorEmail: auth.caller.email || 'hotel_admin',
+      action: 'STAFF_INVITATION_REVOKED',
+      target: targetEmail || invitationId,
+      targetType: 'staff_invitation',
+    });
+
+    res.json({ success: true, message: 'Staff invitation revoked.' });
+  });
+
+  // Public Invitation Lookup by Secret Token (Read-Only Locked Context)
+  app.get('/api/invitations/lookup', (req, res) => {
+    const rawToken = String(req.query.token || '').trim();
+    if (!rawToken || rawToken.length < 8) {
+      return res.status(400).json({
+        valid: false,
+        error: 'TOKEN_REQUIRED',
+        message: 'A valid invitation link token is required.',
+      });
+    }
+
+    const tokenHash = sha256Hex(rawToken);
+    const state = getDbState() || {};
+    const invitations: any[] = Array.isArray(state.invitations) ? state.invitations : [];
+    const idx = invitations.findIndex(
+      (inv: any) =>
+        (inv.tokenHash && timingSafeHexEqual(inv.tokenHash, tokenHash)) ||
+        (inv.token && inv.token === rawToken)
+    );
+
+    if (idx === -1) {
+      return res.status(404).json({
+        valid: false,
+        error: 'INVITE_NOT_FOUND',
+        message: 'This invitation link is invalid or has been revoked.',
+      });
+    }
+
+    const invite = invitations[idx];
+    if (invite.status === 'accepted') {
+      return res.status(409).json({
+        valid: false,
+        error: 'INVITE_ALREADY_ACCEPTED',
+        message: 'This staff invitation has already been accepted. Please sign in through the Staff Portal.',
+      });
+    }
+    if (invite.status === 'revoked') {
+      return res.status(410).json({
+        valid: false,
+        error: 'INVITE_REVOKED',
+        message: 'This staff invitation has been revoked by the hotel administrator.',
+      });
+    }
+    if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now()) {
+      invitations[idx] = { ...invite, status: 'expired' };
+      state.invitations = invitations;
+      saveDbState(state);
+      return res.status(410).json({
+        valid: false,
+        error: 'INVITE_EXPIRED',
+        message: 'This invitation has expired. Ask your hotel administrator to send a fresh invitation.',
+      });
+    }
+
+    const hotel = (state.hotels || []).find((h: any) => h.id === invite.hotelId);
+    return res.json({
+      valid: true,
+      invitation: {
+        id: invite.id,
+        hotelId: invite.hotelId,
+        hotelName: hotel?.name || invite.hotelName || 'Partner Hotel',
+        email: invite.email,
+        invitedName: invite.invitedName || '',
+        role: invite.role,
+        expiresAt: invite.expiresAt,
+        deliveryMode: invite.deliveryMode || 'supabase_otp',
+        otpVerified: Boolean(
+          invite.verificationProofHash &&
+            invite.verificationProofExpiresAt &&
+            new Date(invite.verificationProofExpiresAt).getTime() > Date.now()
+        ),
+      },
+    });
+  });
+
+  // Step 1 of Acceptance: Verify Email Ownership via OTP (or verified Supabase Magic-Link session)
+  app.post('/api/invitations/verify-otp', async (req, res) => {
+    const { token, otpCode, accessToken } = req.body || {};
+    const rawToken = String(token || '').trim();
+    if (!rawToken) {
+      return res.status(400).json({ error: 'TOKEN_REQUIRED', message: 'Invitation token is required.' });
+    }
+
+    const tokenHash = sha256Hex(rawToken);
+    const state = getDbState() || {};
+    const invitations: any[] = Array.isArray(state.invitations) ? [...state.invitations] : [];
+    const idx = invitations.findIndex(
+      (inv: any) =>
+        (inv.tokenHash && timingSafeHexEqual(inv.tokenHash, tokenHash)) ||
+        (inv.token && inv.token === rawToken)
+    );
+
+    if (idx === -1) {
+      return res.status(404).json({ error: 'INVITE_NOT_FOUND', message: 'Invalid or revoked invitation.' });
+    }
+
+    const invite = invitations[idx];
+    if (invite.status !== 'pending') {
+      return res.status(409).json({
+        error: 'INVITE_NOT_PENDING',
+        message: `This invitation cannot be verified because its status is '${invite.status}'.`,
+      });
+    }
+    if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now()) {
+      invitations[idx] = { ...invite, status: 'expired' };
+      state.invitations = invitations;
+      saveDbState(state);
+      return res.status(410).json({ error: 'INVITE_EXPIRED', message: 'Invitation has expired.' });
+    }
+    if (Number(invite.otpAttempts || 0) >= 5) {
+      return res.status(429).json({
+        error: 'TOO_MANY_OTP_ATTEMPTS',
+        message: 'Too many invalid OTP attempts. Ask your hotel administrator to resend a new verification email.',
+      });
+    }
+
+    let verifiedSupabaseUserId: string | undefined;
+    let verifiedSupabaseAccessToken: string | undefined;
+    const supabaseKey = String(supabaseServiceKeyEnv || process.env.SUPABASE_PUBLISHABLE_KEY || '').trim();
+
+    if (accessToken) {
+      // User arrived back via Supabase email confirmation / magic-link callback
+      let sessionUser: any = null;
+      if (supabaseAdminClient) {
+        const { data } = await supabaseAdminClient.auth.getUser(String(accessToken)).catch(() => ({ data: null }));
+        sessionUser = data?.user || null;
+      } else if (supabaseUrlEnv && supabaseKey) {
+        const resp = await fetch(`${supabaseUrlEnv.replace(/\/+$/, '')}/auth/v1/user`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${String(accessToken)}` },
+        }).catch(() => null);
+        if (resp?.ok) sessionUser = await resp.json().catch(() => null);
+      }
+      if (!sessionUser?.email || String(sessionUser.email).toLowerCase() !== String(invite.email).toLowerCase()) {
+        return res.status(403).json({
+          error: 'EMAIL_MISMATCH',
+          message: `The verified email session does not match the invited email (${invite.email}).`,
         });
-        if (!createErr && created?.user) {
-          await supabaseAdminClient.from('profiles').upsert({
-            id: created.user.id,
-            full_name: fullName.trim(),
-            account_status: 'active',
-          });
-          await supabaseAdminClient.from('organization_memberships').upsert({
-            organization_id: finalHotelId,
-            user_id: created.user.id,
-            role: finalRole === 'hotel_owner' ? 'owner' : finalRole,
-            status: 'active',
+      }
+      verifiedSupabaseUserId = String(sessionUser.id);
+      verifiedSupabaseAccessToken = String(accessToken);
+    } else {
+      const cleanOtp = String(otpCode || '').trim();
+      if (!cleanOtp || cleanOtp.length < 6) {
+        return res.status(400).json({
+          error: 'OTP_REQUIRED',
+          message: 'Enter the 6-digit OTP verification code sent to your email.',
+        });
+      }
+
+      if (invite.deliveryMode === 'resend_custom_otp') {
+        if (!invite.otpHash || !invite.otpSalt || !invite.otpExpiresAt) {
+          return res.status(400).json({
+            error: 'OTP_NOT_FOUND',
+            message: 'No active OTP exists for this invitation. Request a resend from your administrator.',
           });
         }
-      } catch (e) {
-        console.warn('[Staff Accept] Supabase admin sync note:', e);
+        if (new Date(invite.otpExpiresAt).getTime() < Date.now()) {
+          return res.status(410).json({
+            error: 'OTP_EXPIRED',
+            message: 'This OTP code has expired. Request a new code from your administrator.',
+          });
+        }
+        const computed = sha256Hex(`${invite.otpSalt}:${cleanOtp}`);
+        if (!timingSafeHexEqual(computed, invite.otpHash)) {
+          invitations[idx] = { ...invite, otpAttempts: Number(invite.otpAttempts || 0) + 1 };
+          state.invitations = invitations;
+          saveDbState(state);
+          return res.status(400).json({ error: 'INVALID_OTP', message: 'Invalid 6-digit verification code.' });
+        }
+      } else {
+        // Verify OTP directly against Supabase Auth (/auth/v1/verify)
+        if (!supabaseUrlEnv || !supabaseKey) {
+          return res.status(503).json({
+            error: 'SUPABASE_NOT_CONFIGURED',
+            message: 'Supabase Auth is not configured on the backend server.',
+          });
+        }
+        const otpTypes = ['email', 'magiclink', 'signup', 'invite'];
+        let verifiedPayload: any = null;
+        let lastErrorMessage = 'Invalid or expired verification code.';
+        for (const verifyType of otpTypes) {
+          const verifyResp = await fetch(`${supabaseUrlEnv.replace(/\/+$/, '')}/auth/v1/verify`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              apikey: supabaseKey,
+            },
+            body: JSON.stringify({
+              email: invite.email,
+              token: cleanOtp,
+              type: verifyType,
+            }),
+          }).catch(() => null);
+          if (verifyResp) {
+            const payload: any = await verifyResp.json().catch(() => ({}));
+            if (verifyResp.ok && payload?.user) {
+              verifiedPayload = payload;
+              break;
+            }
+            if (payload?.msg || payload?.error_description || payload?.message) {
+              lastErrorMessage = payload.msg || payload.error_description || payload.message;
+            }
+          }
+        }
+
+        if (!verifiedPayload?.user) {
+          invitations[idx] = { ...invite, otpAttempts: Number(invite.otpAttempts || 0) + 1 };
+          state.invitations = invitations;
+          saveDbState(state);
+          return res.status(400).json({
+            error: 'INVALID_OR_EXPIRED_OTP',
+            message: lastErrorMessage,
+          });
+        }
+
+        if (String(verifiedPayload.user.email || '').toLowerCase() !== String(invite.email).toLowerCase()) {
+          return res.status(403).json({
+            error: 'EMAIL_MISMATCH',
+            message: 'Verified OTP user email does not match the invitation email.',
+          });
+        }
+        verifiedSupabaseUserId = String(verifiedPayload.user.id);
+        verifiedSupabaseAccessToken = verifiedPayload.access_token ? String(verifiedPayload.access_token) : undefined;
       }
     }
 
-    if (idx >= 0) {
-      invitations[idx] = {
-        ...invitations[idx],
-        status: 'accepted',
-        acceptedAt: new Date().toISOString(),
-        acceptedByName: fullName.trim(),
-      };
-      state.invitations = invitations;
+    const verificationProof = crypto.randomBytes(24).toString('hex');
+    invitations[idx] = {
+      ...invite,
+      otpAttempts: 0,
+      otpVerifiedAt: new Date().toISOString(),
+      verificationProofHash: sha256Hex(verificationProof),
+      verificationProofExpiresAt: new Date(Date.now() + 20 * 60 * 1000).toISOString(),
+      ...(verifiedSupabaseUserId ? { verifiedSupabaseUserId } : {}),
+      ...(verifiedSupabaseAccessToken ? { verifiedSupabaseAccessToken } : {}),
+    };
+    state.invitations = invitations;
+    saveDbState(state);
+
+    res.json({
+      success: true,
+      verified: true,
+      verificationProof,
+      email: invite.email,
+      hotelId: invite.hotelId,
+      hotelName: invite.hotelName,
+      role: invite.role,
+      invitedName: invite.invitedName || '',
+    });
+  });
+
+  // Step 2 of Acceptance: Set Password & Provision Trusted Hotel Membership (OTP Proof Required)
+  app.post('/api/hotels/:hotelId/invitations/accept', async (req, res) => {
+    const { hotelId } = req.params;
+    const { token, verificationProof, fullName, firstName, lastName, password } = req.body || {};
+
+    const rawToken = String(token || '').trim();
+    const rawProof = String(verificationProof || '').trim();
+    const resolvedFullName = String(fullName || `${firstName || ''} ${lastName || ''}`).trim();
+
+    if (!rawToken) {
+      return res.status(400).json({ error: 'TOKEN_REQUIRED', message: 'Valid invitation token is required.' });
+    }
+    if (!rawProof) {
+      return res.status(403).json({
+        error: 'OTP_VERIFICATION_REQUIRED',
+        message: 'Email OTP verification must be completed before setting your password.',
+      });
+    }
+    if (!resolvedFullName || resolvedFullName.length < 2) {
+      return res.status(400).json({
+        error: 'FULL_NAME_REQUIRED',
+        message: 'Please provide your first and last name.',
+      });
+    }
+    if (!password || String(password).length < 8) {
+      return res.status(400).json({
+        error: 'WEAK_PASSWORD',
+        message: 'Password must be at least 8 characters.',
+      });
     }
 
+    const state = getDbState() || {};
+    const invitations: any[] = Array.isArray(state.invitations) ? [...state.invitations] : [];
+    const tokenHash = sha256Hex(rawToken);
+    const idx = invitations.findIndex(
+      (inv: any) =>
+        (inv.tokenHash && timingSafeHexEqual(inv.tokenHash, tokenHash)) ||
+        (inv.token && inv.token === rawToken)
+    );
+
+    if (idx === -1) {
+      return res.status(404).json({
+        error: 'INVITE_NOT_FOUND',
+        message: 'Invitation record not found or has been revoked. Staff accounts require a valid invitation.',
+      });
+    }
+
+    const matchedInvite = invitations[idx];
+    if (matchedInvite.hotelId !== hotelId) {
+      return res.status(403).json({
+        error: 'HOTEL_MISMATCH',
+        message: 'Invitation does not belong to the requested hotel.',
+      });
+    }
+    if (matchedInvite.status === 'accepted') {
+      return res.status(409).json({
+        error: 'INVITE_ALREADY_ACCEPTED',
+        message: 'This invitation link has already been accepted. Please sign in on the Staff Portal.',
+      });
+    }
+    if (matchedInvite.status === 'revoked') {
+      return res.status(410).json({
+        error: 'INVITE_REVOKED',
+        message: 'This invitation has been revoked by the hotel administrator.',
+      });
+    }
+    if (matchedInvite.expiresAt && new Date(matchedInvite.expiresAt).getTime() < Date.now()) {
+      invitations[idx] = { ...matchedInvite, status: 'expired' };
+      state.invitations = invitations;
+      saveDbState(state);
+      return res.status(410).json({
+        error: 'INVITE_EXPIRED',
+        message: 'This staff invitation link has expired. Request a fresh invitation from your hotel administrator.',
+      });
+    }
+
+    // Verify OTP verification proof strictly
+    const proofHash = sha256Hex(rawProof);
+    if (
+      !matchedInvite.verificationProofHash ||
+      !timingSafeHexEqual(proofHash, matchedInvite.verificationProofHash) ||
+      !matchedInvite.verificationProofExpiresAt ||
+      new Date(matchedInvite.verificationProofExpiresAt).getTime() < Date.now()
+    ) {
+      return res.status(403).json({
+        error: 'OTP_PROOF_INVALID_OR_EXPIRED',
+        message: 'Email OTP verification has expired or is invalid. Please verify your OTP again.',
+      });
+    }
+
+    // Authoritative hotel, email, and role come ONLY from the trusted invitation record
+    const finalEmail = String(matchedInvite.email).trim().toLowerCase();
+    const finalHotelId = String(matchedInvite.hotelId);
+    const hotel = (state.hotels || []).find((h: any) => h.id === finalHotelId);
+    const roleValidation = validateAssignableInviteRole(state, hotel, finalHotelId, matchedInvite.role);
+    if ('error' in roleValidation) {
+      return res.status(roleValidation.status).json({
+        error: roleValidation.error,
+        message: roleValidation.message,
+      });
+    }
+    const finalRole = roleValidation.role;
+    const supabaseKey = String(supabaseServiceKeyEnv || process.env.SUPABASE_PUBLISHABLE_KEY || '').trim();
+
+    // Activate Supabase Auth password on the ALREADY OTP-verified user (never using email_confirm: true!)
+    let authUserId: string | undefined = matchedInvite.verifiedSupabaseUserId;
+    if (matchedInvite.verifiedSupabaseAccessToken && supabaseUrlEnv && supabaseKey) {
+      const updateResp = await fetch(`${supabaseUrlEnv.replace(/\/+$/, '')}/auth/v1/user`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: supabaseKey,
+          Authorization: `Bearer ${matchedInvite.verifiedSupabaseAccessToken}`,
+        },
+        body: JSON.stringify({
+          password: String(password),
+          data: { full_name: resolvedFullName },
+        }),
+      }).catch(() => null);
+      if (!updateResp || !updateResp.ok) {
+        const errBody: any = updateResp ? await updateResp.json().catch(() => ({})) : {};
+        return res.status(502).json({
+          error: 'SUPABASE_PASSWORD_UPDATE_FAILED',
+          message:
+            errBody?.msg ||
+            errBody?.message ||
+            'Could not set password on verified Supabase Auth account. Please retry.',
+        });
+      }
+      const userJson: any = await updateResp.json().catch(() => ({}));
+      if (userJson?.id) authUserId = String(userJson.id);
+    } else if (supabaseAdminClient && authUserId) {
+      const { error: updErr } = await supabaseAdminClient.auth.admin.updateUserById(authUserId, {
+        password: String(password),
+        user_metadata: { full_name: resolvedFullName },
+      });
+      if (updErr) {
+        return res.status(502).json({
+          error: 'SUPABASE_PASSWORD_UPDATE_FAILED',
+          message: updErr.message || 'Could not activate Supabase Auth password.',
+        });
+      }
+    }
+
+    // Sync public.profiles and public.organization_memberships in PostgreSQL when configured
+    if (supabaseAdminClient && authUserId) {
+      const { error: profErr } = await supabaseAdminClient.from('profiles').upsert(
+        {
+          id: authUserId,
+          full_name: resolvedFullName,
+          account_status: 'active',
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      );
+      if (profErr) {
+        return res.status(502).json({
+          error: 'PROFILE_SYNC_FAILED',
+          message: `Failed to sync staff profile in PostgreSQL: ${profErr.message}`,
+        });
+      }
+
+      if (UUID_REGEX.test(finalHotelId)) {
+        const dbRole = ['owner', 'manager', 'receptionist', 'finance', 'housekeeping', 'customer'].includes(finalRole)
+          ? finalRole
+          : 'receptionist';
+        const { error: memErr } = await supabaseAdminClient.from('organization_memberships').upsert(
+          {
+            organization_id: finalHotelId,
+            user_id: authUserId,
+            role: dbRole,
+            status: 'active',
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'organization_id,user_id' }
+        );
+        if (memErr) {
+          return res.status(502).json({
+            error: 'MEMBERSHIP_SYNC_FAILED',
+            message: `Failed to assign hotel membership in PostgreSQL: ${memErr.message}`,
+          });
+        }
+      }
+    }
+
+    // Consume single-use invitation and scrub temporary OTP/proof credentials
+    const acceptedAt = new Date().toISOString();
+    invitations[idx] = {
+      ...matchedInvite,
+      status: 'accepted',
+      acceptedAt,
+      acceptedByName: resolvedFullName,
+      acceptedUserId: authUserId,
+      otpHash: undefined,
+      otpSalt: undefined,
+      otpExpiresAt: undefined,
+      verificationProofHash: undefined,
+      verificationProofExpiresAt: undefined,
+      verifiedSupabaseAccessToken: undefined,
+    };
+    state.invitations = invitations;
+
     // Upsert active staff account in state.staff & state.platformUsers
-    let staff = state.staff || [];
+    let staff: any[] = Array.isArray(state.staff) ? [...state.staff] : [];
     const existingStaffIdx = staff.findIndex(
       (s: any) => s.email?.toLowerCase() === finalEmail && s.hotelId === finalHotelId
     );
-    const rolePermissionsMap: Record<string, string[]> = {
-      hotel_owner: ['dashboard.view', 'reservations.view', 'reservations.create', 'reservations.edit', 'reservations.check_in', 'reservations.check_out', 'rooms.view', 'rooms.create', 'rooms.edit', 'guests.view', 'billing.view', 'billing.create', 'users.view', 'users.invite', 'settings.view', 'settings.edit'],
-      manager: ['dashboard.view', 'reservations.view', 'reservations.create', 'reservations.edit', 'reservations.check_in', 'reservations.check_out', 'rooms.view', 'rooms.create', 'rooms.edit', 'guests.view', 'billing.view', 'billing.create', 'housekeeping.view', 'reports.view', 'users.view'],
-      receptionist: ['dashboard.view', 'reservations.view', 'reservations.create', 'reservations.edit', 'reservations.check_in', 'reservations.check_out', 'rooms.view', 'guests.view', 'guests.create', 'billing.view'],
-      finance: ['dashboard.view', 'reservations.view', 'billing.view', 'billing.create', 'billing.edit', 'billing.refund', 'reports.view', 'reports.export'],
-      housekeeping: ['dashboard.view', 'rooms.view', 'housekeeping.view', 'housekeeping.create', 'housekeeping.edit'],
-    };
-
+    const permissions = resolveInviteRolePermissions(state, finalHotelId, finalRole);
     const staffMember = {
-      id: existingStaffIdx >= 0 ? staff[existingStaffIdx].id : `stf-${Date.now()}`,
+      id: existingStaffIdx >= 0 ? staff[existingStaffIdx].id : authUserId || `stf-${Date.now()}`,
       hotelId: finalHotelId,
-      name: fullName.trim(),
+      name: resolvedFullName,
       email: finalEmail,
       role: finalRole,
+      roles: [finalRole],
       status: 'active',
       active: true,
-      permissions: rolePermissionsMap[finalRole] || rolePermissionsMap.receptionist,
+      permissions,
       addedDate: new Date().toISOString().split('T')[0],
     };
 
@@ -3112,19 +4881,18 @@ async function createServer() {
     }
     state.staff = staff;
 
-    // Also add/activate in state.platformUsers
-    let platformUsers = state.platformUsers || [];
+    let platformUsers: any[] = Array.isArray(state.platformUsers) ? [...state.platformUsers] : [];
     const puIdx = platformUsers.findIndex((u: any) => u.email?.toLowerCase() === finalEmail);
     const puRecord = {
       id: puIdx >= 0 ? platformUsers[puIdx].id : staffMember.id,
-      name: fullName.trim(),
+      name: resolvedFullName,
       email: finalEmail,
       role: finalRole === 'manager' ? 'hotel_manager' : finalRole,
       organizationId: finalHotelId,
-      organizationName: hotel?.name || matchedInvite?.hotelName || 'Partner Hotel',
+      organizationName: hotel?.name || matchedInvite.hotelName || 'Partner Hotel',
       status: 'active',
       createdAt: puIdx >= 0 ? platformUsers[puIdx].createdAt : new Date().toISOString().split('T')[0],
-      lastActivity: new Date().toISOString(),
+      lastActivity: acceptedAt,
     };
     if (puIdx >= 0) {
       platformUsers[puIdx] = { ...platformUsers[puIdx], ...puRecord };
@@ -3134,13 +4902,30 @@ async function createServer() {
     state.platformUsers = platformUsers;
 
     saveDbState(state);
-    broadcastLiveEvent('staff_invitation_accepted', { hotelId: finalHotelId, staffMember, invitationId: matchedInvite?.id });
+    await syncInvitationToPostgres(invitations[idx]);
+
+    appendAuditLog({
+      actorEmail: finalEmail,
+      action: 'STAFF_INVITATION_ACCEPTED',
+      target: finalEmail,
+      targetType: 'staff_membership',
+      newValue: `${finalRole}@${finalHotelId}`,
+      metadata: { invitationId: matchedInvite.id, hotelId: finalHotelId, role: finalRole },
+    });
+
+    broadcastLiveEvent('staff_invitation_accepted', {
+      hotelId: finalHotelId,
+      staffMember,
+      invitationId: matchedInvite.id,
+    });
 
     res.json({
       success: true,
-      message: 'Staff invitation accepted and account activated.',
+      message: 'Staff invitation verified and account activated.',
       staffMember,
-      hotelName: hotel?.name || matchedInvite?.hotelName || 'Partner Hotel',
+      hotelId: finalHotelId,
+      hotelName: hotel?.name || matchedInvite.hotelName || 'Partner Hotel',
+      role: finalRole,
     });
   });
 
@@ -3334,11 +5119,21 @@ async function createServer() {
       },
     ];
 
+    const isProdRuntime = process.env.NODE_ENV === 'production' || fs.existsSync(path.join(__dirname, 'dist'));
     res.json({
       timestamp: new Date().toISOString(),
       overallStatus: 'SECURE_AND_VERIFIED',
       passCount: auditResults.filter((r) => r.status === 'PASSED').length,
       totalCount: auditResults.length,
+      runtimeEnvironment: {
+        nodeEnv: process.env.NODE_ENV || 'development',
+        isProd: isProdRuntime,
+        supabaseUrlConfigured: Boolean(supabaseUrlEnv),
+        supabasePublishableConfigured: Boolean(process.env.SUPABASE_PUBLISHABLE_KEY),
+        supabaseServiceRoleConfigured: Boolean(supabaseServiceKeyEnv),
+        supabaseAdminActive: Boolean(supabaseAdminClient),
+        storageMode: supabaseAdminClient ? 'supabase_public_assets_plus_local_private' : 'local_disk_fallback',
+      },
       auditResults,
     });
   });
@@ -3349,16 +5144,34 @@ async function createServer() {
   app.get('/api/users/profile', async (req, res) => {
     try {
       const caller = await resolveCaller(req);
-      const queryEmail = String(req.query.email || req.headers['x-igho-user-email'] || '')
+      const supabaseConfigured = Boolean(
+        supabaseUrlEnv && (supabaseServiceKeyEnv || process.env.SUPABASE_PUBLISHABLE_KEY)
+      );
+      if (supabaseConfigured && !caller.verifiedJwt) {
+        return res.status(401).json({
+          error: 'AUTHENTICATION_REQUIRED',
+          message: 'Authentication is required to access user profile records.',
+        });
+      }
+      if (caller.banned) {
+        return res.status(403).json({ error: 'ACCOUNT_SUSPENDED', message: 'Account suspended.' });
+      }
+
+      const queryEmail = String(req.query.email || '').trim().toLowerCase();
+      const targetEmail = (
+        caller.isSuperAdmin && queryEmail ? queryEmail : caller.email || ''
+      )
         .trim()
         .toLowerCase();
-      const targetEmail = (caller.verifiedJwt ? caller.email : queryEmail || caller.email || '').trim().toLowerCase();
 
       if (!targetEmail) {
         return res.status(400).json({ error: 'EMAIL_REQUIRED', message: 'User email is required to load profile.' });
       }
-      if (caller.banned) {
-        return res.status(403).json({ error: 'ACCOUNT_SUSPENDED', message: 'Account suspended.' });
+      if (!caller.isSuperAdmin && queryEmail && queryEmail !== caller.email) {
+        return res.status(403).json({
+          error: 'CROSS_USER_DENIED',
+          message: 'You may only access your own user profile.',
+        });
       }
 
       const state = getDbState() || {};
@@ -3408,12 +5221,23 @@ async function createServer() {
   app.put('/api/users/profile', async (req, res) => {
     try {
       const caller = await resolveCaller(req);
+      const supabaseConfigured = Boolean(
+        supabaseUrlEnv && (supabaseServiceKeyEnv || process.env.SUPABASE_PUBLISHABLE_KEY)
+      );
+      if (supabaseConfigured && !caller.verifiedJwt) {
+        return res.status(401).json({
+          error: 'AUTHENTICATION_REQUIRED',
+          message: 'Authentication is required to update your profile.',
+        });
+      }
       if (caller.banned) {
         return res.status(403).json({ error: 'ACCOUNT_SUSPENDED', message: 'Account suspended.' });
       }
 
       const body = req.body || {};
-      const requestedEmail = String(body.email || req.headers['x-igho-user-email'] || caller.email || '')
+      const requestedEmail = String(
+        caller.isSuperAdmin && body.email ? body.email : caller.email || ''
+      )
         .trim()
         .toLowerCase();
 
@@ -3421,7 +5245,7 @@ async function createServer() {
         return res.status(400).json({ error: 'EMAIL_REQUIRED', message: 'User email is required.' });
       }
 
-      if (caller.verifiedJwt && caller.email && caller.email !== requestedEmail && !caller.isSuperAdmin) {
+      if (!caller.isSuperAdmin && body.email && String(body.email).trim().toLowerCase() !== caller.email) {
         return res.status(403).json({
           error: 'CROSS_USER_DENIED',
           message: 'You can only update your own user profile.',
@@ -3561,33 +5385,46 @@ async function createServer() {
     }
   });
 
-  app.get('/api/hotels/:hotelId/profile', (req, res) => {
+  app.get('/api/hotels/:hotelId/profile', async (req, res) => {
     const { hotelId } = req.params;
+    const caller = await resolveCaller(req);
+    const memberships = caller.verifiedJwt ? await getCallerAllOrgMemberships(caller) : [];
+    const isAuthorizedMember = caller.isSuperAdmin || memberships.some((m) => m.organizationId === hotelId);
+
     const state = getDbState() || {};
     const rawHotels = Array.isArray(state.hotels) && state.hotels.length > 0 ? state.hotels : [...DEFAULT_HOTELS];
     const hotel = rawHotels.find((h: any) => h.id === hotelId) || DEFAULT_HOTELS.find((h) => h.id === hotelId);
     if (!hotel) {
       return res.status(404).json({ error: 'HOTEL_NOT_FOUND', message: 'Hotel not found.' });
     }
-    const enriched = sanitizeHotelResponse(enrichHotelWithDefaultsAndPrivileges(hotel));
-    res.json({ success: true, hotel: enriched });
+    const enrichedHotel = enrichHotelWithDefaultsAndPrivileges(hotel);
+    const safeHotel = isAuthorizedMember
+      ? sanitizeHotelResponse(enrichedHotel)
+      : sanitizePublicHotelResponse(enrichedHotel);
+    res.json({ success: true, hotel: safeHotel });
   });
 
   app.patch('/api/hotels/:hotelId/profile', async (req, res) => {
     try {
       const { hotelId } = req.params;
       const caller = await resolveCaller(req);
+      const supabaseConfigured = Boolean(
+        supabaseUrlEnv && (supabaseServiceKeyEnv || process.env.SUPABASE_PUBLISHABLE_KEY)
+      );
+      if (supabaseConfigured && !caller.verifiedJwt) {
+        return res.status(401).json({
+          error: 'AUTHENTICATION_REQUIRED',
+          message: 'An authenticated hotel administrator session is required to modify hotel profiles.',
+        });
+      }
       if (caller.banned) {
         return res.status(403).json({ error: 'ACCOUNT_SUSPENDED', message: 'Account suspended.' });
       }
 
-      if (caller.verifiedJwt && !caller.isSuperAdmin) {
-        const authorizedOrgs = await getCallerAuthorizedOrganizations(caller);
-        const stateForStaff = getDbState() || {};
-        const isStaffMember = (stateForStaff.staff || []).some(
-          (s: any) => s.hotelId === hotelId && String(s.email || '').toLowerCase() === caller.email && s.active !== false
-        );
-        if (!authorizedOrgs.some((o) => o.organizationId === hotelId) && !isStaffMember) {
+      if (!caller.isSuperAdmin) {
+        const memberships = await getCallerAllOrgMemberships(caller);
+        const match = memberships.find((m) => m.organizationId === hotelId);
+        if (!match) {
           return res.status(403).json({
             error: 'CROSS_ORGANIZATION_DENIED',
             message: 'You are not authorized to modify this hotel profile.',
@@ -3611,18 +5448,31 @@ async function createServer() {
       const ent = resolveHotelEntitlements(currentHotel);
       const body = req.body || {};
 
-      // Enforce multi-branch privilege if adding beyond 1 branch
-      if (Array.isArray(body.branches) && body.branches.length > 1 && !ent.privileges.multiBranch) {
+      // Enforce property / branch limit cleanly while preserving existing downgraded properties
+      if (Array.isArray(body.branches)) {
+        const existingCount = Array.isArray(currentHotel.branches) ? currentHotel.branches.length : 1;
+        if (body.branches.length > ent.privileges.maxBranches && body.branches.length > existingCount) {
+          return res.status(403).json({
+            error: 'BRANCH_QUOTA_EXCEEDED',
+            feature: 'maxBranches',
+            maxBranches: ent.privileges.maxBranches,
+            message: `Your current plan (${ent.plan.name}) supports up to ${ent.privileges.maxBranches} propert${ent.privileges.maxBranches === 1 ? 'y' : 'ies'}. Existing properties are preserved, but adding more requires upgrading or removing excess properties.`,
+          });
+        }
+      }
+
+      if (body.customReceiptBranding?.enabled && !ent.privileges.brandedReceipts) {
         return res.status(403).json({
           error: 'PLAN_UPGRADE_REQUIRED',
-          feature: 'multiBranch',
-          message: 'Multi-Branch Management requires IGHO Stay Professional. Please upgrade your subscription to add additional branches.',
+          feature: 'brandedReceipts',
+          message: 'Branded Invoices & Receipts require IGHO Stay Professional. Starter uses standard IGHO receipts.',
         });
       }
 
       // Strictly whitelist editable profile fields (never allow mutating subscription, billing, or approval fields)
       const EDITABLE_HOTEL_FIELDS = [
         'name',
+        'slug',
         'description',
         'logoImage',
         'coverImage',
@@ -3641,6 +5491,7 @@ async function createServer() {
         'accountNumber',
         'transferInstructions',
         'branches',
+        'customReceiptBranding',
       ];
 
       const updatedHotel: any = { ...currentHotel };
@@ -3724,110 +5575,545 @@ async function createServer() {
     }
   });
 
-  // API Endpoints
-  app.get('/api/state', (req, res) => {
+  // Helper to resolve a stored private receipt/file reference into a short-lived signed URL ONLY for authorized callers
+  function maskIdNumber(raw?: string): string | undefined {
+    const clean = String(raw || '').trim();
+    if (!clean) return undefined;
+    if (clean.length <= 4) return '****';
+    return `${'*'.repeat(Math.min(clean.length - 4, 8))}${clean.slice(-4)}`;
+  }
+
+  function hydrateReservationForCaller(
+    resRecord: any,
+    options: {
+      includeFullKyc: boolean;
+      includeSignedReceipt: boolean;
+    }
+  ) {
+    if (!resRecord || typeof resRecord !== 'object') return resRecord;
+    const {
+      idNumber,
+      guestIdNumber,
+      guestAddress,
+      receiptUrl,
+      ...rest
+    } = resRecord;
+
+    let resolvedReceiptUrl: string | undefined = undefined;
+    if (options.includeSignedReceipt && receiptUrl) {
+      const cleanRef = stripSignedQueryFromPrivateRef(String(receiptUrl));
+      const storageMatch = cleanRef.match(/^\/api\/storage\/([^/]+)\/files\/([^/?#]+)\/content$/);
+      const legacyUploadMatch = cleanRef.match(/^\/uploads\/([^/]+)\/payment_proofs\/([^/?#]+)$/);
+      if (storageMatch) {
+        resolvedReceiptUrl = mintSignedPrivateFileUrl(
+          decodeURIComponent(storageMatch[1]),
+          decodeURIComponent(storageMatch[2]),
+          300
+        );
+      } else if (legacyUploadMatch) {
+        const state = getDbState() || {};
+        const matchedFile = (state.storageFiles || []).find(
+          (f: any) => f.path === cleanRef || (f.organizationId === legacyUploadMatch[1] && String(f.path || '').endsWith(`/${legacyUploadMatch[2]}`))
+        );
+        if (matchedFile) {
+          resolvedReceiptUrl = mintSignedPrivateFileUrl(matchedFile.organizationId, matchedFile.id, 300);
+        }
+      } else {
+        // Non-public-uploads fallback (e.g. external reference)
+        resolvedReceiptUrl = cleanRef;
+      }
+    }
+
+    return {
+      ...rest,
+      ...(options.includeFullKyc
+        ? {
+            ...(idNumber !== undefined ? { idNumber } : {}),
+            ...(guestIdNumber !== undefined ? { guestIdNumber } : {}),
+            ...(guestAddress !== undefined ? { guestAddress } : {}),
+          }
+        : {
+            ...(idNumber ? { idNumber: maskIdNumber(idNumber) } : {}),
+            ...(guestIdNumber ? { guestIdNumber: maskIdNumber(guestIdNumber) } : {}),
+          }),
+      ...(resolvedReceiptUrl !== undefined ? { receiptUrl: resolvedReceiptUrl } : {}),
+    };
+  }
+
+  // Protected & Role-Scoped Application State Endpoint (P0 Hardened)
+  app.get('/api/state', async (req, res) => {
     const state = getDbState();
     if (!state) {
       return res.json({ success: false, state: null });
     }
-    const {
-      pendingSubscriptionCheckouts: _pc,
-      processedPaystackWebhooks: _pw,
-      processedPaystackReferences: _pr,
-      ...safeState
-    } = state;
-    if (Array.isArray(safeState.subscriptions)) {
-      safeState.subscriptions = safeState.subscriptions.map((s: any) => {
-        const { paystackEmailToken: _t, ...rest } = s;
-        return rest;
+
+    const caller = await resolveCaller(req);
+    const supabaseConfigured = Boolean(
+      supabaseUrlEnv && (supabaseServiceKeyEnv || process.env.SUPABASE_PUBLISHABLE_KEY)
+    );
+    const isAuthenticated = supabaseConfigured ? caller.verifiedJwt && !caller.banned : Boolean(caller.email && !caller.banned);
+
+    const rawHotels =
+      Array.isArray(state.hotels) && state.hotels.length > 0 ? [...state.hotels] : [...DEFAULT_HOTELS];
+    const enrichedHotels = rawHotels.map((h: any) => enrichHotelWithDefaultsAndPrivileges(h));
+    const publicLiveHotelIds = new Set(
+      enrichedHotels
+        .filter((h: any) => (h.approvalStatus === 'approved' || h.isLive === true) && h.status !== 'suspended')
+        .map((h: any) => h.id)
+    );
+    const allRooms: any[] = Array.isArray(state.rooms) ? state.rooms : [];
+    const safePlans = Array.isArray(state.plans) ? state.plans : [];
+    const rawSettings = state.platformSettings || {};
+    const publicPlatformSettings = {
+      platformName: rawSettings.platformName,
+      supportEmail: rawSettings.supportEmail,
+      supportPhone: rawSettings.supportPhone,
+      currency: rawSettings.currency,
+      subscriptionPayout: rawSettings.subscriptionPayout,
+    };
+
+    // 1. UNAUTHENTICATED VISITOR: Strictly public hotel directory / room catalogue / plans ONLY.
+    // Zero reservations, zero staff, zero customer profiles, zero private payment proofs, zero audit/storage logs.
+    if (!isAuthenticated) {
+      const publicHotels = enrichedHotels
+        .filter((h: any) => publicLiveHotelIds.has(h.id))
+        .map((h: any) => sanitizePublicHotelResponse(h));
+      const publicRooms = allRooms.filter((r: any) => !r.hotelId || publicLiveHotelIds.has(r.hotelId));
+      return res.json({
+        success: true,
+        scope: 'public',
+        state: {
+          hotels: publicHotels,
+          rooms: publicRooms,
+          plans: safePlans,
+          platformSettings: publicPlatformSettings,
+        },
       });
     }
-    const rawHotels = Array.isArray(safeState.hotels) && safeState.hotels.length > 0 ? safeState.hotels : [...DEFAULT_HOTELS];
-    safeState.hotels = rawHotels.map((h: any) => sanitizeHotelResponse(enrichHotelWithDefaultsAndPrivileges(h)));
-    res.json({ success: true, state: safeState });
+
+    const memberships = await getCallerAllOrgMemberships(caller);
+    const memberOrgIds = new Set(memberships.map((m) => m.organizationId));
+    const cleanCallerEmail = String(caller.email || '').trim().toLowerCase();
+
+    // 2. VERIFIED SUPER ADMIN: Platform governance & directory view ONLY (strict tenant privacy barrier:
+    // no private hotel guest reservations, KYC IDs, guest addresses, or private payment proof URLs).
+    if (caller.isSuperAdmin) {
+      const safeSubscriptions = Array.isArray(state.subscriptions)
+        ? state.subscriptions.map((s: any) => {
+            const { paystackEmailToken: _t, ...rest } = s;
+            return rest;
+          })
+        : [];
+      const sanitizedCustomerSummaries = Array.isArray(state.customerProfiles)
+        ? state.customerProfiles.map((c: any) => ({
+            id: c.id,
+            email: c.email,
+            firstName: c.firstName,
+            lastName: c.lastName,
+            createdAt: c.createdAt,
+          }))
+        : [];
+      return res.json({
+        success: true,
+        scope: 'super_admin',
+        state: {
+          hotels: enrichedHotels.map(sanitizeHotelResponse),
+          rooms: allRooms.filter((r: any) => !r.hotelId || publicLiveHotelIds.has(r.hotelId)),
+          plans: safePlans,
+          platformSettings: state.platformSettings,
+          subscriptions: safeSubscriptions,
+          waitlists: state.waitlists || [],
+          demoRequests: state.demoRequests || [],
+          trialTokens: state.trialTokens || [],
+          platformUsers: state.platformUsers || [],
+          bannedUsers: state.bannedUsers || [],
+          auditLogs: state.auditLogs || [],
+          featureRequests: state.featureRequests || [],
+          customFeatureEntitlements: state.customFeatureEntitlements || [],
+          subscriptionExceptions: state.subscriptionExceptions || {},
+          subscriptionHistory: state.subscriptionHistory || [],
+          customerProfiles: sanitizedCustomerSummaries,
+          userNotifications: (state.userNotifications || []).filter(
+            (n: any) => String(n.recipientEmail || '').toLowerCase() === cleanCallerEmail
+          ),
+        },
+      });
+    }
+
+    // 3. AUTHENTICATED HOTEL STAFF / OWNER: Strictly scoped to caller's active organization membership(s)
+    if (memberOrgIds.size > 0) {
+      const scopedHotels = enrichedHotels
+        .filter((h: any) => memberOrgIds.has(h.id) || publicLiveHotelIds.has(h.id))
+        .map((h: any) => (memberOrgIds.has(h.id) ? sanitizeHotelResponse(h) : sanitizePublicHotelResponse(h)));
+
+      const scopedRooms = allRooms.filter(
+        (r: any) => (r.hotelId && memberOrgIds.has(r.hotelId)) || !r.hotelId || publicLiveHotelIds.has(r.hotelId)
+      );
+
+      const scopedReservations = (state.reservations || [])
+        .filter(
+          (r: any) =>
+            (r.hotelId && memberOrgIds.has(r.hotelId)) ||
+            String(r.guestEmail || '').trim().toLowerCase() === cleanCallerEmail
+        )
+        .map((r: any) => {
+          const membership = memberships.find((m) => m.organizationId === r.hotelId);
+          const role = String(membership?.role || '').toLowerCase();
+          const canViewFullKyc = ['owner', 'hotel_owner', 'manager', 'hotel_manager', 'receptionist'].includes(role);
+          const canViewReceipt =
+            String(r.guestEmail || '').trim().toLowerCase() === cleanCallerEmail ||
+            ['owner', 'hotel_owner', 'manager', 'hotel_manager', 'finance', 'receptionist'].includes(role) ||
+            Boolean(membership?.permissions?.includes('billing.view'));
+          return hydrateReservationForCaller(r, {
+            includeFullKyc: canViewFullKyc,
+            includeSignedReceipt: canViewReceipt,
+          });
+        });
+
+      const scopedStaff = (state.staff || []).filter((s: any) => s.hotelId && memberOrgIds.has(s.hotelId));
+      const scopedInvitations = (state.invitations || [])
+        .filter((inv: any) => inv.hotelId && memberOrgIds.has(inv.hotelId))
+        .map(sanitizeInvitationForClient);
+      const scopedCustomRoles = (state.customRoles || []).filter(
+        (cr: any) => cr.hotelId && memberOrgIds.has(cr.hotelId)
+      );
+      const scopedGuestReports = (state.guestReports || []).filter(
+        (gr: any) => !gr.hotelId || memberOrgIds.has(gr.hotelId)
+      );
+      const orgRoomNumbers = new Set(
+        allRooms.filter((r: any) => r.hotelId && memberOrgIds.has(r.hotelId)).map((r: any) => String(r.number))
+      );
+      const scopedHousekeeping = (state.housekeeping || []).filter(
+        (hk: any) =>
+          (hk.hotelId && memberOrgIds.has(hk.hotelId)) ||
+          (!hk.hotelId && orgRoomNumbers.has(String(hk.roomNumber || '')))
+      );
+
+      return res.json({
+        success: true,
+        scope: 'organization',
+        organizationIds: Array.from(memberOrgIds),
+        state: {
+          hotels: scopedHotels,
+          rooms: scopedRooms,
+          reservations: scopedReservations,
+          staff: scopedStaff,
+          housekeeping: scopedHousekeeping,
+          invitations: scopedInvitations,
+          guestReports: scopedGuestReports,
+          plans: safePlans,
+          platformSettings: publicPlatformSettings,
+          customRoles: scopedCustomRoles,
+          featureRequests: (state.featureRequests || []).filter((fr: any) => memberOrgIds.has(fr.hotelId)),
+          customFeatureEntitlements: (state.customFeatureEntitlements || []).filter((ce: any) =>
+            memberOrgIds.has(ce.hotelId)
+          ),
+          userNotifications: (state.userNotifications || []).filter(
+            (n: any) => String(n.recipientEmail || '').toLowerCase() === cleanCallerEmail
+          ),
+        },
+      });
+    }
+
+    // 4. AUTHENTICATED ORDINARY USER / GUEST: Strictly public catalogue + caller's own reservations & profile ONLY
+    const ownReservations = (state.reservations || [])
+      .filter((r: any) => String(r.guestEmail || '').trim().toLowerCase() === cleanCallerEmail)
+      .map((r: any) =>
+        hydrateReservationForCaller(r, {
+          includeFullKyc: false,
+          includeSignedReceipt: true,
+        })
+      );
+    const ownProfiles = (state.customerProfiles || []).filter(
+      (c: any) => String(c.email || '').trim().toLowerCase() === cleanCallerEmail
+    );
+
+    return res.json({
+      success: true,
+      scope: 'guest',
+      state: {
+        hotels: enrichedHotels
+          .filter((h: any) => publicLiveHotelIds.has(h.id))
+          .map((h: any) => sanitizePublicHotelResponse(h)),
+        rooms: allRooms.filter((r: any) => !r.hotelId || publicLiveHotelIds.has(r.hotelId)),
+        reservations: ownReservations,
+        customerProfiles: ownProfiles,
+        plans: safePlans,
+        platformSettings: publicPlatformSettings,
+        userNotifications: (state.userNotifications || []).filter(
+          (n: any) => String(n.recipientEmail || '').toLowerCase() === cleanCallerEmail
+        ),
+      },
+    });
   });
 
-  app.post('/api/state', (req, res) => {
+  // Public pending hotel registration submission endpoint (replaces unauthenticated POST /api/state)
+  app.post('/api/hotels/register', (req, res) => {
+    const incomingHotel = req.body?.hotel || req.body || {};
+    const name = String(incomingHotel.name || incomingHotel.hotelName || '').trim();
+    const ownerEmail = String(incomingHotel.ownerEmail || incomingHotel.email || '').trim().toLowerCase();
+    if (!name || !ownerEmail || !ownerEmail.includes('@')) {
+      return res.status(400).json({
+        error: 'INVALID_HOTEL_REGISTRATION',
+        message: 'Hotel name and valid owner email address are required.',
+      });
+    }
+
+    const state = getDbState() || {};
+    const existingHotels: any[] = Array.isArray(state.hotels) ? [...state.hotels] : [];
+    const cleanSlug = slugifyServerHotelName(name);
+    if (existingHotels.some((h: any) => String(h.name || '').trim().toLowerCase() === name.toLowerCase())) {
+      return res.status(409).json({
+        error: 'DUPLICATE_HOTEL_NAME',
+        message: `A hotel named "${name}" is already registered.`,
+      });
+    }
+
+    const newHotel = enrichHotelWithDefaultsAndPrivileges({
+      ...incomingHotel,
+      id: incomingHotel.id && !existingHotels.some((h: any) => h.id === incomingHotel.id)
+        ? String(incomingHotel.id)
+        : `hotel-${Date.now()}`,
+      name,
+      slug: cleanSlug,
+      ownerEmail,
+      isLive: false,
+      status: 'pending',
+      approvalStatus: 'pending',
+      paymentStatus: 'pending',
+      subscriptionStatus: 'pending',
+      hasGuestPortal: false,
+      subscriptionPlanId: undefined,
+      subscriptionPlanName: undefined,
+      submittedAt: new Date().toISOString(),
+    });
+
+    state.hotels = [newHotel, ...existingHotels];
+    saveDbState(state);
+    broadcastLiveEvent('hotel_registered', sanitizePublicHotelResponse(newHotel));
+    res.status(201).json({ success: true, hotel: sanitizeHotelResponse(newHotel) });
+  });
+
+  app.post('/api/state', async (req, res) => {
+    const caller = await resolveCaller(req);
+    const supabaseConfigured = Boolean(
+      supabaseUrlEnv && (supabaseServiceKeyEnv || process.env.SUPABASE_PUBLISHABLE_KEY)
+    );
+    if (supabaseConfigured && !caller.verifiedJwt) {
+      return res.status(401).json({
+        error: 'AUTHENTICATION_REQUIRED',
+        message: 'Authentication is required to persist application state changes.',
+      });
+    }
+    if (caller.banned) {
+      return res.status(403).json({
+        error: 'ACCOUNT_SUSPENDED',
+        message: 'This account has been suspended by platform administration.',
+      });
+    }
+
     const existing = getDbState() || {};
     const incoming = req.body || {};
+    const cleanCallerEmail = String(caller.email || '').trim().toLowerCase();
+    const memberships = await getCallerAllOrgMemberships(caller);
+    const memberOrgIds = new Set(memberships.map((m) => m.organizationId));
 
-    // Preserve server-authoritative subscription, billing, storage, profile, and security state on hotels
-    let mergedHotels = incoming.hotels;
-    if (Array.isArray(incoming.hotels) && Array.isArray(existing.hotels)) {
-      mergedHotels = incoming.hotels.map((ih: any) => {
-        const eh = existing.hotels.find((x: any) => x.id === ih.id);
-        if (!eh) {
-          // New hotel registrations cannot self-mark paid/active subscriptions via generic /api/state
-          return enrichHotelWithDefaultsAndPrivileges({
-            ...ih,
-            paymentStatus: ih.paymentStatus === 'paid' && ih.subscriptionStatus === 'trial' ? ih.paymentStatus : 'pending',
-            subscriptionStatus: ih.subscriptionStatus === 'trial' ? 'trial' : 'pending',
-            hasGuestPortal: false,
-            subscriptionPlanId: undefined,
-            subscriptionPlanName: undefined,
-          });
-        }
+    // Normalize any incoming reservation receiptUrl back to canonical non-signed reference
+    const normalizeReservation = (r: any) => {
+      if (!r || typeof r !== 'object') return r;
+      if (r.receiptUrl) {
+        return { ...r, receiptUrl: stripSignedQueryFromPrivateRef(String(r.receiptUrl)) };
+      }
+      return r;
+    };
+
+    const existingHotels: any[] = Array.isArray(existing.hotels) ? existing.hotels : [];
+    let mergedHotels = existingHotels;
+
+    if (Array.isArray(incoming.hotels) && (caller.isSuperAdmin || memberOrgIds.size > 0)) {
+      const updatedMap = new Map<string, any>();
+      for (const eh of existingHotels) {
+        updatedMap.set(eh.id, eh);
+      }
+      for (const ih of incoming.hotels) {
+        if (!ih?.id) continue;
+        const eh = updatedMap.get(ih.id);
+        if (!eh) continue; // New hotels must use /api/hotels/register
+        if (!caller.isSuperAdmin && !memberOrgIds.has(ih.id)) continue; // Strict cross-tenant protection
+
         const ehUpdatedMs = eh.profileUpdatedAt ? new Date(eh.profileUpdatedAt).getTime() : 0;
         const ihUpdatedMs = ih.profileUpdatedAt ? new Date(ih.profileUpdatedAt).getTime() : 0;
         const existingProfileNewer = ehUpdatedMs > ihUpdatedMs;
 
-        return enrichHotelWithDefaultsAndPrivileges({
-          ...eh,
-          ...ih,
-          ...(existingProfileNewer
-            ? {
-                name: eh.name,
-                description: eh.description,
-                logoImage: eh.logoImage,
-                coverImage: eh.coverImage,
-                address: eh.address,
-                city: eh.city,
-                state: eh.state,
-                country: eh.country,
-                phone: eh.phone,
-                email: eh.email,
-                website: eh.website,
-                instagram: eh.instagram,
-                facebook: eh.facebook,
-                bankName: eh.bankName,
-                accountName: eh.accountName,
-                accountNumber: eh.accountNumber,
-                transferInstructions: eh.transferInstructions,
-                settings: eh.settings,
-                branches: eh.branches,
-                profileUpdatedAt: eh.profileUpdatedAt,
-              }
-            : {
-                logoImage: ih.logoImage !== undefined ? ih.logoImage : eh.logoImage,
-                coverImage: ih.coverImage !== undefined ? ih.coverImage : eh.coverImage,
-                description: ih.description !== undefined ? ih.description : eh.description,
-                settings: ih.settings !== undefined ? ih.settings : eh.settings,
-                branches: ih.branches !== undefined ? ih.branches : eh.branches,
-              }),
-          subscriptionPlanId: eh.subscriptionPlanId,
-          subscriptionPlanName: eh.subscriptionPlanName,
-          packageType: eh.packageType,
-          hasGuestPortal: eh.hasGuestPortal,
-          privileges: eh.privileges,
-          subscriptionStatus: eh.subscriptionStatus,
-          paymentStatus: eh.paymentStatus,
-          billingCycle: eh.billingCycle,
-          isContractPlan: eh.isContractPlan,
-          subscriptionStartDate: eh.subscriptionStartDate,
-          subscriptionEndDate: eh.subscriptionEndDate,
-          autoRenew: eh.autoRenew,
-          cancelAtPeriodEnd: eh.cancelAtPeriodEnd,
-          paystackCustomerCode: eh.paystackCustomerCode,
-          paystackSubscriptionCode: eh.paystackSubscriptionCode,
-          paystackMode: eh.paystackMode,
-        });
-      });
+        updatedMap.set(
+          ih.id,
+          enrichHotelWithDefaultsAndPrivileges({
+            ...eh,
+            ...ih,
+            ...(existingProfileNewer
+              ? {
+                  name: eh.name,
+                  slug: eh.slug,
+                  description: eh.description,
+                  logoImage: eh.logoImage,
+                  coverImage: eh.coverImage,
+                  address: eh.address,
+                  city: eh.city,
+                  state: eh.state,
+                  country: eh.country,
+                  phone: eh.phone,
+                  email: eh.email,
+                  website: eh.website,
+                  instagram: eh.instagram,
+                  facebook: eh.facebook,
+                  bankName: eh.bankName,
+                  accountName: eh.accountName,
+                  accountNumber: eh.accountNumber,
+                  transferInstructions: eh.transferInstructions,
+                  settings: eh.settings,
+                  customReceiptBranding: eh.customReceiptBranding,
+                  branches: eh.branches,
+                  profileUpdatedAt: eh.profileUpdatedAt,
+                }
+              : {
+                  logoImage: ih.logoImage !== undefined ? ih.logoImage : eh.logoImage,
+                  coverImage: ih.coverImage !== undefined ? ih.coverImage : eh.coverImage,
+                  description: ih.description !== undefined ? ih.description : eh.description,
+                  settings: ih.settings !== undefined ? ih.settings : eh.settings,
+                  customReceiptBranding:
+                    ih.customReceiptBranding !== undefined ? ih.customReceiptBranding : eh.customReceiptBranding,
+                  branches: ih.branches !== undefined ? ih.branches : eh.branches,
+                }),
+            subscriptionPlanId: eh.subscriptionPlanId,
+            subscriptionPlanName: eh.subscriptionPlanName,
+            packageType: eh.packageType,
+            hasGuestPortal: eh.hasGuestPortal,
+            privileges: eh.privileges,
+            subscriptionStatus: eh.subscriptionStatus,
+            paymentStatus: eh.paymentStatus,
+            billingCycle: eh.billingCycle,
+            isContractPlan: eh.isContractPlan,
+            subscriptionStartDate: eh.subscriptionStartDate,
+            subscriptionEndDate: eh.subscriptionEndDate,
+            autoRenew: eh.autoRenew,
+            cancelAtPeriodEnd: eh.cancelAtPeriodEnd,
+            paystackCustomerCode: eh.paystackCustomerCode,
+            paystackSubscriptionCode: eh.paystackSubscriptionCode,
+            paystackMode: eh.paystackMode,
+          })
+        );
+      }
+      mergedHotels = Array.from(updatedMap.values());
+    }
+
+    // Tenant-scoped merge for rooms
+    let mergedRooms: any[] = Array.isArray(existing.rooms) ? existing.rooms : [];
+    if (Array.isArray(incoming.rooms) && (caller.isSuperAdmin || memberOrgIds.size > 0)) {
+      const preservedRooms = mergedRooms.filter(
+        (r: any) => !caller.isSuperAdmin && (!r.hotelId || !memberOrgIds.has(r.hotelId))
+      );
+      const allowedIncomingRooms = caller.isSuperAdmin
+        ? incoming.rooms
+        : incoming.rooms.filter((r: any) => r.hotelId && memberOrgIds.has(r.hotelId));
+      mergedRooms = [...allowedIncomingRooms, ...preservedRooms];
+    }
+
+    // Tenant & ownership-scoped merge for reservations
+    let mergedReservations: any[] = Array.isArray(existing.reservations) ? existing.reservations : [];
+    if (Array.isArray(incoming.reservations)) {
+      if (memberOrgIds.size > 0) {
+        const preservedRes = mergedReservations.filter(
+          (r: any) => !r.hotelId || !memberOrgIds.has(r.hotelId)
+        );
+        const allowedIncomingRes = incoming.reservations
+          .filter((r: any) => r.hotelId && memberOrgIds.has(r.hotelId))
+          .map(normalizeReservation);
+        mergedReservations = [...allowedIncomingRes, ...preservedRes];
+      } else if (!caller.isSuperAdmin && cleanCallerEmail) {
+        // Guests can only add/update their own bookings and cannot override server confirmation/payment status
+        const existingMap = new Map(mergedReservations.map((r: any) => [r.id, r]));
+        for (const ir of incoming.reservations) {
+          if (!ir?.id || String(ir.guestEmail || '').trim().toLowerCase() !== cleanCallerEmail) continue;
+          const prev = existingMap.get(ir.id);
+          const cleanIncoming = normalizeReservation(ir);
+          if (!prev) {
+            existingMap.set(ir.id, {
+              ...cleanIncoming,
+              status: 'pending',
+              paymentStatus: 'pending',
+            });
+          } else {
+            existingMap.set(ir.id, {
+              ...prev,
+              receiptUrl: cleanIncoming.receiptUrl || prev.receiptUrl,
+              paymentRef: cleanIncoming.paymentRef || prev.paymentRef,
+              specialRequests: cleanIncoming.specialRequests ?? prev.specialRequests,
+            });
+          }
+        }
+        mergedReservations = Array.from(existingMap.values());
+      }
+    }
+
+    // Tenant-scoped housekeeping, guestReports, customRoles, staff updates
+    let mergedHousekeeping: any[] = Array.isArray(existing.housekeeping) ? existing.housekeeping : [];
+    if (Array.isArray(incoming.housekeeping) && memberOrgIds.size > 0) {
+      const preservedHk = mergedHousekeeping.filter(
+        (hk: any) => hk.hotelId && !memberOrgIds.has(hk.hotelId)
+      );
+      const allowedHk = incoming.housekeeping.map((hk: any) => ({
+        ...hk,
+        hotelId: hk.hotelId || Array.from(memberOrgIds)[0],
+      }));
+      mergedHousekeeping = [...allowedHk, ...preservedHk];
+    }
+
+    let mergedCustomRoles: any[] = Array.isArray(existing.customRoles) ? existing.customRoles : [];
+    if (Array.isArray(incoming.customRoles) && memberOrgIds.size > 0) {
+      const preservedRoles = mergedCustomRoles.filter((cr: any) => cr.hotelId && !memberOrgIds.has(cr.hotelId));
+      const allowedRoles = incoming.customRoles.filter((cr: any) => cr.hotelId && memberOrgIds.has(cr.hotelId));
+      mergedCustomRoles = [...allowedRoles, ...preservedRoles];
+    }
+
+    let mergedGuestReports: any[] = Array.isArray(existing.guestReports) ? existing.guestReports : [];
+    if (Array.isArray(incoming.guestReports) && memberOrgIds.size > 0) {
+      const preservedReports = mergedGuestReports.filter((gr: any) => gr.hotelId && !memberOrgIds.has(gr.hotelId));
+      const allowedReports = incoming.guestReports.filter(
+        (gr: any) => !gr.hotelId || memberOrgIds.has(gr.hotelId)
+      );
+      mergedGuestReports = [...allowedReports, ...preservedReports];
+    }
+
+    let mergedStaff: any[] = Array.isArray(existing.staff) ? existing.staff : [];
+    if (Array.isArray(incoming.staff) && memberOrgIds.size > 0) {
+      const isOwnerOrManager = memberships.some((m) =>
+        ['owner', 'hotel_owner', 'manager', 'hotel_manager'].includes(String(m.role || '').toLowerCase())
+      );
+      if (isOwnerOrManager) {
+        const preservedStaff = mergedStaff.filter((s: any) => !s.hotelId || !memberOrgIds.has(s.hotelId));
+        const allowedStaff = incoming.staff.filter((s: any) => s.hotelId && memberOrgIds.has(s.hotelId));
+        mergedStaff = [...allowedStaff, ...preservedStaff];
+      }
     }
 
     const mergedState = {
       ...existing,
-      ...incoming,
-      hotels: mergedHotels ?? existing.hotels,
+      hotels: mergedHotels,
+      rooms: mergedRooms,
+      reservations: mergedReservations,
+      staff: mergedStaff,
+      housekeeping: mergedHousekeeping,
+      customRoles: mergedCustomRoles,
+      guestReports: mergedGuestReports,
+      plans: caller.isSuperAdmin && Array.isArray(incoming.plans) ? incoming.plans : existing.plans ?? [],
+      platformSettings:
+        caller.isSuperAdmin && incoming.platformSettings
+          ? incoming.platformSettings
+          : existing.platformSettings ?? {},
+      demoRequests:
+        caller.isSuperAdmin && Array.isArray(incoming.demoRequests)
+          ? incoming.demoRequests
+          : existing.demoRequests ?? [],
       subscriptions: existing.subscriptions ?? [],
       transactions: existing.transactions ?? [],
       subscriptionInvoices: existing.subscriptionInvoices ?? [],
@@ -3842,6 +6128,17 @@ async function createServer() {
       bannedUsers: existing.bannedUsers ?? [],
       userProfiles: existing.userProfiles ?? {},
       organizationEntitlements: existing.organizationEntitlements ?? {},
+      subscriptionExceptions: existing.subscriptionExceptions ?? {},
+      subscriptionHistory: existing.subscriptionHistory ?? [],
+      organizationBackups: existing.organizationBackups ?? [],
+      notificationUsage: existing.notificationUsage ?? {},
+      scheduledReports: existing.scheduledReports ?? [],
+      featureRequests: existing.featureRequests ?? [],
+      featureRequestAccessConfig: existing.featureRequestAccessConfig ?? {},
+      personalizedActivations: existing.personalizedActivations ?? [],
+      customFeatureEntitlements: existing.customFeatureEntitlements ?? [],
+      userNotifications: existing.userNotifications ?? [],
+      invitations: existing.invitations ?? [],
     };
 
     const success = saveDbState(mergedState);
@@ -4168,12 +6465,12 @@ async function createServer() {
   // =========================================================================
   // 6. ORGANISATION-WIDE STORAGE ENTITLEMENTS & QUOTA MANAGEMENT
   // =========================================================================
-  // Default allowances: Starter = 1 GB (1,073,741,824 bytes), Complete = 10 GB (10,737,418,240 bytes)
+  // Default allowances: Starter = 10 GB, Professional = 50 GB
   const STORAGE_ALLOWANCES_BYTES: Record<string, number> = {
-    'plan-starter-30k': 1 * 1024 * 1024 * 1024, // 1 GB
-    'plan-1': 1 * 1024 * 1024 * 1024,
-    'plan-complete-50k': 10 * 1024 * 1024 * 1024, // 10 GB
-    'plan-3': 10 * 1024 * 1024 * 1024,
+    'plan-starter-30k': 10 * 1024 * 1024 * 1024, // 10 GB
+    'plan-1': 10 * 1024 * 1024 * 1024,
+    'plan-complete-50k': 50 * 1024 * 1024 * 1024, // 50 GB
+    'plan-3': 50 * 1024 * 1024 * 1024,
   };
 
   // Seed initial sample files if storage state is empty
@@ -4225,20 +6522,219 @@ async function createServer() {
     };
   }
 
-  // Get quota and real-time usage for an organization
-  app.get('/api/storage/:organizationId', (req, res) => {
+  // Central P0 Storage Authorization Guard (JWT + Active Profile + Membership + Role/Permissions + Org Ownership)
+  async function authorizeStorageOperation(
+    req: express.Request,
+    organizationId: string,
+    action: 'list' | 'check_upload' | 'upload' | 'create_metadata' | 'delete' | 'view_private',
+    category?: string
+  ): Promise<
+    | {
+        ok: true;
+        caller: Awaited<ReturnType<typeof resolveCaller>>;
+        accessScope: 'super_admin' | 'org_member' | 'profile_owner' | 'guest_payment_proof';
+        role?: string;
+        permissions: string[];
+      }
+    | { ok: false; status: number; error: string; message: string }
+  > {
+    const caller = await resolveCaller(req);
+    const profileCheck = await verifyCallerActiveProfile(caller);
+    if (!profileCheck.ok) {
+      return {
+        ok: false,
+        status: profileCheck.status || 401,
+        error: profileCheck.error || 'AUTHENTICATION_REQUIRED',
+        message: profileCheck.message || 'Authentication required.',
+      };
+    }
+
+    const cleanCategory = String(category || 'general_operational').trim();
+
+    // 1. Personal avatar uploads ('platform-profiles'): strictly scoped to caller's own verified userId
+    if (organizationId === 'platform-profiles') {
+      if (action === 'list' || action === 'create_metadata') {
+        if (!caller.isSuperAdmin) {
+          return {
+            ok: false,
+            status: 403,
+            error: 'FORBIDDEN_PROFILE_LISTING',
+            message: 'Listing platform profile assets is restricted.',
+          };
+        }
+        return { ok: true, caller, accessScope: 'super_admin', permissions: [] };
+      }
+      if ((action === 'check_upload' || action === 'upload') && cleanCategory !== 'guest_portal_media') {
+        return {
+          ok: false,
+          status: 403,
+          error: 'INVALID_PROFILE_CATEGORY',
+          message: 'Personal profiles only accept avatar image uploads.',
+        };
+      }
+      return { ok: true, caller, accessScope: 'profile_owner', role: 'profile_owner', permissions: [] };
+    }
+
+    // 2. Super Admin access (platform_roles / is_platform_super_admin())
+    if (caller.isSuperAdmin) {
+      if (action === 'list' || action === 'view_private') {
+        return { ok: true, caller, accessScope: 'super_admin', role: 'super_admin', permissions: [] };
+      }
+      return {
+        ok: false,
+        status: 403,
+        error: 'SUPER_ADMIN_TENANT_BARRIER',
+        message: 'Platform Super Admins cannot upload or delete private tenant hotel files.',
+      };
+    }
+
+    // 3. Resolve caller's actual organization memberships from verified backend architecture
+    const memberships = await getCallerAllOrgMemberships(caller);
+    const matchedOrg = memberships.find((m) => m.organizationId === organizationId);
+
+    if (matchedOrg) {
+      const role = String(matchedOrg.role || '').toLowerCase();
+      const perms = Array.isArray(matchedOrg.permissions) ? matchedOrg.permissions : [];
+      const isOwnerOrManager = ['owner', 'hotel_owner', 'manager', 'hotel_manager'].includes(role);
+
+      if (action === 'list') {
+        const canList =
+          isOwnerOrManager ||
+          role === 'finance' ||
+          role === 'receptionist' ||
+          perms.includes('settings.view') ||
+          perms.includes('reports.view') ||
+          perms.includes('rooms.view');
+        if (!canList) {
+          return {
+            ok: false,
+            status: 403,
+            error: 'STORAGE_PERMISSION_DENIED',
+            message: 'Your role does not permit viewing organization storage listings.',
+          };
+        }
+        return { ok: true, caller, accessScope: 'org_member', role, permissions: perms };
+      }
+
+      if (action === 'delete') {
+        const canDelete =
+          isOwnerOrManager || perms.includes('rooms.edit') || perms.includes('settings.edit');
+        if (!canDelete) {
+          return {
+            ok: false,
+            status: 403,
+            error: 'STORAGE_DELETE_DENIED',
+            message: 'Only hotel owners, managers, or authorized administrators may delete organization files.',
+          };
+        }
+        return { ok: true, caller, accessScope: 'org_member', role, permissions: perms };
+      }
+
+      // Upload / check_upload / create_metadata permission matrix per category
+      if (!isOwnerOrManager) {
+        const categoryPermMap: Record<string, boolean> = {
+          room_galleries: perms.includes('rooms.create') || perms.includes('rooms.edit'),
+          guest_portal_media: perms.includes('settings.edit'),
+          hotel_documents: perms.includes('compliance.view') || perms.includes('settings.edit'),
+          payment_proofs:
+            role === 'finance' ||
+            role === 'receptionist' ||
+            perms.includes('billing.create') ||
+            perms.includes('reservations.create'),
+          general_operational: true, // Active hotel staff may attach operational/feature-request media
+        };
+        if (!categoryPermMap[cleanCategory]) {
+          return {
+            ok: false,
+            status: 403,
+            error: 'STORAGE_UPLOAD_PERMISSION_DENIED',
+            message: `Your role (${role}) is not permitted to upload files to "${cleanCategory}".`,
+          };
+        }
+      }
+
+      return { ok: true, caller, accessScope: 'org_member', role, permissions: perms };
+    }
+
+    // 4. Authenticated Guest uploading a booking payment proof (payment_proofs ONLY) to an active hotel
+    const state = getDbState() || {};
+    const targetHotel = (state.hotels || []).find((h: any) => h.id === organizationId);
+    if (
+      targetHotel &&
+      (action === 'check_upload' || action === 'upload') &&
+      cleanCategory === 'payment_proofs'
+    ) {
+      return { ok: true, caller, accessScope: 'guest_payment_proof', role: 'customer', permissions: [] };
+    }
+
+    if (targetHotel && action === 'view_private' && (!category || cleanCategory === 'payment_proofs')) {
+      return { ok: true, caller, accessScope: 'guest_payment_proof', role: 'customer', permissions: [] };
+    }
+
+    return {
+      ok: false,
+      status: 403,
+      error: 'CROSS_ORGANIZATION_DENIED',
+      message: 'You do not have active organization membership or permission for this hotel’s storage.',
+    };
+  }
+
+  function sanitizeStorageFileForCaller(
+    file: any,
+    authScope: { accessScope: string; role?: string; callerUserId?: string; callerEmail?: string }
+  ) {
+    if (!file || typeof file !== 'object') return file;
+    const isPrivate =
+      Boolean(file.isPrivate) ||
+      PRIVATE_STORAGE_CATEGORIES.has(String(file.category || '').toLowerCase());
+    if (!isPrivate) return file;
+
+    // Super Admin sees storage usage metadata only, NEVER private payment proof/document URLs
+    if (authScope.accessScope === 'super_admin') {
+      const { url: _hiddenUrl, path: _hiddenPath, ...metaOnly } = file;
+      return { ...metaOnly, isPrivate: true };
+    }
+
+    const canViewPrivateUrl =
+      authScope.accessScope === 'org_member' &&
+      (file.category !== 'payment_proofs' ||
+        ['owner', 'hotel_owner', 'manager', 'hotel_manager', 'finance', 'receptionist'].includes(
+          String(authScope.role || '').toLowerCase()
+        ));
+
+    if (!canViewPrivateUrl) {
+      const { url: _hiddenUrl, path: _hiddenPath, ...metaOnly } = file;
+      return { ...metaOnly, isPrivate: true };
+    }
+
+    return {
+      ...file,
+      isPrivate: true,
+      url: mintSignedPrivateFileUrl(file.organizationId, file.id, 300),
+    };
+  }
+
+  // Get quota and real-time usage for an organization (P0 Authenticated & Membership-Scoped)
+  app.get('/api/storage/:organizationId', async (req, res) => {
     const { organizationId } = req.params;
+    const auth = await authorizeStorageOperation(req, organizationId, 'list');
+    if ('error' in auth) {
+      return res.status(auth.status).json({ success: false, error: auth.error, message: auth.message });
+    }
+
     const state = getDbState() || {};
     const { storageFiles, customQuotas } = getStorageData();
 
     const hotel = (state.hotels || []).find((h: any) => h.id === organizationId);
     const planId = hotel?.subscriptionPlanId || 'plan-starter-30k';
+    const ent = hotel ? resolveHotelEntitlements(hotel) : null;
 
-    // Check custom quota override set by Super Admin in IGO Console, else default by plan
     const quotaBytes =
       customQuotas[organizationId] !== undefined
         ? customQuotas[organizationId]
-        : STORAGE_ALLOWANCES_BYTES[planId] || 1 * 1024 * 1024 * 1024;
+        : ent
+        ? ent.privileges.storageQuotaGb * 1024 * 1024 * 1024
+        : STORAGE_ALLOWANCES_BYTES[planId] || 10 * 1024 * 1024 * 1024;
 
     const orgFiles = storageFiles.filter((f: any) => f.organizationId === organizationId);
     const usedBytes = orgFiles.reduce((sum: number, f: any) => sum + (Number(f.sizeBytes) || 0), 0);
@@ -4255,7 +6751,6 @@ async function createServer() {
       warningState = 'approaching';
     }
 
-    // Category breakdown
     const categoriesMap: Record<string, { count: number; bytes: number }> = {};
     for (const f of orgFiles) {
       const cat = f.category || 'general_operational';
@@ -4266,12 +6761,21 @@ async function createServer() {
       categoriesMap[cat].bytes += Number(f.sizeBytes) || 0;
     }
 
+    const safeFiles = orgFiles.map((f: any) =>
+      sanitizeStorageFileForCaller(f, {
+        accessScope: auth.accessScope,
+        role: auth.role,
+        callerUserId: auth.caller.userId,
+        callerEmail: auth.caller.email,
+      })
+    );
+
     res.json({
       success: true,
       organizationId,
       organizationName: hotel?.name || organizationId,
       planId,
-      planName: hotel?.subscriptionPlanName || (planId.includes('50k') || planId === 'plan-3' ? 'Professional (10 GB)' : 'Starter (1 GB)'),
+      planName: hotel?.subscriptionPlanName || (planId.includes('50k') || planId === 'plan-3' ? 'Professional (50 GB)' : 'Starter (10 GB)'),
       quotaBytes,
       usedBytes,
       remainingBytes,
@@ -4280,24 +6784,32 @@ async function createServer() {
       isOverQuota,
       warningState,
       categoriesBreakdown: categoriesMap,
-      files: orgFiles,
+      files: safeFiles,
     });
   });
 
-  // Pre-upload validation check (rejects before upload if quota exceeded)
-  app.post('/api/storage/:organizationId/check-upload', (req, res) => {
+  // Pre-upload validation check (P0 Authenticated + Membership/Permission Enforced)
+  app.post('/api/storage/:organizationId/check-upload', async (req, res) => {
     const { organizationId } = req.params;
-    const { sizeBytes = 0, fileName, category } = req.body;
+    const { sizeBytes = 0, fileName, category } = req.body || {};
+
+    const auth = await authorizeStorageOperation(req, organizationId, 'check_upload', category);
+    if ('error' in auth) {
+      return res.status(auth.status).json({ allowed: false, error: auth.error, message: auth.message });
+    }
 
     const state = getDbState() || {};
     const { storageFiles, customQuotas } = getStorageData();
     const hotel = (state.hotels || []).find((h: any) => h.id === organizationId);
     const planId = hotel?.subscriptionPlanId || 'plan-starter-30k';
+    const ent = hotel ? resolveHotelEntitlements(hotel) : null;
 
     const quotaBytes =
       customQuotas[organizationId] !== undefined
         ? customQuotas[organizationId]
-        : STORAGE_ALLOWANCES_BYTES[planId] || 1 * 1024 * 1024 * 1024;
+        : ent
+        ? ent.privileges.storageQuotaGb * 1024 * 1024 * 1024
+        : STORAGE_ALLOWANCES_BYTES[planId] || 10 * 1024 * 1024 * 1024;
 
     const orgFiles = storageFiles.filter((f: any) => f.organizationId === organizationId);
     const currentUsedBytes = orgFiles.reduce((sum: number, f: any) => sum + (Number(f.sizeBytes) || 0), 0);
@@ -4325,7 +6837,7 @@ async function createServer() {
 
   const MAX_SINGLE_FILE_BYTES = 10 * 1024 * 1024; // 10 MB per image/document
 
-  // Binary file upload endpoint (persists to /uploads disk & optionally Supabase Storage, enforces 10MB + quota)
+  // Binary file upload endpoint (P0 Authenticated + Membership/Permission Enforced; private files never stored in public buckets)
   app.post(
     '/api/storage/:organizationId/upload-binary',
     express.raw({ type: '*/*', limit: '11mb' }),
@@ -4333,12 +6845,27 @@ async function createServer() {
       try {
         const { organizationId } = req.params;
         const safeOrgId = organizationId.replace(/[^a-zA-Z0-9_-]/g, '') || 'org-default';
+        const safeDecode = (val: string, fallback: string) => {
+          try {
+            return decodeURIComponent(val);
+          } catch {
+            return val || fallback;
+          }
+        };
         const rawCategory = String(req.query.category || req.headers['x-file-category'] || 'general_operational');
         const safeCategory = rawCategory.replace(/[^a-zA-Z0-9_-]/g, '') || 'general_operational';
-        const originalName = decodeURIComponent(
-          String(req.headers['x-file-name'] || req.query.filename || `upload_${Date.now()}.jpg`)
+
+        const auth = await authorizeStorageOperation(req, organizationId, 'upload', safeCategory);
+        if ('error' in auth) {
+          return res.status(auth.status).json({ success: false, error: auth.error, message: auth.message });
+        }
+
+        const originalName = safeDecode(
+          String(req.headers['x-file-name'] || req.query.filename || `upload_${Date.now()}.jpg`),
+          `upload_${Date.now()}.jpg`
         );
-        const uploadedBy = decodeURIComponent(String(req.headers['x-uploaded-by'] || 'Staff'));
+        // Never trust client-supplied X-Uploaded-By; derive strictly from verified JWT identity
+        const uploadedBy = auth.caller.email || 'Authenticated User';
         const contentType = String(req.headers['content-type'] || 'application/octet-stream').toLowerCase();
 
         const fileBuffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
@@ -4353,29 +6880,67 @@ async function createServer() {
           });
         }
 
+        const mimeToExt: Record<string, string> = {
+          'image/jpeg': 'jpg',
+          'image/jpg': 'jpg',
+          'image/pjpeg': 'jpg',
+          'image/png': 'png',
+          'image/webp': 'webp',
+          'image/gif': 'gif',
+          'image/heic': 'heic',
+          'image/heif': 'heif',
+          'image/avif': 'avif',
+          'image/bmp': 'bmp',
+          'image/tiff': 'tiff',
+          'application/pdf': 'pdf',
+        };
+        const cleanMime = contentType.split(';')[0].trim();
         const extMatch = originalName.toLowerCase().match(/\.([a-z0-9]+)$/);
-        const ext = extMatch ? extMatch[1] : contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : contentType.includes('pdf') ? 'pdf' : 'jpg';
-        const allowedExts = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'pdf']);
-        if (!allowedExts.has(ext)) {
+        let ext = extMatch ? extMatch[1] : mimeToExt[cleanMime] || '';
+        if (!ext && cleanMime.startsWith('image/')) {
+          ext = cleanMime.replace('image/', '').replace(/[^a-z0-9]/g, '') || 'jpg';
+        }
+        if (!ext) ext = 'jpg';
+
+        const allowedExts = new Set([
+          'jpg',
+          'jpeg',
+          'jfif',
+          'png',
+          'webp',
+          'gif',
+          'heic',
+          'heif',
+          'avif',
+          'bmp',
+          'tiff',
+          'pdf',
+        ]);
+        if (!allowedExts.has(ext) && !cleanMime.startsWith('image/')) {
           return res.status(400).json({
             error: 'UNSUPPORTED_FILE_TYPE',
-            message: 'Unsupported file format. Allowed formats: JPG, PNG, WebP, GIF, and PDF.',
+            message: 'Unsupported file format. Allowed formats: JPG, PNG, WebP, GIF, HEIC, AVIF, and PDF.',
           });
+        }
+        if (!allowedExts.has(ext)) {
+          ext = 'jpg';
         }
 
         const state = getDbState() || {};
         const { storageFiles, customQuotas } = getStorageData();
         const hotel = (state.hotels || []).find((h: any) => h.id === organizationId);
         const planId = hotel?.subscriptionPlanId || 'plan-starter-30k';
+        const ent = hotel ? resolveHotelEntitlements(hotel) : null;
         const quotaBytes =
           customQuotas[organizationId] !== undefined
             ? customQuotas[organizationId]
-            : STORAGE_ALLOWANCES_BYTES[planId] || 1 * 1024 * 1024 * 1024;
+            : ent
+            ? ent.privileges.storageQuotaGb * 1024 * 1024 * 1024
+            : STORAGE_ALLOWANCES_BYTES[planId] || 10 * 1024 * 1024 * 1024;
 
         const orgFiles = storageFiles.filter((f: any) => f.organizationId === organizationId);
         const currentUsedBytes = orgFiles.reduce((sum: number, f: any) => sum + (Number(f.sizeBytes) || 0), 0);
         if (
-          organizationId !== 'hotel-onboarding-temp' &&
           organizationId !== 'platform-profiles' &&
           currentUsedBytes + fileBuffer.length > quotaBytes
         ) {
@@ -4387,23 +6952,46 @@ async function createServer() {
 
         const fileId = `file-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
         const diskFileName = `${fileId}.${ext}`;
-        const targetDir = path.join(UPLOADS_ROOT, safeOrgId, safeCategory);
+        const isPrivateCategory =
+          PRIVATE_STORAGE_CATEGORIES.has(safeCategory) || !PUBLIC_STORAGE_CATEGORIES.has(safeCategory);
+
+        // Private files are NEVER stored inside public /uploads or public Supabase buckets.
+        const diskRoot = isPrivateCategory ? PRIVATE_UPLOADS_ROOT : UPLOADS_ROOT;
+        const subFolder =
+          organizationId === 'platform-profiles' && auth.caller.userId
+            ? path.join(safeOrgId, safeCategory, auth.caller.userId.replace(/[^a-zA-Z0-9_-]/g, ''))
+            : path.join(safeOrgId, safeCategory);
+        const targetDir = path.join(diskRoot, subFolder);
         fs.mkdirSync(targetDir, { recursive: true });
         fs.writeFileSync(path.join(targetDir, diskFileName), fileBuffer);
 
-        let publicUrl = `/uploads/${safeOrgId}/${safeCategory}/${diskFileName}`;
+        const storedDiskPath = isPrivateCategory
+          ? `/private_uploads/${subFolder.replace(/\\/g, '/')}/${diskFileName}`
+          : `/uploads/${subFolder.replace(/\\/g, '/')}/${diskFileName}`;
 
-        // Mirror to Supabase Storage bucket 'igho-media' when service role is configured
-        if (supabaseAdminClient) {
+        let canonicalUrl = isPrivateCategory
+          ? buildCanonicalPrivateFileRef(organizationId, fileId)
+          : storedDiskPath;
+        let storageBucket: string | undefined;
+        let storageKey: string | undefined;
+
+        // Mirror APPROVED PUBLIC assets to existing Supabase bucket 'igho-media' ONLY when it exists & is public
+        // (never create buckets, never flip bucket visibility, and never upload private files into a public bucket!)
+        if (supabaseAdminClient && !isPrivateCategory) {
           try {
-            const storageKey = `${safeOrgId}/${safeCategory}/${diskFileName}`;
-            const { error: sbErr } = await supabaseAdminClient.storage
-              .from('igho-media')
-              .upload(storageKey, fileBuffer, { contentType, upsert: true });
-            if (!sbErr) {
-              const { data: pub } = supabaseAdminClient.storage.from('igho-media').getPublicUrl(storageKey);
-              if (pub?.publicUrl) {
-                publicUrl = pub.publicUrl;
+            const { data: bucketInfo } = await supabaseAdminClient.storage.getBucket('igho-media');
+            if (bucketInfo && bucketInfo.public !== false) {
+              const candidateKey = `${subFolder.replace(/\\/g, '/')}/${diskFileName}`;
+              const { error: sbErr } = await supabaseAdminClient.storage
+                .from('igho-media')
+                .upload(candidateKey, fileBuffer, { contentType: cleanMime || 'application/octet-stream', upsert: true });
+              if (!sbErr) {
+                const { data: pub } = supabaseAdminClient.storage.from('igho-media').getPublicUrl(candidateKey);
+                if (pub?.publicUrl) {
+                  canonicalUrl = pub.publicUrl;
+                  storageBucket = 'igho-media';
+                  storageKey = candidateKey;
+                }
               }
             }
           } catch {}
@@ -4424,9 +7012,13 @@ async function createServer() {
           category: safeCategory,
           categoryName: categoryLabels[safeCategory] || 'Organization Attachment',
           sizeBytes: fileBuffer.length,
-          mimeType: contentType,
-          path: `/uploads/${safeOrgId}/${safeCategory}/${diskFileName}`,
-          url: publicUrl,
+          mimeType: cleanMime || contentType,
+          path: storedDiskPath,
+          url: canonicalUrl,
+          isPrivate: isPrivateCategory,
+          ...(storageBucket ? { storageBucket, storageKey } : {}),
+          ...(auth.caller.userId ? { ownerUserId: auth.caller.userId } : {}),
+          ownerEmail: auth.caller.email,
           uploadedAt: new Date().toISOString(),
           uploadedBy,
         };
@@ -4434,8 +7026,18 @@ async function createServer() {
         state.storageFiles = [newFile, ...(state.storageFiles || SEEDED_STORAGE_FILES)];
         saveDbState(state);
 
-        broadcastLiveEvent('storage_file_uploaded', newFile);
-        res.status(201).json({ success: true, url: publicUrl, file: newFile });
+        // Return immediate short-lived signed URL for private files so uploader preview works without exposing a permanent URL
+        const responseUrl = isPrivateCategory ? mintSignedPrivateFileUrl(organizationId, fileId, 300) : canonicalUrl;
+        const responseFile = { ...newFile, url: responseUrl };
+
+        broadcastLiveEvent('storage_file_uploaded', {
+          id: newFile.id,
+          organizationId: newFile.organizationId,
+          category: newFile.category,
+          sizeBytes: newFile.sizeBytes,
+          isPrivate: newFile.isPrivate,
+        });
+        res.status(201).json({ success: true, url: responseUrl, file: responseFile });
       } catch (err: any) {
         console.error('[Binary Upload Error]', err);
         res.status(500).json({ error: 'UPLOAD_FAILED', message: err.message || 'Failed to upload file.' });
@@ -4443,8 +7045,138 @@ async function createServer() {
     }
   );
 
-  // Record an uploaded file in organization storage ledger
-  app.post('/api/storage/:organizationId/files', (req, res) => {
+  // Authorized Private File Retrieval & Short-Lived Signed URL Minting
+  app.post('/api/storage/:organizationId/files/:fileId/signed-url', async (req, res) => {
+    const { organizationId, fileId } = req.params;
+    const auth = await authorizeStorageOperation(req, organizationId, 'view_private');
+    if ('error' in auth) {
+      return res.status(auth.status).json({ error: auth.error, message: auth.message });
+    }
+
+    const state = getDbState() || {};
+    const fileRecord = (state.storageFiles || []).find(
+      (f: any) => f.id === fileId && f.organizationId === organizationId
+    );
+    if (!fileRecord) {
+      return res.status(404).json({ error: 'FILE_NOT_FOUND', message: 'Requested file does not exist in this organization.' });
+    }
+
+    if (auth.accessScope === 'guest_payment_proof') {
+      if (fileRecord.category !== 'payment_proofs') {
+        return res.status(403).json({
+          error: 'CROSS_ORGANIZATION_DENIED',
+          message: 'Private organization documents are restricted to authorized hotel staff.',
+        });
+      }
+      const ownsFile =
+        (fileRecord.ownerUserId && fileRecord.ownerUserId === auth.caller.userId) ||
+        String(fileRecord.ownerEmail || '').toLowerCase() === auth.caller.email ||
+        (state.reservations || []).some(
+          (r: any) =>
+            r.hotelId === organizationId &&
+            String(r.guestEmail || '').toLowerCase() === auth.caller.email &&
+            String(r.receiptUrl || '').includes(fileId)
+        );
+      if (!ownsFile) {
+        return res.status(403).json({
+          error: 'CROSS_USER_FILE_DENIED',
+          message: 'You are not authorized to access another guest’s private payment receipt.',
+        });
+      }
+    } else if (auth.accessScope === 'profile_owner') {
+      if (fileRecord.ownerUserId !== auth.caller.userId) {
+        return res.status(403).json({
+          error: 'CROSS_USER_FILE_DENIED',
+          message: 'You are not authorized to access another user’s file.',
+        });
+      }
+    }
+
+    const signedUrl = mintSignedPrivateFileUrl(organizationId, fileId, 300);
+    res.json({ success: true, signedUrl, expiresInSeconds: 300 });
+  });
+
+  app.get('/api/storage/:organizationId/files/:fileId/content', async (req, res) => {
+    const { organizationId, fileId } = req.params;
+    const expRaw = String(req.query.exp || '');
+    const sigRaw = String(req.query.sig || '');
+    const hasValidSig =
+      Boolean(expRaw && sigRaw) &&
+      verifyPrivateFileToken({ fileId, organizationId, expRaw, sigRaw });
+
+    const state = getDbState() || {};
+    const storageFiles: any[] = Array.isArray(state.storageFiles) ? state.storageFiles : [];
+    const fileRecord = storageFiles.find(
+      (f: any) => f.id === fileId && f.organizationId === organizationId
+    );
+    if (!fileRecord) {
+      return res.status(404).json({ error: 'FILE_NOT_FOUND', message: 'File not found.' });
+    }
+
+    if (!hasValidSig) {
+      const auth = await authorizeStorageOperation(req, organizationId, 'view_private', fileRecord.category);
+      if ('error' in auth) {
+        return res.status(auth.status).json({ error: auth.error, message: auth.message });
+      }
+      if (auth.accessScope === 'guest_payment_proof') {
+        if (fileRecord.category !== 'payment_proofs') {
+          return res.status(403).json({
+            error: 'CROSS_ORGANIZATION_DENIED',
+            message: 'Private organization documents are restricted to authorized hotel staff.',
+          });
+        }
+        const ownsFile =
+          (fileRecord.ownerUserId && fileRecord.ownerUserId === auth.caller.userId) ||
+          String(fileRecord.ownerEmail || '').toLowerCase() === auth.caller.email ||
+          (state.reservations || []).some(
+            (r: any) =>
+              r.hotelId === organizationId &&
+              String(r.guestEmail || '').toLowerCase() === auth.caller.email &&
+              String(r.receiptUrl || '').includes(fileId)
+          );
+        if (!ownsFile) {
+          return res.status(403).json({
+            error: 'CROSS_USER_FILE_DENIED',
+            message: 'You are not authorized to view this private file.',
+          });
+        }
+      } else if (auth.accessScope === 'profile_owner') {
+        if (fileRecord.ownerUserId !== auth.caller.userId) {
+          return res.status(403).json({ error: 'CROSS_USER_FILE_DENIED', message: 'Forbidden.' });
+        }
+      }
+    }
+
+    const rawPath = String(fileRecord.path || '');
+    let absPath: string | null = null;
+    if (rawPath.startsWith('/private_uploads/')) {
+      const rel = rawPath.slice('/private_uploads/'.length);
+      const candidate = path.resolve(PRIVATE_UPLOADS_ROOT, rel);
+      if (candidate.startsWith(path.resolve(PRIVATE_UPLOADS_ROOT) + path.sep)) {
+        absPath = candidate;
+      }
+    } else if (rawPath.startsWith('/uploads/')) {
+      const rel = rawPath.slice('/uploads/'.length);
+      const candidate = path.resolve(UPLOADS_ROOT, rel);
+      if (candidate.startsWith(path.resolve(UPLOADS_ROOT) + path.sep)) {
+        absPath = candidate;
+      }
+    }
+
+    if (!absPath || !fs.existsSync(absPath)) {
+      return res.status(404).json({ error: 'FILE_BINARY_MISSING', message: 'Stored file payload was not found.' });
+    }
+
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (fileRecord.mimeType) {
+      res.setHeader('Content-Type', String(fileRecord.mimeType));
+    }
+    return res.sendFile(absPath);
+  });
+
+  // Record an uploaded file in organization storage ledger (P0 Authenticated + Membership/Permission Enforced)
+  app.post('/api/storage/:organizationId/files', async (req, res) => {
     const { organizationId } = req.params;
     const {
       name,
@@ -4452,8 +7184,12 @@ async function createServer() {
       categoryName,
       sizeBytes = 0,
       path: filePath,
-      uploadedBy = 'Staff',
-    } = req.body;
+    } = req.body || {};
+
+    const auth = await authorizeStorageOperation(req, organizationId, 'create_metadata', category);
+    if ('error' in auth) {
+      return res.status(auth.status).json({ error: auth.error, message: auth.message });
+    }
 
     if (!name || !sizeBytes) {
       return res.status(400).json({ error: 'MISSING_FIELDS', message: 'File name and sizeBytes are required.' });
@@ -4461,38 +7197,82 @@ async function createServer() {
 
     const state = getDbState() || {};
     let storageFiles = state.storageFiles || SEEDED_STORAGE_FILES;
+    const isPrivate = PRIVATE_STORAGE_CATEGORIES.has(String(category).trim());
+    const fileId = `file-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
 
     const newFile = {
-      id: `file-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      id: fileId,
       organizationId,
       name: String(name).trim(),
       category: String(category).trim(),
       categoryName: categoryName || 'Organization Attachment',
       sizeBytes: Number(sizeBytes),
-      path: filePath || `/org/${organizationId}/${category}/${name}`,
+      isPrivate,
+      path: filePath && String(filePath).startsWith(`/org/${organizationId}/`) ? String(filePath) : `/org/${organizationId}/${category}/${name}`,
+      ...(auth.caller.userId ? { ownerUserId: auth.caller.userId } : {}),
+      ownerEmail: auth.caller.email,
       uploadedAt: new Date().toISOString(),
-      uploadedBy,
+      uploadedBy: auth.caller.email || 'Authenticated Staff',
     };
 
     storageFiles = [newFile, ...storageFiles];
     state.storageFiles = storageFiles;
     saveDbState(state);
 
-    broadcastLiveEvent('storage_file_uploaded', newFile);
+    broadcastLiveEvent('storage_file_uploaded', {
+      id: newFile.id,
+      organizationId: newFile.organizationId,
+      category: newFile.category,
+      sizeBytes: newFile.sizeBytes,
+    });
     res.status(201).json({ success: true, file: newFile });
   });
 
-  // Delete file from organization storage ledger and disk
-  app.delete('/api/storage/:organizationId/files/:fileId', (req, res) => {
+  // Delete file from organization storage ledger, local disk, AND Supabase Storage (P0 Authenticated + Org Ownership)
+  app.delete('/api/storage/:organizationId/files/:fileId', async (req, res) => {
     const { organizationId, fileId } = req.params;
+    const auth = await authorizeStorageOperation(req, organizationId, 'delete');
+    if ('error' in auth) {
+      return res.status(auth.status).json({ error: auth.error, message: auth.message });
+    }
+
     const state = getDbState() || {};
     let storageFiles = state.storageFiles || SEEDED_STORAGE_FILES;
 
     const removed = storageFiles.find((f: any) => f.id === fileId && f.organizationId === organizationId);
-    if (removed?.path && removed.path.startsWith('/uploads/')) {
+    if (!removed) {
+      return res.status(404).json({
+        error: 'FILE_NOT_FOUND',
+        message: 'File was not found within your organization.',
+      });
+    }
+
+    if (organizationId === 'platform-profiles' && removed.ownerUserId !== auth.caller.userId) {
+      return res.status(403).json({
+        error: 'CROSS_USER_FILE_DENIED',
+        message: 'You may only delete your own profile avatar.',
+      });
+    }
+
+    if (removed.path && typeof removed.path === 'string') {
       try {
-        const diskPath = path.join(__dirname, removed.path.replace(/^\/+/, ''));
-        if (fs.existsSync(diskPath)) fs.unlinkSync(diskPath);
+        if (removed.path.startsWith('/uploads/')) {
+          const candidate = path.resolve(UPLOADS_ROOT, removed.path.slice('/uploads/'.length));
+          if (candidate.startsWith(path.resolve(UPLOADS_ROOT) + path.sep) && fs.existsSync(candidate)) {
+            fs.unlinkSync(candidate);
+          }
+        } else if (removed.path.startsWith('/private_uploads/')) {
+          const candidate = path.resolve(PRIVATE_UPLOADS_ROOT, removed.path.slice('/private_uploads/'.length));
+          if (candidate.startsWith(path.resolve(PRIVATE_UPLOADS_ROOT) + path.sep) && fs.existsSync(candidate)) {
+            fs.unlinkSync(candidate);
+          }
+        }
+      } catch {}
+    }
+
+    if (supabaseAdminClient && removed.storageBucket && removed.storageKey) {
+      try {
+        await supabaseAdminClient.storage.from(removed.storageBucket).remove([removed.storageKey]);
       } catch {}
     }
 
@@ -4640,7 +7420,7 @@ async function createServer() {
         return res.status(403).json({
           error: 'ROOM_QUOTA_EXCEEDED',
           maxRooms: maxRoomsLimit,
-          message: `Your current plan supports up to ${maxRoomsLimit} rooms. Upgrade to IGHO Stay Professional for unlimited rooms.`,
+          message: `Your current plan supports up to ${maxRoomsLimit} rooms (${hotelRoomsCount} existing). Upgrade your plan or contact IGHO Support for an enterprise exception.`,
         });
       }
       if (Array.isArray(room.images) && room.images.length > 6) {
@@ -4726,9 +7506,23 @@ async function createServer() {
     if (idx === -1) {
       return res.status(404).json({ error: 'NOT_FOUND', message: 'Demo request not found.' });
     }
+    const prevStatus = demoRequests[idx].status;
     demoRequests[idx] = { ...demoRequests[idx], status: status || demoRequests[idx].status, updatedAt: new Date().toISOString() };
     state.demoRequests = demoRequests;
     saveDbState(state);
+
+    // When demo is completed, notify user with one-click CTA to create their hotel account
+    if (status === 'completed' && prevStatus !== 'completed' && demoRequests[idx].email) {
+      pushUserNotification({
+        recipientEmail: demoRequests[idx].email,
+        title: 'Demo Completed — Create Your Hotel Account',
+        message: `Thank you for completing your IGHO Stay demo for ${demoRequests[idx].orgName}. Your organization can now create its hotel account and choose a subscription plan.`,
+        type: 'action_required',
+        ctaLabel: 'Create Hotel Account',
+        ctaScreen: 'hotel_onboarding',
+      });
+    }
+
     broadcastLiveEvent('demo_request_updated', demoRequests[idx]);
     res.json({ success: true, demoRequest: demoRequests[idx] });
   });
@@ -4774,18 +7568,35 @@ async function createServer() {
     });
   });
 
-  // TOGGLE user status (Active vs Suspended / Banned) — persists across sessions & Supabase Auth
+  // TOGGLE user status (Active vs Suspended / Banned) — persists across platformUsers, hotels, staff & Supabase Auth
   app.post('/api/console/users/:id/status', requireSuperAdmin, async (req, res) => {
     const { id } = req.params;
-    const { status, email, reason } = req.body;
+    const { status, email, name, role, organizationId, reason } = req.body;
     const state = getDbState() || {};
     let users = state.platformUsers || [];
     let banned: string[] = Array.isArray(state.bannedUsers) ? state.bannedUsers : [];
+    let hotels = Array.isArray(state.hotels) ? [...state.hotels] : [...DEFAULT_HOTELS];
+    let staffList = Array.isArray(state.staff) ? [...state.staff] : [];
+
+    const derivedHotelId = id.startsWith('owner-') ? id.replace(/^owner-/, '') : organizationId;
+    const matchedHotel = derivedHotelId ? hotels.find((h: any) => h.id === derivedHotelId) : undefined;
+    const matchedStaff = staffList.find(
+      (s: any) => s.id === id || (email && String(s.email || '').toLowerCase() === String(email).toLowerCase())
+    );
 
     const targetUser = users.find(
       (u: any) => u.id === id || (email && u.email?.toLowerCase() === String(email).toLowerCase())
     );
-    const targetEmail = (email || targetUser?.email || '').trim().toLowerCase();
+    const targetEmail = (
+      email ||
+      targetUser?.email ||
+      matchedHotel?.ownerEmail ||
+      matchedHotel?.email ||
+      matchedStaff?.email ||
+      ''
+    )
+      .trim()
+      .toLowerCase();
     const isBannedStatus = status === 'suspended' || status === 'deactivated';
 
     if (isBannedStatus) {
@@ -4797,21 +7608,53 @@ async function createServer() {
     }
 
     if (targetUser) {
-      targetUser.status = status;
-      users = users.map((u: any) => (u.id === targetUser.id ? { ...u, status } : u));
+      users = users.map((u: any) =>
+        u.id === targetUser.id || (targetEmail && String(u.email || '').toLowerCase() === targetEmail)
+          ? { ...u, status }
+          : u
+      );
     } else if (targetEmail) {
       users = [
         {
           id,
-          name: targetEmail.split('@')[0],
+          name: name || matchedHotel?.ownerName || matchedStaff?.name || targetEmail.split('@')[0],
           email: targetEmail,
-          role: 'customer',
+          role: role || (matchedHotel ? 'hotel_owner' : matchedStaff?.role || 'customer'),
+          organizationId: derivedHotelId || matchedStaff?.hotelId || undefined,
+          organizationName: matchedHotel?.name || undefined,
           status,
           createdAt: new Date().toISOString().split('T')[0],
           lastActivity: new Date().toISOString(),
         },
         ...users,
       ];
+    }
+
+    if (matchedHotel || targetEmail) {
+      hotels = hotels.map((h: any) => {
+        const ownerEm = String(h.ownerEmail || h.email || '').trim().toLowerCase();
+        if (h.id === derivedHotelId || (targetEmail && ownerEm === targetEmail)) {
+          return {
+            ...h,
+            isSuspended: isBannedStatus,
+            suspensionReason: isBannedStatus ? reason || 'Account banned by Super Admin' : '',
+          };
+        }
+        return h;
+      });
+    }
+
+    if (staffList.length > 0) {
+      staffList = staffList.map((s: any) => {
+        if (s.id === id || (targetEmail && String(s.email || '').trim().toLowerCase() === targetEmail)) {
+          return {
+            ...s,
+            status: isBannedStatus ? 'deactivated' : 'active',
+            active: !isBannedStatus,
+          };
+        }
+        return s;
+      });
     }
 
     // Sync ban state to Supabase Auth / profiles when service role key is configured
@@ -4835,6 +7678,8 @@ async function createServer() {
 
     state.platformUsers = users;
     state.bannedUsers = banned;
+    state.hotels = hotels;
+    state.staff = staffList;
     saveDbState(state);
 
     appendAuditLog({
@@ -4847,7 +7692,7 @@ async function createServer() {
     });
 
     broadcastLiveEvent('user_status_changed', { id, email: targetEmail, status, reason, bannedEmails: banned });
-    res.json({ success: true, status, bannedEmails: banned, users });
+    res.json({ success: true, status, bannedEmails: banned, users, email: targetEmail });
   });
 
   // EDIT user details (Name, Phone, Email, Role)
@@ -4917,7 +7762,9 @@ async function createServer() {
     const existingHotel = hotels.find((h: any) => h.id === id);
     const previousName = existingHotel?.name || id;
 
-    hotels = hotels.map((h: any) => (h.id === id ? { ...h, name: cleanName } : h));
+    hotels = hotels.map((h: any) =>
+      h.id === id ? { ...h, name: cleanName, slug: slugifyServerHotelName(cleanName) } : h
+    );
     state.hotels = hotels;
 
     let users = state.platformUsers || [];
@@ -4964,7 +7811,14 @@ async function createServer() {
     if (idx === -1) {
       return res.status(404).json({ error: 'HOTEL_NOT_FOUND', message: 'Organization not found.' });
     }
-    hotels[idx] = { ...hotels[idx], ...updates, id };
+    const prevApproval = hotels[idx].approvalStatus;
+    const nextHotel = {
+      ...hotels[idx],
+      ...updates,
+      id,
+      slug: updates.slug || hotels[idx].slug || slugifyServerHotelName(updates.name || hotels[idx].name),
+    };
+    hotels[idx] = nextHotel;
     state.hotels = hotels;
     if (updates.name && Array.isArray(state.platformUsers)) {
       state.platformUsers = state.platformUsers.map((u: any) =>
@@ -4972,8 +7826,23 @@ async function createServer() {
       );
     }
     saveDbState(state);
+
+    if (updates.approvalStatus === 'approved' && prevApproval !== 'approved') {
+      const ownerTargetEmail = nextHotel.ownerEmail || nextHotel.email;
+      if (ownerTargetEmail) {
+        pushUserNotification({
+          recipientEmail: ownerTargetEmail,
+          title: `${nextHotel.name} Approved!`,
+          message: `Your hotel account (${nextHotel.name}) has been approved by IGHO Platform Administration. Select an IGHO Stay plan to activate your PMS dashboard.`,
+          type: 'success',
+          ctaLabel: 'Select Subscription Plan',
+          ctaScreen: 'hotel_subscription_plan',
+        });
+      }
+    }
+
     broadcastLiveEvent('organization_updated', { id, hotel: hotels[idx] });
-    res.json({ success: true, hotel: hotels[idx] });
+    res.json({ success: true, hotel: enrichHotelWithDefaultsAndPrivileges(hotels[idx]) });
   });
 
   // DISBURSE REFUND (Marks refund completed and deducts from hotel financial revenue)
@@ -5010,15 +7879,816 @@ async function createServer() {
     });
   });
 
+  // =========================================================================
+  // 8. PHASE 3: STAFF ACTIVE STATUS, COMPLIANCE, EXCEPTIONS, BACKUPS & SCHEDULED REPORTS
+  // =========================================================================
+  app.post('/api/hotels/:hotelId/staff/status', (req, res) => {
+    const { hotelId } = req.params;
+    const { staffId, status } = req.body || {};
+    if (!staffId || !status) {
+      return res.status(400).json({ error: 'MISSING_FIELDS', message: 'staffId and status are required.' });
+    }
+    const state = getDbState() || {};
+    const hotel = (state.hotels || []).find((h: any) => h.id === hotelId);
+    const staffList: any[] = Array.isArray(state.staff) ? [...state.staff] : [];
+    const idx = staffList.findIndex((s: any) => s.id === staffId && s.hotelId === hotelId);
+
+    if (status === 'active') {
+      const ent = hotel ? resolveHotelEntitlements(hotel) : { privileges: DEFAULT_STARTER_PRIVILEGES, plan: OFFICIAL_PLANS['plan-starter-30k'] };
+      const currentActiveCount = staffList.filter(
+        (s: any) => s.hotelId === hotelId && s.status !== 'deactivated' && s.active !== false && s.id !== staffId
+      ).length;
+      if (currentActiveCount >= ent.privileges.maxStaff) {
+        return res.status(403).json({
+          error: 'STAFF_QUOTA_EXCEEDED',
+          feature: 'maxStaff',
+          maxStaff: ent.privileges.maxStaff,
+          message: `Cannot reactivate staff member: Active staff (${currentActiveCount}) has reached the ${ent.plan.name} limit of ${ent.privileges.maxStaff} active staff accounts. Deactivate another seat or upgrade to IGHO Stay Professional.`,
+        });
+      }
+    }
+
+    if (idx !== -1) {
+      staffList[idx] = { ...staffList[idx], status, active: status === 'active' };
+      state.staff = staffList;
+      saveDbState(state);
+    }
+    res.json({ success: true, staffId, status });
+  });
+
+  app.get('/api/hotels/:hotelId/compliance', (req, res) => {
+    const { hotelId } = req.params;
+    const state = getDbState() || {};
+    const hotel = (state.hotels || []).find((h: any) => h.id === hotelId) || DEFAULT_HOTELS.find((d) => d.id === hotelId);
+    if (!hotel) {
+      return res.status(404).json({ error: 'HOTEL_NOT_FOUND', message: 'Hotel not found.' });
+    }
+    const ent = resolveHotelEntitlements(hotel);
+    const roomsUsed = (state.rooms || []).filter((r: any) => r.hotelId === hotelId).length;
+    const activeStaffUsed = (state.staff || []).filter(
+      (s: any) => s.hotelId === hotelId && s.status !== 'deactivated' && s.active !== false
+    ).length;
+    const branchesUsed = Math.max(1, Array.isArray(hotel.branches) ? hotel.branches.filter((b: any) => b.isActive !== false).length : 1);
+
+    const monthKey = new Date().toISOString().slice(0, 7);
+    const notifMap = state.notificationUsage || {};
+    const notificationsSentThisMonth = Number(notifMap[`${hotelId}:${monthKey}`]?.count || 0);
+
+    const storageFiles = (state.storageFiles || []).filter((f: any) => f.organizationId === hotelId);
+    const storageUsedBytes = storageFiles.reduce((s: number, f: any) => s + (Number(f.sizeBytes) || 0), 0);
+    const storageQuotaBytes =
+      state.storageCustomQuotas?.[hotelId] !== undefined
+        ? state.storageCustomQuotas[hotelId]
+        : ent.privileges.storageQuotaGb * 1024 * 1024 * 1024;
+
+    const roomsOverBy = Math.max(0, roomsUsed - ent.privileges.maxRooms);
+    const staffOverBy = Math.max(0, activeStaffUsed - ent.privileges.maxStaff);
+    const branchesOverBy = Math.max(0, branchesUsed - ent.privileges.maxBranches);
+    const isOverLimit = roomsOverBy > 0 || staffOverBy > 0 || branchesOverBy > 0;
+
+    const history = (state.subscriptionHistory || []).filter((h: any) => h.organizationId === hotelId).slice(0, 25);
+
+    res.json({
+      success: true,
+      hotelId,
+      planId: ent.plan.canonicalId,
+      planName: ent.plan.name,
+      isOverLimit,
+      rooms: { used: roomsUsed, limit: ent.privileges.maxRooms, overBy: roomsOverBy },
+      activeStaff: { used: activeStaffUsed, limit: ent.privileges.maxStaff, overBy: staffOverBy },
+      branches: { used: branchesUsed, limit: ent.privileges.maxBranches, overBy: branchesOverBy },
+      storage: { usedBytes: storageUsedBytes, quotaBytes: storageQuotaBytes, quotaGb: ent.privileges.storageQuotaGb },
+      notifications: {
+        month: monthKey,
+        sentThisMonth: notificationsSentThisMonth,
+        monthlyLimit: ent.privileges.monthlyNotificationLimit,
+      },
+      backupFrequency: ent.privileges.backupFrequency,
+      exception: ent.exception || null,
+      history,
+    });
+  });
+
+  app.post('/api/console/organizations/:hotelId/subscription-exception', requireSuperAdmin, (req, res) => {
+    const { hotelId } = req.params;
+    const { maxRoomsOverride, maxStaffOverride, maxBranchesOverride, storageQuotaGbOverride, reason, expiresAt, clear } =
+      req.body || {};
+    const state = getDbState() || {};
+    const exceptions = state.subscriptionExceptions || {};
+
+    if (clear) {
+      delete exceptions[hotelId];
+      state.subscriptionExceptions = exceptions;
+      saveDbState(state);
+      appendAuditLog({
+        actorEmail: (req as any).caller?.email || 'super_admin',
+        action: 'CHANGE_PLAN',
+        target: hotelId,
+        targetType: 'subscription',
+        newValue: 'Exception override cleared',
+      });
+      broadcastLiveEvent('organization_updated', { id: hotelId });
+      return res.json({ success: true, exception: null });
+    }
+
+    const record = {
+      hotelId,
+      maxRoomsOverride: maxRoomsOverride ? Number(maxRoomsOverride) : null,
+      maxStaffOverride: maxStaffOverride ? Number(maxStaffOverride) : null,
+      maxBranchesOverride: maxBranchesOverride ? Number(maxBranchesOverride) : null,
+      storageQuotaGbOverride: storageQuotaGbOverride ? Number(storageQuotaGbOverride) : null,
+      reason: String(reason || 'Approved Enterprise Exception').trim(),
+      grantedBy: (req as any).caller?.email || 'super_admin',
+      grantedAt: new Date().toISOString(),
+      expiresAt: expiresAt || null,
+    };
+    exceptions[hotelId] = record;
+    state.subscriptionExceptions = exceptions;
+    if (record.storageQuotaGbOverride) {
+      state.storageCustomQuotas = state.storageCustomQuotas || {};
+      state.storageCustomQuotas[hotelId] = record.storageQuotaGbOverride * 1024 * 1024 * 1024;
+    }
+    saveDbState(state);
+
+    appendAuditLog({
+      actorEmail: record.grantedBy,
+      action: 'CHANGE_PLAN',
+      target: hotelId,
+      targetType: 'subscription',
+      newValue: `Exception granted: ${record.reason}`,
+      metadata: record,
+    });
+
+    broadcastLiveEvent('organization_updated', { id: hotelId });
+    res.json({ success: true, exception: record });
+  });
+
+  app.get('/api/console/organizations/:hotelId/subscription-history', requireSuperAdmin, (req, res) => {
+    const { hotelId } = req.params;
+    const state = getDbState() || {};
+    const history = (state.subscriptionHistory || []).filter((h: any) =>
+      hotelId === 'all' ? true : h.organizationId === hotelId
+    );
+    res.json({ success: true, history });
+  });
+
+  // Backups (Starter: Weekly, Pro: Daily)
+  app.get('/api/hotels/:hotelId/backups', (req, res) => {
+    const { hotelId } = req.params;
+    const state = getDbState() || {};
+    const hotel = (state.hotels || []).find((h: any) => h.id === hotelId) || DEFAULT_HOTELS.find((d) => d.id === hotelId);
+    const ent = resolveHotelEntitlements(hotel);
+    const backups = (state.organizationBackups || [])
+      .filter((b: any) => b.organizationId === hotelId)
+      .map(({ snapshot: _s, ...meta }: any) => meta);
+    res.json({
+      success: true,
+      backupFrequency: ent.privileges.backupFrequency,
+      backups,
+    });
+  });
+
+  app.post('/api/hotels/:hotelId/backups/trigger', async (req, res) => {
+    const { hotelId } = req.params;
+    const { triggeredBy = 'Hotel Admin' } = req.body || {};
+    const crypto = await import('crypto');
+    const state = getDbState() || {};
+    const hotel = (state.hotels || []).find((h: any) => h.id === hotelId) || DEFAULT_HOTELS.find((d) => d.id === hotelId);
+    if (!hotel) {
+      return res.status(404).json({ error: 'HOTEL_NOT_FOUND', message: 'Hotel not found.' });
+    }
+    const ent = resolveHotelEntitlements(hotel);
+    const snapshot = {
+      hotelId,
+      hotelName: hotel.name,
+      rooms: (state.rooms || []).filter((r: any) => r.hotelId === hotelId),
+      reservations: (state.reservations || []).filter((r: any) => r.hotelId === hotelId),
+      staff: (state.staff || []).filter((s: any) => s.hotelId === hotelId),
+      exportedAt: new Date().toISOString(),
+    };
+    const jsonStr = JSON.stringify(snapshot);
+    const checksum = crypto.createHash('sha256').update(jsonStr).digest('hex');
+    const backupRecord = {
+      id: `bkp-${Date.now()}`,
+      organizationId: hotelId,
+      backupFrequency: ent.privileges.backupFrequency,
+      triggerType: 'manual',
+      triggeredBy,
+      checksum,
+      sizeBytes: Buffer.byteLength(jsonStr),
+      snapshot,
+      createdAt: new Date().toISOString(),
+    };
+    state.organizationBackups = [backupRecord, ...(state.organizationBackups || [])].slice(0, 200);
+    saveDbState(state);
+
+    const { snapshot: _s, ...meta } = backupRecord;
+    res.json({ success: true, backup: meta, snapshot });
+  });
+
+  // Notification Quota Enforcement (100/month Starter, Unlimited Fair-Use Pro)
+  app.get('/api/hotels/:hotelId/notifications/usage', (req, res) => {
+    const { hotelId } = req.params;
+    const state = getDbState() || {};
+    const hotel = (state.hotels || []).find((h: any) => h.id === hotelId) || DEFAULT_HOTELS.find((d) => d.id === hotelId);
+    const ent = resolveHotelEntitlements(hotel);
+    const monthKey = new Date().toISOString().slice(0, 7);
+    const record = (state.notificationUsage || {})[`${hotelId}:${monthKey}`] || { count: 0 };
+    res.json({
+      success: true,
+      hotelId,
+      month: monthKey,
+      sentThisMonth: Number(record.count || 0),
+      monthlyLimit: ent.privileges.monthlyNotificationLimit,
+      unlimitedFairUse: ent.privileges.monthlyNotificationLimit === null,
+    });
+  });
+
+  app.post('/api/hotels/:hotelId/notifications/send', (req, res) => {
+    const { hotelId } = req.params;
+    const { recipientEmail, title = 'Hotel Operational Notice', message = '' } = req.body || {};
+    const state = getDbState() || {};
+    const hotel = (state.hotels || []).find((h: any) => h.id === hotelId);
+    if (!hotel) {
+      return res.status(404).json({ error: 'HOTEL_NOT_FOUND', message: 'Hotel not found.' });
+    }
+    const ent = resolveHotelEntitlements(hotel);
+    const monthKey = new Date().toISOString().slice(0, 7);
+    const usageKey = `${hotelId}:${monthKey}`;
+    const usageMap = state.notificationUsage || {};
+    const currentCount = Number(usageMap[usageKey]?.count || 0);
+    const limit = ent.privileges.monthlyNotificationLimit;
+
+    if (limit !== null && currentCount >= limit) {
+      return res.status(403).json({
+        error: 'NOTIFICATION_QUOTA_EXCEEDED',
+        feature: 'monthlyNotificationLimit',
+        sentThisMonth: currentCount,
+        monthlyLimit: limit,
+        message: `Monthly Starter notification quota reached (${currentCount}/${limit}). Upgrade to IGHO Stay Professional for unlimited operational notifications.`,
+      });
+    }
+
+    if (limit === null && currentCount >= 5000) {
+      return res.status(429).json({
+        error: 'FAIR_USE_RATE_LIMIT',
+        message: 'Fair-use monthly anti-abuse threshold reached for automated dispatches. Contact IGHO Support to raise threshold.',
+      });
+    }
+
+    usageMap[usageKey] = { count: currentCount + 1, lastSentAt: new Date().toISOString() };
+    state.notificationUsage = usageMap;
+    saveDbState(state);
+
+    if (recipientEmail) {
+      pushUserNotification({ recipientEmail, title, message, type: 'info' });
+    }
+
+    res.json({
+      success: true,
+      sentThisMonth: usageMap[usageKey].count,
+      monthlyLimit: limit,
+    });
+  });
+
+  // Scheduled Reports (Pro-only)
+  app.get('/api/hotels/:hotelId/scheduled-reports', (req, res) => {
+    const { hotelId } = req.params;
+    const gate = enforceHotelFeatureAccess(hotelId, 'scheduledReports', 'Scheduled Report Generation requires IGHO Stay Professional.');
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
+    const state = getDbState() || {};
+    const rules = (state.scheduledReports || []).filter((r: any) => r.hotelId === hotelId);
+    res.json({ success: true, rules });
+  });
+
+  app.post('/api/hotels/:hotelId/scheduled-reports', (req, res) => {
+    const { hotelId } = req.params;
+    const gate = enforceHotelFeatureAccess(hotelId, 'scheduledReports', 'Scheduled Report Generation requires IGHO Stay Professional.');
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
+    const { reportType, frequency, recipientEmail, format = 'pdf', createdBy = 'Hotel Admin' } = req.body || {};
+    if (!reportType || !frequency || !recipientEmail) {
+      return res.status(400).json({ error: 'MISSING_FIELDS', message: 'reportType, frequency, and recipientEmail are required.' });
+    }
+    const state = getDbState() || {};
+    const rule = {
+      id: `srep-${Date.now()}`,
+      hotelId,
+      reportType,
+      frequency,
+      recipientEmail: String(recipientEmail).trim().toLowerCase(),
+      format,
+      active: true,
+      createdBy,
+      createdAt: new Date().toISOString(),
+    };
+    state.scheduledReports = [rule, ...(state.scheduledReports || [])];
+    saveDbState(state);
+    res.status(201).json({ success: true, rule });
+  });
+
+  app.delete('/api/hotels/:hotelId/scheduled-reports/:reportId', (req, res) => {
+    const { hotelId, reportId } = req.params;
+    const gate = enforceHotelFeatureAccess(hotelId, 'scheduledReports', 'Scheduled Report Generation requires IGHO Stay Professional.');
+    if (!gate.ok) return res.status(gate.status).json(gate.body);
+    const state = getDbState() || {};
+    state.scheduledReports = (state.scheduledReports || []).filter(
+      (r: any) => !(r.id === reportId && r.hotelId === hotelId)
+    );
+    saveDbState(state);
+    res.json({ success: true });
+  });
+
+  // In-App User Notification Bell Feed
+  app.get('/api/notifications', async (req, res) => {
+    const caller = await resolveCaller(req);
+    const queryEmail = String(req.query.email || req.headers['x-igho-user-email'] || '').trim().toLowerCase();
+    const targetEmail = (caller.verifiedJwt ? caller.email : queryEmail || caller.email || '').trim().toLowerCase();
+    if (!targetEmail) {
+      return res.json({ success: true, notifications: [] });
+    }
+    const state = getDbState() || {};
+    const list = (state.userNotifications || []).filter(
+      (n: any) => String(n.recipientEmail || '').trim().toLowerCase() === targetEmail
+    );
+    res.json({ success: true, notifications: list });
+  });
+
+  app.patch('/api/notifications/:id/read', (req, res) => {
+    const { id } = req.params;
+    const state = getDbState() || {};
+    state.userNotifications = (state.userNotifications || []).map((n: any) =>
+      n.id === id ? { ...n, read: true } : n
+    );
+    saveDbState(state);
+    res.json({ success: true });
+  });
+
+  // =========================================================================
+  // 9. FEATURE REQUESTS & CUSTOM DEVELOPMENT (TENANT-ISOLATED + CONSOLE)
+  // =========================================================================
+  const VALID_FEATURE_REQUEST_STATUSES = new Set([
+    'Submitted',
+    'Under Review',
+    'Awaiting Information',
+    'Approved',
+    'Quotation Sent',
+    'Awaiting Payment',
+    'In Development',
+    'Testing',
+    'Completed',
+    'Rejected',
+  ]);
+
+  app.get('/api/hotels/:hotelId/feature-requests/access-config', (req, res) => {
+    const { hotelId } = req.params;
+    const state = getDbState() || {};
+    const cfg = (state.featureRequestAccessConfig || {})[hotelId] || {
+      hotelId,
+      allowedRoles: ['hotel_owner', 'manager'],
+    };
+    res.json({ success: true, config: cfg });
+  });
+
+  app.put('/api/hotels/:hotelId/feature-requests/access-config', async (req, res) => {
+    const { hotelId } = req.params;
+    const { allowedRoles } = req.body || {};
+    if (!Array.isArray(allowedRoles)) {
+      return res.status(400).json({ error: 'INVALID_ROLES', message: 'allowedRoles array is required.' });
+    }
+    const normalized = Array.from(new Set(['hotel_owner', ...allowedRoles.map((r: any) => String(r).trim()).filter(Boolean)]));
+    const state = getDbState() || {};
+    state.featureRequestAccessConfig = state.featureRequestAccessConfig || {};
+    state.featureRequestAccessConfig[hotelId] = { hotelId, allowedRoles: normalized };
+    saveDbState(state);
+    res.json({ success: true, config: state.featureRequestAccessConfig[hotelId] });
+  });
+
+  app.get('/api/hotels/:hotelId/feature-requests', async (req, res) => {
+    const { hotelId } = req.params;
+    const caller = await resolveCaller(req);
+    if (caller.verifiedJwt && !caller.isSuperAdmin) {
+      const authorizedOrgs = await getCallerAuthorizedOrganizations(caller);
+      const stateCheck = getDbState() || {};
+      const isStaff = (stateCheck.staff || []).some(
+        (s: any) => s.hotelId === hotelId && String(s.email || '').toLowerCase() === caller.email && s.active !== false
+      );
+      if (!authorizedOrgs.some((o) => o.organizationId === hotelId) && !isStaff) {
+        return res.status(403).json({
+          error: 'CROSS_TENANT_DENIED',
+          message: 'You cannot view feature requests belonging to another hotel.',
+        });
+      }
+    }
+    const state = getDbState() || {};
+    const requests = (state.featureRequests || []).filter((r: any) => r.hotelId === hotelId);
+    res.json({ success: true, requests });
+  });
+
+  app.post('/api/hotels/:hotelId/feature-requests', async (req, res) => {
+    const { hotelId } = req.params;
+    const { title, problemDescription, requestedFeature, screenshotUrl, submittedByEmail, submittedByName, staffRole } =
+      req.body || {};
+    if (!title?.trim() || !problemDescription?.trim() || !requestedFeature?.trim()) {
+      return res.status(400).json({
+        error: 'MISSING_FIELDS',
+        message: 'Title, problem description, and requested feature details are required.',
+      });
+    }
+
+    const state = getDbState() || {};
+    const cfg = (state.featureRequestAccessConfig || {})[hotelId] || { allowedRoles: ['hotel_owner', 'manager'] };
+    if (staffRole && !cfg.allowedRoles.includes(staffRole) && staffRole !== 'hotel_owner') {
+      return res.status(403).json({
+        error: 'ROLE_NOT_AUTHORIZED',
+        message: 'Hotel Admin settings restrict submitting custom feature requests to authorized roles.',
+      });
+    }
+
+    const hotel = (state.hotels || []).find((h: any) => h.id === hotelId) || DEFAULT_HOTELS.find((d) => d.id === hotelId);
+    const ent = resolveHotelEntitlements(hotel);
+    const planTier = ent.plan.hasGuestPortal ? 'professional' : 'starter';
+    const nowIso = new Date().toISOString();
+
+    const newReq = {
+      id: `freq-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      hotelId,
+      hotelName: hotel?.name || hotelId,
+      planTier,
+      title: String(title).trim(),
+      problemDescription: String(problemDescription).trim(),
+      requestedFeature: String(requestedFeature).trim(),
+      screenshotUrl: screenshotUrl ? String(screenshotUrl).trim() : '',
+      status: 'Submitted',
+      quotationAmount: null,
+      quotationCurrency: 'NGN',
+      expectedDeliveryDate: '',
+      submittedByEmail: String(submittedByEmail || hotel?.ownerEmail || 'hotel@igho.com.ng').trim().toLowerCase(),
+      submittedByName: String(submittedByName || hotel?.ownerName || 'Hotel Admin').trim(),
+      messages: [],
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    state.featureRequests = [newReq, ...(state.featureRequests || [])];
+    saveDbState(state);
+
+    broadcastLiveEvent('feature_request_created', newReq);
+    res.status(201).json({ success: true, request: newReq });
+  });
+
+  app.post('/api/hotels/:hotelId/feature-requests/:requestId/messages', (req, res) => {
+    const { hotelId, requestId } = req.params;
+    const { message, senderName = 'Hotel Staff', senderEmail = '' } = req.body || {};
+    if (!message?.trim()) {
+      return res.status(400).json({ error: 'MESSAGE_REQUIRED', message: 'Reply message cannot be empty.' });
+    }
+    const state = getDbState() || {};
+    const list = state.featureRequests || [];
+    const idx = list.findIndex((r: any) => r.id === requestId && r.hotelId === hotelId);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'REQUEST_NOT_FOUND', message: 'Feature request not found for this hotel.' });
+    }
+    const msg = {
+      id: `frm-${Date.now()}`,
+      requestId,
+      hotelId,
+      senderRole: 'hotel',
+      senderName: String(senderName).trim(),
+      senderEmail: String(senderEmail).trim().toLowerCase(),
+      message: String(message).trim(),
+      createdAt: new Date().toISOString(),
+    };
+    list[idx].messages = [...(list[idx].messages || []), msg];
+    list[idx].updatedAt = new Date().toISOString();
+    state.featureRequests = list;
+    saveDbState(state);
+
+    broadcastLiveEvent('feature_request_updated', list[idx]);
+    res.status(201).json({ success: true, message: msg, request: list[idx] });
+  });
+
+  app.get('/api/console/feature-requests', requireSuperAdmin, (req, res) => {
+    const { hotelId, status, planTier } = req.query;
+    const state = getDbState() || {};
+    let list = Array.isArray(state.featureRequests) ? [...state.featureRequests] : [];
+    if (hotelId && hotelId !== 'all') {
+      list = list.filter((r: any) => r.hotelId === hotelId);
+    }
+    if (status && status !== 'all') {
+      list = list.filter((r: any) => r.status === status);
+    }
+    if (planTier && planTier !== 'all') {
+      list = list.filter((r: any) => r.planTier === planTier);
+    }
+    res.json({ success: true, requests: list });
+  });
+
+  app.patch('/api/console/feature-requests/:requestId', requireSuperAdmin, (req, res) => {
+    const { requestId } = req.params;
+    const { status, quotationAmount, expectedDeliveryDate, adminReply } = req.body || {};
+    const state = getDbState() || {};
+    const list = state.featureRequests || [];
+    const idx = list.findIndex((r: any) => r.id === requestId);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'REQUEST_NOT_FOUND', message: 'Feature request not found.' });
+    }
+    if (status && !VALID_FEATURE_REQUEST_STATUSES.has(status)) {
+      return res.status(400).json({ error: 'INVALID_STATUS', message: 'Invalid feature request status.' });
+    }
+
+    const updated = { ...list[idx] };
+    if (status) updated.status = status;
+    if (quotationAmount !== undefined) {
+      updated.quotationAmount = quotationAmount === null || quotationAmount === '' ? null : Number(quotationAmount);
+    }
+    if (expectedDeliveryDate !== undefined) {
+      updated.expectedDeliveryDate = String(expectedDeliveryDate || '').trim();
+    }
+    if (adminReply && String(adminReply).trim()) {
+      const msg = {
+        id: `frm-${Date.now()}`,
+        requestId,
+        hotelId: updated.hotelId,
+        senderRole: 'super_admin',
+        senderName: 'IGHO Engineering & Super Admin',
+        senderEmail: (req as any).caller?.email || 'superadmin@igho.software',
+        message: String(adminReply).trim(),
+        createdAt: new Date().toISOString(),
+      };
+      updated.messages = [...(updated.messages || []), msg];
+    }
+    updated.updatedAt = new Date().toISOString();
+    list[idx] = updated;
+    state.featureRequests = list;
+    saveDbState(state);
+
+    pushUserNotification({
+      recipientEmail: updated.submittedByEmail,
+      title: `Feature Request Update: ${updated.title}`,
+      message: `Status changed to ${updated.status}${updated.quotationAmount ? ` · Quotation: ₦${Number(updated.quotationAmount).toLocaleString()}` : ''}.`,
+      type: 'info',
+    });
+
+    broadcastLiveEvent('feature_request_updated', updated);
+    res.json({ success: true, request: updated });
+  });
+
+  // =========================================================================
+  // 10. PERSONALIZED SINGLE-USE FEATURE ACTIVATION SYSTEM (SHA-256 HASH + SALT)
+  // =========================================================================
+  function stripSensitiveActivationFields(record: any) {
+    const { codeHash: _h, codeSalt: _s, ...safe } = record;
+    const isExpired = safe.status === 'unused' && safe.expiresAt && new Date(safe.expiresAt).getTime() < Date.now();
+    return {
+      ...safe,
+      status: isExpired ? 'expired' : safe.status,
+    };
+  }
+
+  app.get('/api/console/custom-features', requireSuperAdmin, (req, res) => {
+    const state = getDbState() || {};
+    const activations = (state.personalizedActivations || []).map(stripSensitiveActivationFields);
+    const entitlements = state.customFeatureEntitlements || [];
+    res.json({ success: true, activations, entitlements });
+  });
+
+  app.post('/api/console/custom-features/generate', requireSuperAdmin, async (req, res) => {
+    const { hotelId, featureId, featureName, requestId, expiresInDays = 30 } = req.body || {};
+    if (!hotelId || !featureId || !featureName) {
+      return res.status(400).json({
+        error: 'MISSING_FIELDS',
+        message: 'hotelId, featureId, and featureName are required to generate an activation code.',
+      });
+    }
+    const crypto = await import('crypto');
+    const state = getDbState() || {};
+    const hotel = (state.hotels || []).find((h: any) => h.id === hotelId);
+    if (!hotel) {
+      return res.status(404).json({ error: 'HOTEL_NOT_FOUND', message: 'Target hotel not found.' });
+    }
+
+    const partA = crypto.randomBytes(2).toString('hex').toUpperCase();
+    const partB = crypto.randomBytes(2).toString('hex').toUpperCase();
+    const partC = crypto.randomBytes(2).toString('hex').toUpperCase();
+    const rawCode = `IGHO-CF-${partA}-${partB}-${partC}`;
+    const normalizedCode = rawCode.replace(/\s+/g, '').toUpperCase();
+    const salt = crypto.randomBytes(16).toString('hex');
+    const codeHash = crypto.createHash('sha256').update(`${salt}:${normalizedCode}`).digest('hex');
+
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + Math.max(1, Number(expiresInDays) || 30) * 86400000).toISOString();
+    const record = {
+      id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      hotelId,
+      hotelName: hotel.name,
+      featureId: String(featureId).trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_'),
+      featureName: String(featureName).trim(),
+      requestId: requestId ? String(requestId).trim() : undefined,
+      codeHash,
+      codeSalt: salt,
+      codeHint: `IGHO-CF-••••-${partC}`,
+      status: 'unused',
+      createdBy: (req as any).caller?.email || 'super_admin',
+      createdAt: now.toISOString(),
+      expiresAt,
+    };
+
+    state.personalizedActivations = [record, ...(state.personalizedActivations || [])];
+    saveDbState(state);
+
+    appendAuditLog({
+      actorEmail: record.createdBy,
+      action: 'UPDATE_PLATFORM_SETTING',
+      target: `${hotel.name} (${record.featureName})`,
+      targetType: 'hotel',
+      newValue: `Generated personalized activation code (${record.codeHint})`,
+    });
+
+    res.status(201).json({
+      success: true,
+      activation: stripSensitiveActivationFields(record),
+      activationCode: rawCode,
+      message: 'Single-use activation code generated. Copy and share securely with the hotel administrator.',
+    });
+  });
+
+  app.post('/api/console/custom-features/:activationId/revoke', requireSuperAdmin, (req, res) => {
+    const { activationId } = req.params;
+    const state = getDbState() || {};
+    const nowIso = new Date().toISOString();
+    let activations = state.personalizedActivations || [];
+    const idx = activations.findIndex((a: any) => a.id === activationId);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Activation record not found.' });
+    }
+
+    activations[idx] = { ...activations[idx], status: 'revoked', revokedAt: nowIso };
+    state.personalizedActivations = activations;
+    state.customFeatureEntitlements = (state.customFeatureEntitlements || []).map((e: any) =>
+      e.activationId === activationId ? { ...e, status: 'revoked', revokedAt: nowIso } : e
+    );
+    saveDbState(state);
+
+    appendAuditLog({
+      actorEmail: (req as any).caller?.email || 'super_admin',
+      action: 'UPDATE_PLATFORM_SETTING',
+      target: `${activations[idx].hotelName} (${activations[idx].featureName})`,
+      targetType: 'hotel',
+      newValue: 'Revoked personalized custom feature entitlement',
+    });
+
+    broadcastLiveEvent('custom_feature_updated', { hotelId: activations[idx].hotelId });
+    res.json({ success: true, activation: stripSensitiveActivationFields(activations[idx]) });
+  });
+
+  app.get('/api/hotels/:hotelId/custom-features', (req, res) => {
+    const { hotelId } = req.params;
+    const state = getDbState() || {};
+    const entitlements = (state.customFeatureEntitlements || []).filter((e: any) => e.hotelId === hotelId);
+    const history = (state.personalizedActivations || [])
+      .filter((a: any) => a.hotelId === hotelId && (a.status === 'activated' || a.status === 'revoked'))
+      .map(stripSensitiveActivationFields);
+    res.json({ success: true, entitlements, history });
+  });
+
+  app.post('/api/hotels/:hotelId/custom-features/activate', async (req, res) => {
+    const { hotelId } = req.params;
+    const { code, activatedByEmail = 'hotel@igho.com.ng' } = req.body || {};
+    if (!code || !String(code).trim()) {
+      return res.status(400).json({ error: 'CODE_REQUIRED', message: 'Please enter your personalized activation code.' });
+    }
+    const crypto = await import('crypto');
+    const normalizedInput = String(code).trim().replace(/\s+/g, '').toUpperCase();
+    const state = getDbState() || {};
+    const activations: any[] = state.personalizedActivations || [];
+
+    let matchedIndex = -1;
+    for (let i = 0; i < activations.length; i++) {
+      const rec = activations[i];
+      if (!rec.codeSalt || !rec.codeHash) continue;
+      const candidateHash = crypto.createHash('sha256').update(`${rec.codeSalt}:${normalizedInput}`).digest('hex');
+      const bufA = Buffer.from(candidateHash, 'hex');
+      const bufB = Buffer.from(String(rec.codeHash), 'hex');
+      if (bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB)) {
+        matchedIndex = i;
+        break;
+      }
+    }
+
+    if (matchedIndex === -1) {
+      return res.status(404).json({
+        error: 'INVALID_ACTIVATION_CODE',
+        message: 'Invalid activation code. Please verify the code issued by IGHO Software Systems.',
+      });
+    }
+
+    const record = activations[matchedIndex];
+    if (record.hotelId !== hotelId) {
+      return res.status(403).json({
+        error: 'CROSS_HOTEL_CODE_DENIED',
+        message: 'This activation code is locked to a different hotel organization and cannot be redeemed here.',
+      });
+    }
+    if (record.status === 'revoked') {
+      return res.status(403).json({
+        error: 'ACTIVATION_REVOKED',
+        message: 'This activation code has been revoked by Platform Administration.',
+      });
+    }
+    if (record.status === 'activated') {
+      return res.status(409).json({
+        error: 'CODE_ALREADY_USED',
+        message: `This single-use activation code was already redeemed on ${new Date(record.activatedAt).toLocaleDateString()}.`,
+      });
+    }
+    if (record.expiresAt && new Date(record.expiresAt).getTime() < Date.now()) {
+      activations[matchedIndex] = { ...record, status: 'expired' };
+      state.personalizedActivations = activations;
+      saveDbState(state);
+      return res.status(410).json({
+        error: 'CODE_EXPIRED',
+        message: 'This activation code has expired. Please request a fresh code from IGHO Support.',
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    activations[matchedIndex] = {
+      ...record,
+      status: 'activated',
+      activatedAt: nowIso,
+      activatedByEmail: String(activatedByEmail).trim().toLowerCase(),
+    };
+
+    const entitlements: any[] = state.customFeatureEntitlements || [];
+    const existingEntIdx = entitlements.findIndex(
+      (e: any) => e.hotelId === hotelId && e.featureId === record.featureId
+    );
+    const entitlement = {
+      id: `cfe-${Date.now()}`,
+      hotelId,
+      featureId: record.featureId,
+      featureName: record.featureName,
+      activationId: record.id,
+      status: 'active',
+      activatedAt: nowIso,
+      activatedByEmail: String(activatedByEmail).trim().toLowerCase(),
+    };
+    if (existingEntIdx >= 0) {
+      entitlements[existingEntIdx] = entitlement;
+    } else {
+      entitlements.unshift(entitlement);
+    }
+
+    if (record.requestId && Array.isArray(state.featureRequests)) {
+      state.featureRequests = state.featureRequests.map((fr: any) =>
+        fr.id === record.requestId ? { ...fr, status: 'Completed', updatedAt: nowIso } : fr
+      );
+    }
+
+    state.personalizedActivations = activations;
+    state.customFeatureEntitlements = entitlements;
+    saveDbState(state);
+
+    appendAuditLog({
+      actorEmail: String(activatedByEmail).trim().toLowerCase(),
+      action: 'UPDATE_PLATFORM_SETTING',
+      target: `${record.hotelName} (${record.featureName})`,
+      targetType: 'hotel',
+      newValue: `Custom feature activated via single-use code (${record.codeHint})`,
+    });
+
+    broadcastLiveEvent('custom_feature_updated', { hotelId, entitlement });
+    res.json({
+      success: true,
+      entitlement,
+      message: `Custom feature "${record.featureName}" is now permanently unlocked for your hotel.`,
+    });
+  });
+
+  app.get('/api/health', (_req, res) => {
+    res.status(200).json({ ok: true, timestamp: Date.now() });
+  });
+
   const isProd = process.env.NODE_ENV === 'production' || fs.existsSync(path.join(__dirname, 'dist'));
 
   if (!isProd) {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
+    const vitePromise = import('vite').then(({ createServer: createViteServer }) =>
+      createViteServer({
+        server: {
+          middlewareMode: true,
+          ...(process.env.DISABLE_HMR === 'true' ? { hmr: false } : {}),
+        },
+        appType: 'spa',
+      })
+    );
+    app.use(async (req, res, next) => {
+      try {
+        const vite = await vitePromise;
+        return vite.middlewares(req, res, next);
+      } catch (err) {
+        return next(err);
+      }
     });
-    app.use(vite.middlewares);
   } else {
     app.use(express.static(path.join(__dirname, 'dist')));
     app.get('*', (req, res) => {
@@ -5029,7 +8699,19 @@ async function createServer() {
   const port = Number(process.env.PORT) || 3000;
   app.listen(port, '0.0.0.0', () => {
     console.log(`[IGHO Backend Server] Running in real-time sync database mode at http://localhost:${port}`);
+    console.log('[IGHO Storage Runtime Config]', {
+      nodeEnv: process.env.NODE_ENV || 'development',
+      isProd,
+      supabaseUrlConfigured: Boolean(supabaseUrlEnv),
+      supabasePublishableConfigured: Boolean(process.env.SUPABASE_PUBLISHABLE_KEY),
+      supabaseServiceRoleConfigured: Boolean(supabaseServiceKeyEnv),
+      supabaseAdminActive: Boolean(supabaseAdminClient),
+      storageMode: supabaseAdminClient ? 'supabase_public_assets_plus_local_private' : 'local_disk_fallback',
+    });
   });
 }
 
-createServer();
+createServer().catch((err) => {
+  console.error('[IGHO Backend Server Fatal Startup Error]', err);
+  process.exit(1);
+});

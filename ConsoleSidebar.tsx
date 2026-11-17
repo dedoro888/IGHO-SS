@@ -1,0 +1,499 @@
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import {
+  LayoutDashboard,
+  Building2,
+  FileCheck2,
+  Users,
+  CreditCard,
+  Wallet,
+  BarChart3,
+  MessageSquareWarning,
+  Layers,
+  Sliders,
+  History,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  GraduationCap,
+  Cross,
+  Network,
+  LogOut,
+  Database,
+  Sparkles,
+} from 'lucide-react';
+import { IghoOfficialEmblem } from '../IghoLogo';
+
+export type ConsoleTab =
+  | 'dashboard'
+  | 'hotels'
+  | 'schools'
+  | 'hospitals'
+  | 'waitlists'
+  | 'registrations'
+  | 'users'
+  | 'subscriptions'
+  | 'finance'
+  | 'analytics'
+  | 'reviews'
+  | 'products'
+  | 'feature_requests'
+  | 'settings'
+  | 'audit'
+  | 'storage';
+
+interface ConsoleSidebarProps {
+  currentTab: ConsoleTab;
+  onSelectTab: (tab: ConsoleTab) => void;
+  pendingRegistrationsCount: number;
+  openComplaintsCount: number;
+  pendingWaitlistsCount?: number;
+  isCollapsed: boolean;
+  onToggleCollapse: () => void;
+  isMobile?: boolean;
+  currentUserEmail?: string;
+  onNavigate?: (screen: string) => void;
+  onSwitchPersona?: (email: string) => void;
+  profileName?: string;
+  profileEmail?: string;
+  profilePicture?: string;
+  onEditProfileClick?: () => void;
+  onSignOut?: () => void;
+}
+
+export const ConsoleSidebar: React.FC<ConsoleSidebarProps> = ({
+  currentTab,
+  onSelectTab,
+  pendingRegistrationsCount,
+  openComplaintsCount,
+  pendingWaitlistsCount = 0,
+  isCollapsed,
+  onToggleCollapse,
+  isMobile = false,
+  currentUserEmail,
+  onNavigate,
+  onSwitchPersona,
+  profileName = 'Platform Super Admin',
+  profileEmail = 'superadmin@igho.software',
+  profilePicture = '',
+  onEditProfileClick,
+  onSignOut,
+}) => {
+  const [orgsExpanded, setOrgsExpanded] = useState<boolean>(false);
+
+  const isOrgTab = currentTab === 'hotels' || currentTab === 'schools' || currentTab === 'hospitals';
+
+  const secondaryNavItems = [
+    {
+      id: 'waitlists' as ConsoleTab,
+      label: 'Waitlist Intake',
+      icon: Layers,
+      badge: pendingWaitlistsCount > 0 ? pendingWaitlistsCount : undefined,
+    },
+    {
+      id: 'registrations' as ConsoleTab,
+      label: 'Registration Queue',
+      icon: FileCheck2,
+      badge: pendingRegistrationsCount > 0 ? pendingRegistrationsCount : undefined,
+    },
+    { id: 'users' as ConsoleTab, label: 'Users & Accounts', icon: Users },
+    { id: 'subscriptions' as ConsoleTab, label: 'Subscriptions', icon: CreditCard },
+    { id: 'finance' as ConsoleTab, label: 'Finance & Payouts', icon: Wallet },
+    { id: 'analytics' as ConsoleTab, label: 'Analytics', icon: BarChart3 },
+    {
+      id: 'reviews' as ConsoleTab,
+      label: 'Reviews & Feedback',
+      icon: MessageSquareWarning,
+      badge: openComplaintsCount > 0 ? openComplaintsCount : undefined,
+    },
+    { id: 'products' as ConsoleTab, label: 'Products', icon: Layers },
+    { id: 'feature_requests' as ConsoleTab, label: 'Feature Requests & Keys', icon: Sparkles },
+    { id: 'settings' as ConsoleTab, label: 'Platform Settings', icon: Sliders },
+    { id: 'audit' as ConsoleTab, label: 'Audit Logs', icon: History },
+  ];
+
+  return (
+    <>
+      {/* Sticky Sidebar Column - Divided into 3 standalone premium capsules with zero layout jitter */}
+      <motion.aside
+        animate={{ width: isCollapsed ? 80 : 272 }}
+        transition={{ duration: 0.3, ease: 'easeInOut' }}
+        onWheel={(e) => {
+          e.stopPropagation();
+        }}
+        className={`${
+          isMobile
+            ? 'fixed top-0 bottom-0 left-0 h-full w-[272px] z-50 rounded-r-[2rem] border-r shadow-2xl bg-white/95 flex flex-col justify-between pb-6 px-5 pt-4 gap-3 overflow-hidden'
+            : 'hidden md:flex sticky top-4 ml-4 my-4 h-[calc(100vh-2rem)] overflow-hidden flex-col gap-3 shrink-0 bg-transparent shadow-none border-none px-0 self-start z-30'
+        }`}
+      >
+        {/* SECTION 1: HEADER BRANDING PILL */}
+        <div
+          className="flex flex-row items-center justify-center w-full shrink-0 relative bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-4 h-16"
+        >
+          {isCollapsed ? (
+            <div className="flex items-center justify-center w-full">
+              <IghoOfficialEmblem className="w-7 h-7 cursor-pointer animate-none" />
+            </div>
+          ) : (
+            <div className="flex items-center gap-2.5 min-w-0 justify-start w-full pl-[10px]">
+              <IghoOfficialEmblem className="w-7 h-7 cursor-pointer shrink-0 animate-none" />
+              <div className="flex flex-col text-left leading-tight min-w-0">
+                <div className="flex items-center gap-1">
+                  <span className="font-extrabold text-[12px] tracking-tight text-neutral-900 font-sans">IGO</span>
+                  <span className="text-neutral-400 text-[10px]">/</span>
+                  <span className="text-[11px] font-bold text-[#10b981]">Console</span>
+                </div>
+                <p className="text-[9px] text-neutral-400 font-medium truncate">
+                  Building Dreams
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* SECTION 2: NAVIGATION & SCROLLABLE CONTROLS LIST */}
+        <div
+          className="flex flex-col flex-1 min-h-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 rounded-[2rem] p-3.5 nav-second-segment overflow-y-auto overflow-x-hidden pr-1.5 pb-4 scrollbar-thin scrollbar-thumb-neutral-200 hover:scrollbar-thumb-neutral-300"
+        >
+          <div className="space-y-2 text-xs w-full">
+            {/* Overview Tab Link */}
+            <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
+              <button
+                onClick={() => onSelectTab('dashboard')}
+                title="Overview"
+                className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
+                  isCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px]'
+                } ${
+                  currentTab === 'dashboard'
+                    ? 'bg-black border-white text-white font-bold shadow-md'
+                    : 'bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700'
+                }`}
+              >
+                {/* Locked Anchor Icon container */}
+                <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                  <LayoutDashboard className="w-4 h-4 shrink-0" />
+                </div>
+                <AnimatePresence initial={false}>
+                  {!isCollapsed && (
+                    <motion.span
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -10 }}
+                      transition={{ duration: 0.15 }}
+                      className="text-[11px] font-bold whitespace-nowrap overflow-hidden ml-1"
+                    >
+                      Overview
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </button>
+            </div>
+
+            {/* Organizations Group */}
+            <div className={`relative flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full group`}>
+              <button
+                onClick={() => {
+                  if (isCollapsed) {
+                    onSelectTab('hotels');
+                  } else {
+                    setOrgsExpanded(!orgsExpanded);
+                  }
+                }}
+                title="Organizations"
+                className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
+                  isCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px] pr-4'
+                } ${
+                  isOrgTab
+                    ? 'bg-black border-white text-white font-bold shadow-md ring-1 ring-white/20'
+                    : 'bg-neutral-900 border-neutral-700 text-neutral-100 hover:text-white hover:bg-black hover:border-neutral-500'
+                }`}
+              >
+                <div className="flex items-center justify-start">
+                  {/* Locked Anchor Icon container */}
+                  <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                    <Network className="w-4 h-4 shrink-0" />
+                  </div>
+                  <AnimatePresence initial={false}>
+                    {!isCollapsed && (
+                      <motion.span
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -10 }}
+                        transition={{ duration: 0.15 }}
+                        className="text-[11px] font-bold whitespace-nowrap overflow-hidden ml-1"
+                      >
+                        Organizations
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                <AnimatePresence initial={false}>
+                  {!isCollapsed && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      transition={{ duration: 0.15 }}
+                      className="ml-auto mr-1 shrink-0"
+                    >
+                      <ChevronDown
+                        className={`w-3.5 h-3.5 text-neutral-400 transition-transform duration-300 ${
+                          orgsExpanded ? 'rotate-0' : '-rotate-90'
+                        }`}
+                      />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </button>
+            </div>
+
+            {/* Sub-menu rendered directly under when expanded */}
+            <AnimatePresence initial={false}>
+              {!isCollapsed && orgsExpanded && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ type: 'spring', damping: 25, stiffness: 280 }}
+                  className="w-full pl-6 space-y-1.5 pt-1 overflow-hidden"
+                >
+                  <button
+                    onClick={() => onSelectTab('hotels')}
+                    className={`flex items-center h-8 rounded-full border transition-all duration-300 pl-2 pr-4 cursor-pointer w-full ${
+                      currentTab === 'hotels'
+                        ? 'bg-black border-white text-white font-bold shadow-md ring-1 ring-white/20'
+                        : 'bg-neutral-900 border-neutral-700 text-neutral-100 hover:text-white hover:bg-black'
+                    }`}
+                  >
+                    <div className="w-5 h-5 rounded-full bg-black border border-neutral-700 flex items-center justify-center shrink-0">
+                      <Building2 className="w-3 h-3 text-white" />
+                    </div>
+                    <span className="text-[10px] font-bold whitespace-nowrap ml-2">Hotels & Stay</span>
+                  </button>
+
+                  <button
+                    onClick={() => onSelectTab('schools')}
+                    className={`flex items-center h-8 rounded-full border transition-all duration-300 pl-2 pr-4 cursor-pointer w-full ${
+                      currentTab === 'schools'
+                        ? 'bg-black border-white text-white font-bold shadow-md ring-1 ring-white/20'
+                        : 'bg-neutral-900 border-neutral-700 text-neutral-100 hover:text-white hover:bg-black'
+                    }`}
+                  >
+                    <div className="w-5 h-5 rounded-full bg-white border border-black flex items-center justify-center shrink-0">
+                      <GraduationCap className="w-3 h-3 text-black" />
+                    </div>
+                    <span className="text-[10px] font-bold whitespace-nowrap ml-2">Schools (Beta)</span>
+                  </button>
+
+                  <button
+                    onClick={() => onSelectTab('hospitals')}
+                    className={`flex items-center h-8 rounded-full border transition-all duration-300 pl-2 pr-4 cursor-pointer w-full ${
+                      currentTab === 'hospitals'
+                        ? 'bg-black border-white text-white font-bold shadow-md ring-1 ring-white/20'
+                        : 'bg-neutral-900 border-neutral-700 text-neutral-100 hover:text-white hover:bg-black'
+                    }`}
+                  >
+                    <div className="w-5 h-5 rounded-full bg-white border border-black flex items-center justify-center shrink-0">
+                      <Cross className="w-3 h-3 text-black" />
+                    </div>
+                    <span className="text-[10px] font-bold whitespace-nowrap ml-2">Hospitals (Roadmap)</span>
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Secondary Controls Links */}
+            <div className="pt-1.5 space-y-1.5 w-full">
+              <div className={`text-[10px] font-bold text-neutral-500 uppercase tracking-widest font-mono flex items-center justify-center shrink-0 h-6 mt-1 mb-1 ${isCollapsed ? 'px-4' : 'pl-[14px]'}`}>
+                {isCollapsed ? (
+                  <div className="w-4 h-[1px] bg-neutral-200/60" />
+                ) : (
+                  <span className="w-full text-left">Controls</span>
+                )}
+              </div>
+              {secondaryNavItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = currentTab === item.id;
+                return (
+                  <div key={item.id} className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
+                    <button
+                      onClick={() => onSelectTab(item.id)}
+                      title={item.label}
+                      className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
+                        isCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px] pr-4'
+                      } ${
+                        isActive
+                          ? 'bg-black border-white text-white font-bold shadow-md ring-1 ring-white/20'
+                          : 'bg-neutral-900 border-neutral-700 text-neutral-100 hover:text-white hover:bg-black hover:border-neutral-500'
+                      }`}
+                    >
+                      {/* Locked Anchor Icon container */}
+                      <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                        <Icon className="w-4 h-4 shrink-0" />
+                      </div>
+                      <AnimatePresence initial={false}>
+                        {!isCollapsed && (
+                          <motion.span
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -10 }}
+                            transition={{ duration: 0.15 }}
+                            className="text-[11px] font-bold whitespace-nowrap overflow-hidden ml-1"
+                          >
+                            {item.label}
+                          </motion.span>
+                        )}
+                      </AnimatePresence>
+
+                      {item.badge !== undefined && (
+                        <span
+                          className={`absolute font-black rounded-full transition-all duration-300 ${
+                            isCollapsed
+                              ? '-top-1 -right-1 w-4.5 h-4.5 text-[9px] bg-rose-500 text-white flex items-center justify-center border border-white'
+                              : 'right-3 px-2 py-0.5 text-[10px] bg-rose-500 text-white'
+                          }`}
+                        >
+                          {item.badge}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Infrastructure Section */}
+            <div className="pt-1.5 space-y-1.5 w-full border-t border-neutral-100 mt-1.5">
+              <div className={`text-[10px] font-bold text-neutral-500 uppercase tracking-widest font-mono flex items-center justify-center shrink-0 h-6 mt-1 mb-1 ${isCollapsed ? 'px-4' : 'pl-[14px]'}`}>
+                {isCollapsed ? (
+                  <div className="w-4 h-[1px] bg-neutral-200/60" />
+                ) : (
+                  <span className="w-full text-left">Infrastructure</span>
+                )}
+              </div>
+              <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
+                <button
+                  onClick={() => onSelectTab('storage')}
+                  title="Storage Usage"
+                  className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 ${
+                    isCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px]'
+                  } ${
+                    currentTab === 'storage'
+                      ? 'bg-black border-white text-white font-bold shadow-md'
+                      : 'bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700'
+                  }`}
+                >
+                  <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                    <Database className="w-4 h-4 shrink-0" />
+                  </div>
+                  <AnimatePresence initial={false}>
+                    {!isCollapsed && (
+                      <motion.span
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -10 }}
+                        transition={{ duration: 0.15 }}
+                        className="text-[11px] font-bold whitespace-nowrap overflow-hidden ml-1"
+                      >
+                        Storage Usage
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* SECTION 3: FOOTER PROFILE, COLLAPSE & LOGOUT PILL - Flowing immediately after Section 2 */}
+        <div
+          className="shrink-0 w-full bg-white border border-neutral-200/50 shadow-xs transition-colors duration-200 space-y-3 rounded-[2rem] p-4"
+        >
+          {/* Section 3: Profile Pill */}
+          <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
+            <button
+              onClick={onEditProfileClick}
+              title="Edit Admin Profile"
+              className={`flex items-center gap-2.5 hover:bg-neutral-50/80 border border-neutral-200/60 rounded-full cursor-pointer transition-all duration-300 ${
+                isCollapsed ? 'w-10 h-10 justify-center p-0' : 'w-full pl-[10px] pr-3.5 py-1.5'
+              }`}
+            >
+              {profilePicture ? (
+                <img src={profilePicture} alt="Profile" className="w-7 h-7 rounded-full object-cover shadow-xs shrink-0" />
+              ) : (
+                <div className="w-7 h-7 rounded-full overflow-hidden shadow-xs shrink-0 flex items-center justify-center bg-neutral-900">
+                  <IghoOfficialEmblem className="w-full h-full" inverted={true} />
+                </div>
+              )}
+              <AnimatePresence initial={false}>
+                {!isCollapsed && (
+                  <motion.div
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
+                    transition={{ duration: 0.15 }}
+                    className="min-w-0 text-left leading-tight flex-1"
+                  >
+                    <p className="text-[11px] font-extrabold text-neutral-900 truncate">{profileName}</p>
+                    <p className="text-[9px] text-[#10b981] font-mono truncate">{profileEmail}</p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </button>
+          </div>
+
+          {/* Section 1: Collapse and Logout */}
+          <div className="flex flex-col gap-2 w-full">
+            {/* Collapse */}
+            <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
+              <button
+                onClick={onToggleCollapse}
+                title={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
+                className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 bg-black border-neutral-850 text-neutral-400 hover:text-white hover:border-neutral-700 ${
+                  isCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px]'
+                }`}
+              >
+                <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                  {isCollapsed ? (
+                    <ChevronRight className="w-4 h-4 text-neutral-400 font-bold" />
+                  ) : (
+                    <ChevronLeft className="w-4 h-4 text-white font-bold" />
+                  )}
+                </div>
+                {!isCollapsed && (
+                  <span className="text-[11px] font-bold whitespace-nowrap ml-1">Collapse</span>
+                )}
+              </button>
+            </div>
+
+            {/* Log Out */}
+            <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-start'} w-full`}>
+              <button
+                onClick={() => {
+                  if (onSignOut) {
+                    onSignOut();
+                  } else if (onNavigate) {
+                    onNavigate('landing');
+                  }
+                }}
+                title="Log Out"
+                className={`flex items-center h-10 rounded-full border relative cursor-pointer overflow-hidden transition-all duration-300 text-rose-600 hover:text-rose-700 bg-rose-50/50 hover:bg-rose-50 border-rose-100 hover:border-rose-200 ${
+                  isCollapsed ? 'w-10 justify-center p-0' : 'w-full justify-start pl-[4px]'
+                }`}
+              >
+                <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                  <LogOut className="w-4 h-4 shrink-0" />
+                </div>
+                {!isCollapsed && (
+                  <span className="text-[11px] font-bold whitespace-nowrap ml-1">Log Out</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </motion.aside>
+    </>
+  );
+};

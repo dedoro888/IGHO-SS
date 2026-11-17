@@ -1,0 +1,1062 @@
+import React, { useState } from 'react';
+import {
+  Eye,
+  EyeOff,
+  Lock,
+  Mail,
+  User,
+  Phone,
+  CheckCircle2,
+  X,
+  Bed,
+  LogOut,
+  Calendar,
+  Shield,
+  Building2,
+  Plus,
+  AlertCircle,
+  ArrowLeft,
+} from 'lucide-react';
+import { ActiveScreen, CustomerProfile, ResolvedAuthAccount } from '../types';
+import { resolveUserAccount, getSavedCustomerProfile, saveCustomerProfile } from '../utils/auth';
+import { authService, HardenedResolvedAuthAccount } from '../lib/authService';
+import { IghoLogo, IghoOfficialEmblem, IghoLoadingEmblem } from './IghoLogo';
+import { IghoLoadingScreen } from './IghoLoadingScreen';
+
+interface GuestAuthProps {
+  onLoginSuccess: (
+    email: string,
+    profile?: CustomerProfile,
+    resolved?: HardenedResolvedAuthAccount | ResolvedAuthAccount
+  ) => void;
+  onNavigate: (screen: ActiveScreen) => void;
+
+  currentUserEmail?: string;
+  currentGuestProfile?: CustomerProfile | null;
+  onSignOut?: () => void;
+  onEditProfile?: () => void;
+  isSuperAdmin?: boolean;
+}
+
+export const GuestAuth: React.FC<GuestAuthProps> = ({
+  onLoginSuccess,
+  onNavigate,
+  currentUserEmail,
+  currentGuestProfile,
+  onSignOut,
+  onEditProfile,
+  isSuperAdmin = false,
+}) => {
+  const [allowSwitchAccount, setAllowSwitchAccount] = useState(false);
+  const [isRegister, setIsRegister] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('Signing in to IGHO Software Systems...');
+
+  // Forgot password modal state
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSubmitted, setForgotSubmitted] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotError, setForgotError] = useState<string | null>(null);
+
+  // Email confirmation and resend state
+  const [pendingConfirmationEmail, setPendingConfirmationEmail] = useState<string | null>(null);
+  const [unconfirmedEmailForResend, setUnconfirmedEmailForResend] = useState<string | null>(null);
+  const [resendingEmail, setResendingEmail] = useState(false);
+  const [resendStatusMessage, setResendStatusMessage] = useState<string | null>(null);
+
+  // 6-digit OTP Verification State
+  const [otpCode, setOtpCode] = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpError, setOtpError] = useState<string | null>(null);
+  const [showSmtpGuide, setShowSmtpGuide] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+
+  const handleGoogleSignIn = async () => {
+    setError(null);
+    setGoogleLoading(true);
+    try {
+      const { error: googleErr } = await authService.signInWithGoogle();
+      if (googleErr) {
+        setGoogleLoading(false);
+        setError(googleErr.message || 'Unable to start Google Sign-In. Check Supabase Google OAuth configuration.');
+      }
+    } catch (err: any) {
+      setGoogleLoading(false);
+      setError(err?.message || 'Unable to connect to Google Sign-In.');
+    }
+  };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingConfirmationEmail) return;
+    const cleanCode = otpCode.trim();
+    if (cleanCode.length < 6) {
+      setOtpError('Please enter the full 6-digit verification code.');
+      return;
+    }
+    setOtpLoading(true);
+    setOtpError(null);
+    try {
+      const { data, error: verifyErr } = await authService.verifyOtp(
+        pendingConfirmationEmail,
+        cleanCode,
+        'signup'
+      );
+      if (verifyErr) {
+        // Also attempt 'email' type if signup token format was dispatched
+        const { data: retryData, error: retryErr } = await authService.verifyOtp(
+          pendingConfirmationEmail,
+          cleanCode,
+          'email'
+        );
+        if (retryErr) {
+          setOtpLoading(false);
+          setOtpError(retryErr.message || verifyErr.message || 'Invalid or expired 6-digit verification code.');
+          return;
+        }
+      }
+
+      // Successful verification
+      const userResult = await authService.getUser();
+      const verifiedUser = userResult.user;
+      if (verifiedUser) {
+        const resolved = await authService.resolveAuthenticatedUser(verifiedUser.id, pendingConfirmationEmail);
+        let userProfile = getSavedCustomerProfile(pendingConfirmationEmail);
+        if (!userProfile) {
+          const parts = (fullName.trim() || pendingConfirmationEmail.split('@')[0]).split(/\s+/);
+          userProfile = {
+            id: verifiedUser.id,
+            email: pendingConfirmationEmail,
+            firstName: parts[0] || 'Guest',
+            lastName: parts.slice(1).join(' ') || '',
+            phone: phone.trim(),
+            address: '',
+            createdAt: new Date().toISOString(),
+          };
+          saveCustomerProfile(userProfile);
+        }
+
+        setOtpLoading(false);
+        onLoginSuccess(pendingConfirmationEmail, userProfile, resolved);
+        if (resolved.isSuperAdmin) {
+          onNavigate('super_admin_console');
+        } else {
+          onNavigate(resolved.targetScreen || 'landing');
+        }
+        return;
+      }
+
+      setOtpLoading(false);
+      setResendStatusMessage('Code verified! You may now sign in with your credentials.');
+      setPendingConfirmationEmail(null);
+      setIsRegister(false);
+    } catch (err: any) {
+      setOtpLoading(false);
+      setOtpError(err?.message || 'Verification failed. Please try again.');
+    }
+  };
+
+  const handleResendConfirmation = async (targetEmail: string) => {
+    const clean = targetEmail.trim().toLowerCase();
+    if (!clean) return;
+    setResendingEmail(true);
+    setResendStatusMessage(null);
+    try {
+      const { error: resendErr } = await authService.resendConfirmationEmail(clean);
+      setResendingEmail(false);
+      if (resendErr) {
+        const msg = resendErr.message || '';
+        if (msg.toLowerCase().includes('rate limit')) {
+          setResendStatusMessage('Email rate limit reached. Please wait a few moments before requesting another confirmation email.');
+        } else {
+          setResendStatusMessage(msg || 'Failed to resend confirmation email.');
+        }
+      } else {
+        setResendStatusMessage('Verification code / email sent! Please check your inbox.');
+      }
+    } catch (err: any) {
+      setResendingEmail(false);
+      setResendStatusMessage(err?.message || 'Error communicating with Supabase Auth.');
+    }
+  };
+
+
+  const executeLoginWithEmail = async (targetEmail: string, explicitPassword?: string) => {
+    const cleanEmail = targetEmail.trim().toLowerCase();
+    if (!cleanEmail) {
+      setError('Please enter your email address.');
+      return;
+    }
+
+    const pwd = explicitPassword || password;
+    if (!pwd) {
+      setError('Please enter your password.');
+      return;
+    }
+
+    setLoading(true);
+    setLoadingMessage('Authenticating with IGHO Software Systems...');
+
+    try {
+      const { data, error: signInErr } = await authService.signIn(cleanEmail, pwd);
+      if (signInErr) {
+        setLoading(false);
+        const msg = signInErr.message || '';
+        if (msg.toLowerCase().includes('email not confirmed')) {
+          setError('Email not confirmed. Please check your inbox and verify your email before signing in.');
+          setUnconfirmedEmailForResend(cleanEmail);
+        } else if (msg.toLowerCase().includes('invalid login credentials')) {
+          setError('Incorrect email or password. Please verify your credentials.');
+        } else {
+          setError(msg || 'Invalid login credentials.');
+        }
+        return;
+      }
+
+      if (data?.user) {
+        // Resolve authenticated user against real PostgreSQL database
+        const resolved = await authService.resolveAuthenticatedUser(data.user.id, cleanEmail);
+
+        if (!resolved.accessGranted) {
+          setLoading(false);
+          setError(resolved.denialReason || 'Access denied for this account.');
+          return;
+        }
+
+        let userProfile = getSavedCustomerProfile(cleanEmail);
+        if (!userProfile) {
+          const parts = (resolved.profile?.full_name || cleanEmail.split('@')[0]).split(/\s+/);
+          userProfile = {
+            id: resolved.profile?.id || data.user.id,
+            email: cleanEmail,
+            firstName: parts[0] || 'Guest',
+            lastName: parts.slice(1).join(' ') || '',
+            phone: resolved.profile?.phone || '',
+            address: '',
+            createdAt: resolved.profile?.created_at || new Date().toISOString(),
+          };
+          saveCustomerProfile(userProfile);
+        }
+
+        setLoading(false);
+        onLoginSuccess(cleanEmail, userProfile, resolved);
+        if (!resolved.isSuperAdmin) {
+          onNavigate(resolved.targetScreen);
+        }
+        return;
+      }
+
+      setLoading(false);
+      setError('Authentication failed. No active session established.');
+      return;
+    } catch (err: any) {
+      setLoading(false);
+      setError(err?.message || 'Authentication service error. Please try again.');
+      return;
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail) {
+      setError('Please enter your email address.');
+      return;
+    }
+
+    if (!password) {
+      setError('Please enter your password.');
+      return;
+    }
+
+    if (isRegister) {
+      if (!fullName.trim()) {
+        setError('Please enter your full name.');
+        return;
+      }
+      if (!phone.trim()) {
+        setError('Please enter your phone number.');
+        return;
+      }
+      if (password.length < 4) {
+        setError('Password must be at least 4 characters.');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError('Passwords do not match.');
+        return;
+      }
+
+      // Create new CustomerProfile specifically for this user
+      const nameParts = fullName.trim().split(/\s+/);
+      const firstName = nameParts[0] || 'Guest';
+      const lastName = nameParts.slice(1).join(' ') || '';
+
+      const newAccountProfile: CustomerProfile = {
+        id: `cust-${Date.now()}`,
+        email: cleanEmail,
+        firstName,
+        lastName,
+        phone: phone.trim(),
+        address: '',
+        city: '',
+        state: '',
+        country: 'Nigeria',
+        createdAt: new Date().toISOString(),
+      };
+
+      setLoading(true);
+      setLoadingMessage(`Creating IGHO account for ${fullName.trim()}...`);
+
+      try {
+        const { data, error: signUpErr } = await authService.signUp(
+          cleanEmail,
+          password,
+          fullName.trim(),
+          phone.trim()
+        );
+
+        if (signUpErr) {
+          setLoading(false);
+          setError(signUpErr.message || 'Registration failed. Please check your details.');
+          return;
+        }
+
+        // Save customer profile in memory (backed by authenticated backend API, not localStorage)
+        saveCustomerProfile(newAccountProfile);
+
+        // If data.user exists but data.session is null, email confirmation is pending
+        if (data?.user && !data.session) {
+          setLoading(false);
+          setPendingConfirmationEmail(cleanEmail);
+          setUnconfirmedEmailForResend(cleanEmail);
+          return;
+        }
+
+        if (data?.user && data.session) {
+
+          const resolved = await authService.resolveAuthenticatedUser(data.user.id, cleanEmail);
+          setLoading(false);
+          onLoginSuccess(cleanEmail, newAccountProfile, resolved);
+          if (resolved.isSuperAdmin) {
+            onNavigate('super_admin_console');
+          } else {
+            onNavigate(resolved.targetScreen || 'landing');
+          }
+          return;
+        }
+
+        setLoading(false);
+        setError('Registration could not be completed. Please try again.');
+        return;
+      } catch (err: any) {
+        setLoading(false);
+        setError(err?.message || 'Registration failed. Please try again.');
+        return;
+      }
+    }
+
+    await executeLoginWithEmail(cleanEmail, password);
+  };
+
+  return (
+    <div className="min-h-screen bg-neutral-50 flex flex-col items-center justify-center p-4 sm:p-6 text-neutral-900 selection:bg-black selection:text-white">
+      {/* Custom Fullscreen Loading Screen */}
+      {loading && (
+        <IghoLoadingScreen
+          message={loadingMessage}
+          subMessage="Connecting to IGHO Software Systems enterprise directory"
+        />
+      )}
+
+      <div className="w-full max-w-md flex flex-col gap-3 my-auto">
+        {/* Top Header Navigation */}
+        <div className="flex items-center justify-between w-full">
+          <button
+            type="button"
+            onClick={() => onNavigate('landing')}
+            className="group flex items-center gap-2 text-xs font-semibold text-neutral-600 hover:text-black transition-colors cursor-pointer"
+          >
+            <div className="w-8 h-8 rounded-full bg-white border border-neutral-200 group-hover:border-neutral-300 group-hover:bg-neutral-100 flex items-center justify-center shadow-2xs transition-all">
+              <ArrowLeft className="w-4 h-4 text-neutral-700 group-hover:text-black transition-transform group-hover:-translate-x-0.5" />
+            </div>
+            <span>Back to site</span>
+          </button>
+        </div>
+
+        {/* Main Authentication Card */}
+        <div className="w-full bg-white rounded-2xl p-6 sm:p-8 shadow-sm border border-neutral-200 space-y-6">
+        {currentUserEmail && !allowSwitchAccount ? (
+          <div className="text-center space-y-5">
+            <div className="flex justify-center">
+              <div className="w-16 h-16 rounded-full bg-black text-white flex items-center justify-center text-xl font-black shadow-sm">
+                {(currentGuestProfile?.firstName || currentUserEmail).charAt(0).toUpperCase()}
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold mb-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Currently Signed In</span>
+              </div>
+              <h1 className="text-2xl font-black text-black tracking-tight">
+                {currentGuestProfile
+                  ? `${currentGuestProfile.firstName} ${currentGuestProfile.lastName}`.trim()
+                  : currentUserEmail.split('@')[0]}
+              </h1>
+              <p className="text-xs text-neutral-500 font-medium">
+                {currentUserEmail}
+              </p>
+              {currentGuestProfile?.phone && (
+                <p className="text-xs text-neutral-400 font-mono">
+                  {currentGuestProfile.phone}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2.5 pt-2">
+              {isSuperAdmin ? (
+                <button
+                  type="button"
+                  onClick={() => onNavigate('super_admin_console')}
+                  className="w-full py-3 px-4 rounded-full bg-[#10b981] hover:bg-[#0da06f] text-white text-xs font-bold transition-all active:scale-[0.99] cursor-pointer flex items-center justify-center gap-2 shadow-sm"
+                >
+                  <Shield className="w-4 h-4" />
+                  <span>Go to IGO Console</span>
+                </button>
+              ) : currentUserEmail && resolveUserAccount(currentUserEmail).role !== 'customer' ? (
+                <button
+                  type="button"
+                  onClick={() => onNavigate('staff_portal')}
+                  className="w-full py-3 px-4 rounded-full bg-black text-white text-xs font-bold hover:bg-neutral-800 transition-all active:scale-[0.99] cursor-pointer flex items-center justify-center gap-2 shadow-sm"
+                >
+                  <Building2 className="w-4 h-4" />
+                  <span>Go to Hotel Staff Portal</span>
+                </button>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={() => onNavigate('guest_dashboard')}
+                className="w-full py-3 px-4 rounded-full bg-neutral-100 text-neutral-800 border border-neutral-200 text-xs font-bold hover:bg-neutral-200 transition-all active:scale-[0.99] cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Calendar className="w-4 h-4" />
+                <span>Go to My Stays & Bookings</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (onEditProfile) onEditProfile();
+                  else onNavigate('guest_dashboard');
+                }}
+                className="w-full py-2.5 px-4 rounded-full bg-neutral-100 text-neutral-800 border border-neutral-200 text-xs font-bold hover:bg-neutral-200 transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                <User className="w-4 h-4 text-neutral-600" />
+                <span>Edit profile information</span>
+              </button>
+
+              {onSignOut && (
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  className="w-full py-2.5 px-4 rounded-full border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <LogOut className="w-4 h-4 text-rose-500" />
+                  <span>Sign out</span>
+                </button>
+              )}
+            </div>
+
+            <div className="pt-3 border-t border-neutral-100">
+              <button
+                type="button"
+                onClick={() => setAllowSwitchAccount(true)}
+                className="text-xs text-neutral-500 hover:text-black font-medium underline cursor-pointer"
+              >
+                Need to sign in with a different account? Switch account
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {currentUserEmail && allowSwitchAccount && (
+              <div className="flex items-center justify-between p-2.5 bg-neutral-50 rounded-xl border border-neutral-200 text-xs">
+                <span className="text-neutral-600 truncate max-w-[200px]">
+                  Logged in as <strong>{currentUserEmail}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setAllowSwitchAccount(false)}
+                  className="text-xs font-bold text-neutral-900 hover:underline cursor-pointer"
+                >
+                  Keep active account
+                </button>
+              </div>
+            )}
+
+            {pendingConfirmationEmail ? (
+              <div className="space-y-5 text-center py-2">
+                <div className="w-14 h-14 rounded-2xl bg-black text-white flex items-center justify-center mx-auto shadow-sm">
+                  <Mail className="w-7 h-7" />
+                </div>
+
+                <div className="space-y-1.5">
+                  <h2 className="text-xl font-black text-black">Verify your Email Address</h2>
+                  <p className="text-xs text-neutral-600 leading-relaxed max-w-sm mx-auto">
+                    We sent a 6-digit verification code to <strong className="text-neutral-900 font-mono">{pendingConfirmationEmail}</strong>.
+                    Enter the code below or click the link in your email to activate your account.
+                  </p>
+                </div>
+
+                {otpError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium text-left flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <span>{otpError}</span>
+                  </div>
+                )}
+
+                {resendStatusMessage && (
+                  <div className="p-3 bg-neutral-100 border border-neutral-200 rounded-xl text-xs text-neutral-800 font-medium text-left">
+                    {resendStatusMessage}
+                  </div>
+                )}
+
+                {/* 6-Digit OTP Form */}
+                <form onSubmit={handleVerifyOtp} className="space-y-3 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-bold text-neutral-600 uppercase tracking-wider mb-2">
+                      Enter 6-Digit Verification Code
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={6}
+                      autoFocus
+                      value={otpCode}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/[^0-9a-zA-Z]/g, '');
+                        setOtpCode(val);
+                        if (otpError) setOtpError(null);
+                      }}
+                      placeholder="• • • • • •"
+                      className="w-full text-center tracking-[0.5em] font-mono text-xl font-bold py-3 px-4 bg-neutral-50 border-2 border-neutral-300 rounded-2xl text-neutral-900 focus:outline-none focus:border-black focus:bg-white transition-all placeholder:text-neutral-300"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={otpLoading || otpCode.trim().length < 6}
+                    className="w-full py-3 px-4 rounded-xl bg-black text-white text-xs font-bold hover:bg-neutral-800 transition-all cursor-pointer disabled:opacity-50 shadow-sm"
+                  >
+                    {otpLoading ? 'Verifying Code...' : 'Verify Code & Sign In'}
+                  </button>
+                </form>
+
+                {/* Helpful guidance for delayed SMTP delivery */}
+                <div className="p-3.5 bg-neutral-50 border border-neutral-200 rounded-2xl text-left space-y-1.5">
+                  <p className="font-bold text-xs text-neutral-900">Did not receive the confirmation email?</p>
+                  <p className="text-[11px] text-neutral-600 leading-relaxed">
+                    Check your Spam or Promotions folder, then tap Resend Verification Code below or open the Supabase SMTP setup guide for production delivery settings.
+                  </p>
+                </div>
+
+                <div className="space-y-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={resendingEmail}
+                    onClick={() => handleResendConfirmation(pendingConfirmationEmail)}
+                    className="w-full py-2 px-4 rounded-xl border border-neutral-200 text-neutral-700 text-xs font-semibold hover:bg-neutral-50 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {resendingEmail ? 'Sending new code...' : 'Resend Verification Code / Link'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingConfirmationEmail(null);
+                      setIsRegister(false);
+                      setError(null);
+                      setOtpCode('');
+                      setOtpError(null);
+                    }}
+                    className="w-full py-2 px-4 rounded-xl text-neutral-500 hover:text-black text-xs font-medium transition-all cursor-pointer"
+                  >
+                    Back to Sign In
+                  </button>
+                </div>
+
+                {/* Supabase SMTP Configuration Accordion */}
+                <div className="pt-3 border-t border-neutral-100 text-left">
+                  <button
+                    type="button"
+                    onClick={() => setShowSmtpGuide((prev) => !prev)}
+                    className="flex items-center justify-between w-full text-[11px] font-bold text-neutral-500 hover:text-neutral-900 cursor-pointer"
+                  >
+                    <span>Supabase SMTP & OTP Setup Information</span>
+                    <span>{showSmtpGuide ? '−' : '+'}</span>
+                  </button>
+                  {showSmtpGuide && (
+                    <div className="mt-2.5 p-3 rounded-xl bg-neutral-50 border border-neutral-200 text-[11px] text-neutral-600 space-y-1.5 leading-relaxed">
+                      <p className="font-semibold text-neutral-900">Configuring Custom SMTP & 6-Digit Codes:</p>
+                      <ul className="list-disc pl-4 space-y-1 text-[10px]">
+                        <li>
+                          <strong>SMTP Provider:</strong> In Supabase Dashboard, navigate to <em>Project Settings → Auth → SMTP Settings</em> and configure your mail server (e.g., Resend, SendGrid, Mailgun, Amazon SES). This lifts the default 3 emails/hour rate limit.
+                        </li>
+                        <li>
+                          <strong>Email Template:</strong> In <em>Authentication → Email Templates → Confirm signup</em>, ensure your template displays <code>{`{{ .Token }}`}</code> so guests receive the 6-digit numeric OTP code in addition to the confirmation link.
+                        </li>
+                        <li>
+                          <strong>Instant Verification:</strong> Entering the 6-digit code above verifies the user via Supabase Auth <code>verifyOtp</code> with zero redirect friction.
+                        </li>
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Brand Icon & Heading */}
+                <div className="text-center space-y-3">
+                  <div className="flex justify-center">
+                    <IghoOfficialEmblem className="w-14 h-14" />
+                  </div>
+                  <div className="space-y-1">
+                    <h1 className="text-2xl font-black text-black tracking-tight">
+                      {isRegister ? 'Create your Account' : 'Sign in to IGHO'}
+                    </h1>
+                    <p className="text-xs text-neutral-500 font-medium">
+                      IGHO Software Systems unified identity directory.
+                    </p>
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-2xl font-medium space-y-2">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <span className="leading-relaxed">{error}</span>
+                    </div>
+                    {unconfirmedEmailForResend && (
+                      <div className="pt-2 border-t border-rose-200/60 flex items-center justify-between text-[11px]">
+                        <span className="text-rose-700 font-medium">Email not arriving? Check spam or resend:</span>
+                        <button
+                          type="button"
+                          disabled={resendingEmail}
+                          onClick={() => handleResendConfirmation(unconfirmedEmailForResend)}
+                          className="font-bold underline text-rose-800 hover:text-rose-950 cursor-pointer disabled:opacity-50"
+                        >
+                          {resendingEmail ? 'Sending...' : 'Resend Confirmation Email'}
+                        </button>
+                      </div>
+                    )}
+                    {resendStatusMessage && (
+                      <p className="text-[11px] text-neutral-700 font-medium bg-white/60 p-2 rounded-lg">
+                        {resendStatusMessage}
+                      </p>
+                    )}
+                    {error.toLowerCase().includes('credential') && (
+                      <div className="pt-2 border-t border-rose-200/60 flex items-center justify-between text-[11px]">
+                        <span className="text-rose-600">Password not working?</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setForgotEmail(email);
+                            setShowForgotPassword(true);
+                          }}
+                          className="font-bold underline text-rose-800 hover:text-rose-950 cursor-pointer"
+                        >
+                          Reset Password
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+
+        {/* Tab Toggle: Sign In vs Create Account */}
+        <div className="flex p-1 bg-neutral-100 rounded-xl">
+          <button
+            type="button"
+            onClick={() => {
+              setIsRegister(false);
+              setError(null);
+            }}
+            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+              !isRegister
+                ? 'bg-white text-black shadow-xs'
+                : 'text-neutral-500 hover:text-black'
+            }`}
+          >
+            Sign in
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsRegister(true);
+              setError(null);
+            }}
+            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+              isRegister
+                ? 'bg-white text-black shadow-xs'
+                : 'text-neutral-500 hover:text-black'
+            }`}
+          >
+            Create account
+          </button>
+        </div>
+
+        {/* Google Sign-In Button */}
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            disabled={googleLoading || loading}
+            className="w-full py-2.5 px-4 rounded-xl border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-900 font-bold text-xs transition-all flex items-center justify-center gap-2.5 shadow-2xs cursor-pointer disabled:opacity-60"
+          >
+            {googleLoading ? (
+              <IghoLoadingEmblem size="xs" speed="fast" />
+            ) : (
+              <>
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    fill="#4285F4"
+                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24Z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
+                  />
+                </svg>
+                <span>Continue with Google</span>
+              </>
+            )}
+          </button>
+
+          <div className="relative flex items-center py-0.5">
+            <div className="flex-grow border-t border-neutral-200" />
+            <span className="shrink mx-3 text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
+              or with email
+            </span>
+            <div className="flex-grow border-t border-neutral-200" />
+          </div>
+        </div>
+
+        {/* Form with Clean Placeholders */}
+        <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
+          {isRegister && (
+            <>
+              <div className="space-y-1">
+                <label className="block font-semibold text-neutral-700">Full name</label>
+                <div className="relative">
+                  <User className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="Enter your full name"
+                    className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-neutral-200 bg-neutral-50/50 text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black focus:bg-white transition-colors"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="block font-semibold text-neutral-700">Phone number</label>
+                <div className="relative">
+                  <Phone className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+                  <input
+                    type="tel"
+                    required
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="e.g. +234 800 000 0000"
+                    className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-neutral-200 bg-neutral-50/50 text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black focus:bg-white transition-colors"
+                  />
+                </div>
+              </div>
+            </>
+          )}
+
+          <div className="space-y-1">
+            <label className="block font-semibold text-neutral-700">Email address</label>
+            <div className="relative">
+              <Mail className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Enter your email address"
+                className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-neutral-200 bg-neutral-50/50 text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black focus:bg-white transition-colors"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <label className="block font-semibold text-neutral-700">Password</label>
+              {!isRegister && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowForgotPassword(true);
+                    setForgotSubmitted(false);
+                    setForgotEmail(email);
+                  }}
+                  className="text-[11px] font-semibold text-neutral-600 hover:text-black hover:underline"
+                >
+                  Forgot password?
+                </button>
+              )}
+            </div>
+            <div className="relative">
+              <Lock className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter your password"
+                className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-neutral-200 bg-neutral-50/50 text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black focus:bg-white transition-colors"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-2.5 text-neutral-400 hover:text-black"
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          {isRegister && (
+            <div className="space-y-1">
+              <label className="block font-semibold text-neutral-700">Confirm password</label>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Confirm your password"
+                  className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-neutral-200 bg-neutral-50/50 text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black focus:bg-white transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-3 top-2.5 text-neutral-400 hover:text-black"
+                  tabIndex={-1}
+                >
+                  {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Remember me checkbox */}
+          <div className="flex items-center gap-2 pt-1">
+            <input
+              type="checkbox"
+              id="rememberMeCheckbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="w-4 h-4 rounded border-neutral-300 text-black focus:ring-black cursor-pointer"
+            />
+            <label
+              htmlFor="rememberMeCheckbox"
+              className="text-xs text-neutral-600 font-medium select-none cursor-pointer"
+            >
+              Remember me on this device
+            </label>
+          </div>
+
+          {/* Submit Button */}
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-black text-white py-3 rounded-full font-bold text-xs hover:bg-neutral-800 transition-all active:scale-[0.99] shadow-sm flex items-center justify-center gap-2 mt-2 cursor-pointer disabled:opacity-75"
+          >
+            {loading ? (
+              <IghoLoadingEmblem size="xs" speed="fast" />
+            ) : (
+            <span>{isRegister ? 'Create Account' : 'Sign in to IGHO Systems'}</span>
+            )}
+          </button>
+        </form>
+              </>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Footer System Notice */}
+      <div className="text-center text-[11px] text-neutral-400 py-2 font-medium">
+        IGHO Software Systems • Global Identity Infrastructure
+      </div>
+    </div>
+
+      {/* Forgot Password Modal */}
+      {showForgotPassword && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full border border-neutral-200 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-black text-black">Reset your password</h3>
+              <button
+                onClick={() => {
+                  setShowForgotPassword(false);
+                  setForgotSubmitted(false);
+                  setForgotError(null);
+                }}
+                className="p-1.5 rounded-full hover:bg-neutral-100 text-neutral-500 hover:text-black cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {forgotSubmitted ? (
+              <div className="space-y-4 py-2 text-center">
+                <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto border border-emerald-200">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-sm font-bold text-black">Password reset link sent</h4>
+                  <p className="text-xs text-neutral-500">
+                    We sent a secure password reset link to{' '}
+                    <strong className="text-neutral-900">{forgotEmail}</strong>. Please check your inbox.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowForgotPassword(false);
+                    setForgotSubmitted(false);
+                    setForgotError(null);
+                  }}
+                  className="w-full py-2.5 bg-black text-white text-xs font-bold rounded-xl hover:bg-neutral-800 transition-colors cursor-pointer"
+                >
+                  Return to Sign In
+                </button>
+              </div>
+            ) : (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const clean = forgotEmail.trim().toLowerCase();
+                  if (!clean) return;
+                  setForgotLoading(true);
+                  setForgotError(null);
+                  try {
+                    const { error: resetErr } = await authService.resetPasswordForEmail(clean);
+                    setForgotLoading(false);
+                    if (resetErr) {
+                      setForgotError(
+                        resetErr.message ||
+                          'Could not send reset link. If rate limited, you can set the password directly in Supabase Dashboard (Authentication -> Users -> Change Password).'
+                      );
+                    } else {
+                      setForgotSubmitted(true);
+                    }
+                  } catch (err: any) {
+                    setForgotLoading(false);
+                    setForgotError(err?.message || 'Error communicating with Supabase Auth.');
+                  }
+                }}
+                className="space-y-3 text-xs"
+              >
+                <p className="text-xs text-neutral-500 leading-relaxed">
+                  Enter your registered IGHO account email. We will send a secure link via Supabase Auth to reset your password.
+                </p>
+
+                {forgotError && (
+                  <div className={`p-3.5 rounded-xl border text-xs font-medium space-y-2 ${
+                    forgotError.toLowerCase().includes('rate limit')
+                      ? 'bg-amber-50 border-amber-200 text-amber-900'
+                      : 'bg-rose-50 border-rose-200 text-rose-700'
+                  }`}>
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className={`w-4 h-4 shrink-0 mt-0.5 ${
+                        forgotError.toLowerCase().includes('rate limit') ? 'text-amber-600' : 'text-rose-600'
+                      }`} />
+                      <div>
+                        {forgotError.toLowerCase().includes('rate limit') ? (
+                          <>
+                            <span className="font-bold block text-amber-950">Email Rate Limit Exceeded</span>
+                            <span className="text-[11px] text-amber-800 leading-relaxed block pt-0.5">
+                              Supabase restricts automated email sending on the free tier (max 3-4 emails/hr). You do not have to wait for email recovery to update your credentials.
+                            </span>
+                          </>
+                        ) : (
+                          <span className="leading-relaxed">{forgotError}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {forgotError.toLowerCase().includes('rate limit') && (
+                      <div className="bg-white/90 border border-amber-200 rounded-lg p-2.5 text-[11px] text-neutral-700 space-y-1">
+                        <span className="font-bold text-neutral-900 block">Instant Fix via Supabase Dashboard:</span>
+                        <ol className="list-decimal list-inside space-y-0.5 text-neutral-600 text-[10.5px]">
+                          <li>Open <strong className="text-neutral-800">Supabase Dashboard</strong> &rarr; <strong className="text-neutral-800">Authentication</strong> &rarr; <strong className="text-neutral-800">Users</strong></li>
+                          <li>Click <strong className="text-neutral-800">...</strong> next to <code className="bg-neutral-100 px-1 py-0.5 rounded text-[10px]">{forgotEmail || 'your email'}</code></li>
+                          <li>Select <strong className="text-neutral-800">Change Password</strong>, enter your password, and save</li>
+                        </ol>
+                        <span className="block pt-1 text-[10px] text-neutral-500">
+                          After saving in Supabase, you can return and sign in immediately with that password.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="block font-semibold text-neutral-700">Email address</label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+                    <input
+                      type="email"
+                      required
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      placeholder="Enter your registered email address"
+                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-neutral-200 text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={forgotLoading}
+                  className="w-full bg-black text-white py-2.5 rounded-full font-bold text-xs hover:bg-neutral-800 transition-all active:scale-[0.99] mt-2 cursor-pointer disabled:opacity-50"
+                >
+                  {forgotLoading ? 'Sending Reset Link...' : 'Send Reset Link'}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

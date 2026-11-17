@@ -1,0 +1,1378 @@
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import {
+  ShieldAlert,
+  Shield,
+  Menu,
+  X,
+  ExternalLink,
+  Building2,
+  Lock,
+  ArrowLeft,
+  ChevronRight,
+  Bell,
+  Search,
+  Settings,
+  User,
+  LogOut,
+} from 'lucide-react';
+import {
+  ActiveScreen,
+  Hotel,
+  Room,
+  Reservation,
+  StaffAccount,
+  CustomerFeedback,
+  HotelSubscription,
+  SubscriptionPlan,
+  PlatformTransaction,
+  PlatformAuditLog,
+  PlatformUser,
+  PlatformProduct,
+  PlatformSettings,
+  DemoRequest,
+  CustomerProfile,
+} from '../types';
+import {
+  INITIAL_PLANS,
+  INITIAL_SUBSCRIPTIONS,
+  INITIAL_TRANSACTIONS,
+  INITIAL_AUDIT_LOGS,
+  INITIAL_PLATFORM_USERS,
+  INITIAL_PRODUCTS,
+  INITIAL_PLATFORM_SETTINGS,
+} from '../data/platformData';
+import { INITIAL_FEEDBACK as INITIAL_FEEDBACKS } from '../data/mockData';
+
+import { ConsoleWaitlistsView } from './console/ConsoleWaitlistsView';
+import { ConsoleSidebar, ConsoleTab } from './console/ConsoleSidebar';
+import { ConsoleStorageView } from './console/ConsoleStorageView';
+import { IghoOfficialEmblem, IghoLoadingEmblem } from './IghoLogo';
+import { ConsoleDashboardView } from './console/ConsoleDashboardView';
+import { ConsoleHotelsView } from './console/ConsoleHotelsView';
+import { ConsoleSchoolsView } from './console/ConsoleSchoolsView';
+import { ConsoleHospitalsView } from './console/ConsoleHospitalsView';
+import { ConsoleRegistrationsView } from './console/ConsoleRegistrationsView';
+import { ConsoleUsersView } from './console/ConsoleUsersView';
+import { ConsoleSubscriptionsView } from './console/ConsoleSubscriptionsView';
+import { ConsoleFinanceView } from './console/ConsoleFinanceView';
+import { ConsoleAnalyticsView } from './console/ConsoleAnalyticsView';
+import { ConsoleReviewsView } from './console/ConsoleReviewsView';
+import { ConsoleProductsView } from './console/ConsoleProductsView';
+import { ConsoleSettingsView } from './console/ConsoleSettingsView';
+import { ConsoleAuditLogsView } from './console/ConsoleAuditLogsView';
+import { ConsoleFeatureRequestsView } from './console/ConsoleFeatureRequestsView';
+import { EditProfileModal } from './common/EditProfileModal';
+import { authService } from '../lib/authService';
+import { getAuthHeaders } from '../utils/storageUpload';
+
+interface SuperAdminConsoleProps {
+  currentUserEmail?: string;
+  isSuperAdmin?: boolean;
+  isVerifying?: boolean;
+  hotels: Hotel[];
+  rooms?: Room[];
+  reservations?: Reservation[];
+  staff?: StaffAccount[];
+  plans?: SubscriptionPlan[];
+  settings?: PlatformSettings;
+  onNavigate: (screen: ActiveScreen) => void;
+  onUpdateHotels?: (hotels: Hotel[]) => void;
+  onUpdatePlans?: (plans: SubscriptionPlan[]) => void;
+  onUpdateSettings?: (settings: PlatformSettings) => void;
+  demoRequests?: DemoRequest[];
+  onUpdateDemoRequests?: (demos: DemoRequest[]) => void;
+  customerProfiles?: CustomerProfile[];
+  onSignOut?: () => void;
+}
+
+export const SuperAdminConsole: React.FC<SuperAdminConsoleProps> = ({
+  currentUserEmail = '',
+  isSuperAdmin = false,
+  isVerifying = false,
+  hotels: initialHotels,
+  rooms = [],
+  reservations = [],
+  staff = [],
+  plans: initialPassedPlans,
+  settings: initialPassedSettings,
+  onNavigate,
+  onUpdateHotels,
+  onUpdatePlans,
+  onUpdateSettings,
+  demoRequests: initialDemoRequests = [],
+  onUpdateDemoRequests,
+  customerProfiles = [],
+  onSignOut,
+}) => {
+  // Database-verified authority check: authoritative query against public.platform_roles
+  const [dbVerified, setDbVerified] = useState<boolean>(isSuperAdmin);
+  const [checkingAuth, setCheckingAuth] = useState<boolean>(!isSuperAdmin);
+
+  useEffect(() => {
+    let isCancelled = false;
+    setCheckingAuth(true);
+
+    authService.getUser().then(({ user, error }) => {
+      if (isCancelled) return;
+      if (error || !user) {
+        setDbVerified(false);
+        setCheckingAuth(false);
+        return;
+      }
+      authService.getPlatformRole(user.id).then(({ isSuperAdmin: hasRole, error: roleErr }) => {
+        if (isCancelled) return;
+        if (!roleErr && hasRole) {
+          setDbVerified(true);
+        } else {
+          setDbVerified(false);
+        }
+        setCheckingAuth(false);
+      });
+    }).catch(() => {
+      if (!isCancelled) {
+        setDbVerified(false);
+        setCheckingAuth(false);
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentUserEmail]);
+
+  // Reliable database-backed authorization gate (does not depend on frontend prop alone)
+  const isAuthorized = dbVerified;
+
+
+  // Navigation tab state
+  const [currentTab, setCurrentTab] = useState<ConsoleTab>('dashboard');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
+  const [profileDropdownOpen, setProfileDropdownOpen] = useState<boolean>(false);
+
+  // User Profile States
+  const [profileName, setProfileName] = useState<string>('Platform Super Admin');
+  const [profileEmail, setProfileEmail] = useState<string>(currentUserEmail || 'superadmin@igho.software');
+  const [profilePassword, setProfilePassword] = useState<string>('••••••••');
+  const [profilePicture, setProfilePicture] = useState<string>('');
+  const [editProfileOpen, setEditProfileOpen] = useState<boolean>(false);
+
+  // Platform local states
+  const [hotels, setHotels] = useState<Hotel[]>(initialHotels);
+  const [subscriptions, setSubscriptions] = useState<HotelSubscription[]>(INITIAL_SUBSCRIPTIONS);
+  const [plans, setPlans] = useState<SubscriptionPlan[]>(initialPassedPlans || INITIAL_PLANS);
+  const [transactions, setTransactions] = useState<PlatformTransaction[]>(INITIAL_TRANSACTIONS);
+  const [auditLogs, setAuditLogs] = useState<PlatformAuditLog[]>(INITIAL_AUDIT_LOGS);
+  const [platformUsers, setPlatformUsers] = useState<PlatformUser[]>(INITIAL_PLATFORM_USERS);
+  const [products] = useState<PlatformProduct[]>(INITIAL_PRODUCTS);
+  const [settings, setSettings] = useState<PlatformSettings>(initialPassedSettings || INITIAL_PLATFORM_SETTINGS);
+  const [feedbacks, setFeedbacks] = useState<CustomerFeedback[]>(INITIAL_FEEDBACKS as CustomerFeedback[]);
+  const [demoRequests, setDemoRequests] = useState<DemoRequest[]>(initialDemoRequests);
+
+  React.useEffect(() => {
+    (async () => {
+      const headers = await getAuthHeaders();
+
+      // Sync platform users from backend
+      fetch('/api/console/users', { headers })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.users) && data.users.length > 0) {
+            setPlatformUsers(data.users);
+          }
+        })
+        .catch((err) => console.error(err));
+
+      // Sync demo requests from backend
+      fetch('/api/demo-requests', { headers })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.demoRequests)) {
+            setDemoRequests(data.demoRequests);
+            try {
+              localStorage.setItem('igho_demo_requests', JSON.stringify(data.demoRequests));
+              window.dispatchEvent(new Event('igho_demo_requests_updated'));
+            } catch {}
+            if (onUpdateDemoRequests) {
+              onUpdateDemoRequests(data.demoRequests);
+            }
+          }
+        })
+        .catch((err) => console.error(err));
+
+      // Sync console admin profile (name, avatar) from backend
+      const targetAdminEmail = (currentUserEmail || 'superadmin@igho.software').trim().toLowerCase();
+      fetch(`/api/users/profile?email=${encodeURIComponent(targetAdminEmail)}`, { headers })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data?.success && data?.profile) {
+            if (data.profile.fullName) setProfileName(data.profile.fullName);
+            if (data.profile.email) setProfileEmail(data.profile.email);
+            if (data.profile.avatarUrl !== undefined) setProfilePicture(data.profile.avatarUrl || '');
+          }
+        })
+        .catch(() => {});
+
+      // Sync audit logs from backend
+      fetch('/api/audit-logs', { headers })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.logs)) {
+            setAuditLogs(data.logs);
+          }
+        })
+        .catch((err) => console.error(err));
+    })();
+
+    const handleUsersUpdated = () => {
+      try {
+        const stored = localStorage.getItem('igho_platform_users');
+        if (stored) setPlatformUsers(JSON.parse(stored));
+      } catch {}
+    };
+    window.addEventListener('igho_users_updated', handleUsersUpdated);
+    return () => window.removeEventListener('igho_users_updated', handleUsersUpdated);
+  }, [currentUserEmail]);
+
+  React.useEffect(() => {
+    setHotels(initialHotels);
+  }, [initialHotels]);
+
+  React.useEffect(() => {
+    if (initialPassedPlans) setPlans(initialPassedPlans);
+  }, [initialPassedPlans]);
+
+  React.useEffect(() => {
+    if (initialPassedSettings) setSettings(initialPassedSettings);
+  }, [initialPassedSettings]);
+
+  React.useEffect(() => {
+    const handleStorageHotels = () => {
+      try {
+        const stored = localStorage.getItem('igho_db_hotels');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          setHotels(parsed);
+        }
+      } catch {}
+    };
+    window.addEventListener('igho_hotels_updated', handleStorageHotels);
+    window.addEventListener('storage', handleStorageHotels);
+    return () => {
+      window.removeEventListener('igho_hotels_updated', handleStorageHotels);
+      window.removeEventListener('storage', handleStorageHotels);
+    };
+  }, []);
+
+  React.useEffect(() => {
+    setDemoRequests(initialDemoRequests);
+  }, [initialDemoRequests]);
+
+  const handleUpdateDemoRequests = (updated: DemoRequest[]) => {
+    setDemoRequests(updated);
+    if (onUpdateDemoRequests) {
+      onUpdateDemoRequests(updated);
+    }
+  };
+
+  // Helper to record immutable audit log entry
+  const recordAuditLog = async (
+    action: PlatformAuditLog['action'],
+    target: string,
+    targetType: PlatformAuditLog['targetType'],
+    metadata?: Record<string, any>,
+    previousValue?: string,
+    newValue?: string
+  ) => {
+    const now = new Date();
+    const timestampStr = `${now.toISOString().split('T')[0]} ${now.toTimeString().split(' ')[0]}`;
+    const newLog: PlatformAuditLog = {
+      id: `audit-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      actorEmail: currentUserEmail || 'superadmin@igho.software',
+      action,
+      target,
+      targetType,
+      timestamp: timestampStr,
+      metadata,
+      previousValue,
+      newValue,
+    };
+    setAuditLogs((prev) => [newLog, ...prev]);
+
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch('/api/audit-logs', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(newLog),
+      });
+    } catch {}
+  };
+
+  // Synchronize hotels to parent if onUpdateHotels passed
+  const updateHotelsList = (newHotels: Hotel[]) => {
+    setHotels(newHotels);
+    if (onUpdateHotels) {
+      onUpdateHotels(newHotels);
+    }
+  };
+
+  // 1. APPROVE HOTEL (Approved hotel must pay subscription or activate 1-month trial before going live)
+  const handleApproveHotel = async (hotelId: string) => {
+    const target = hotels.find((h) => h.id === hotelId);
+    if (!target) return;
+
+    const approvalPatch = {
+      isLive: false,
+      status: 'active' as const,
+      approvalStatus: 'approved' as const,
+      paymentStatus: 'pending' as const,
+      subscriptionStatus: 'pending' as const,
+      reviewedBy: currentUserEmail || 'Platform Super Admin',
+      reviewedAt: new Date().toISOString(),
+    };
+
+    const updated = hotels.map((h) =>
+      h.id === hotelId ? { ...h, ...approvalPatch } : h
+    );
+    updateHotelsList(updated);
+
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/console/organizations/${encodeURIComponent(hotelId)}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify(approvalPatch),
+      });
+    } catch (e) {
+      console.error('Failed to persist hotel approval:', e);
+    }
+
+    recordAuditLog(
+      'APPROVE_HOTEL',
+      `${target.name} (${target.id})`,
+      'hotel',
+      { rooms: target.roomCount, city: target.city, state: target.state },
+      'status: pending, approvalStatus: pending, isLive: false',
+      'status: active, approvalStatus: approved, isLive: false (Awaiting subscription payment / 1-month trial)'
+    );
+  };
+
+  // 2. REJECT HOTEL
+  const handleRejectHotel = async (hotelId: string, reason: string) => {
+    const target = hotels.find((h) => h.id === hotelId);
+    if (!target) return;
+
+    const rejectPatch = {
+      isLive: false,
+      status: 'rejected' as const,
+      approvalStatus: 'rejected' as const,
+      rejectionReason: reason,
+      reviewedBy: currentUserEmail || 'Platform Super Admin',
+      reviewedAt: new Date().toISOString(),
+    };
+
+    const updated = hotels.map((h) =>
+      h.id === hotelId ? { ...h, ...rejectPatch } : h
+    );
+    updateHotelsList(updated);
+
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/console/organizations/${encodeURIComponent(hotelId)}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify(rejectPatch),
+      });
+    } catch (e) {
+      console.error('Failed to persist hotel rejection:', e);
+    }
+
+    recordAuditLog(
+      'REJECT_HOTEL',
+      `${target.name} (${target.id})`,
+      'hotel',
+      { reason, city: target.city },
+      'approvalStatus: pending',
+      `approvalStatus: rejected (Reason: ${reason})`
+    );
+  };
+
+  // 3. SUSPEND HOTEL
+  const handleSuspendHotel = async (hotelId: string, reason: string) => {
+    const target = hotels.find((h) => h.id === hotelId);
+    if (!target) return;
+
+    const updated = hotels.map((h) =>
+      h.id === hotelId ? ({ ...h, isSuspended: true, suspensionReason: reason } as Hotel) : h
+    );
+    updateHotelsList(updated);
+
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/console/organizations/${encodeURIComponent(hotelId)}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ isSuspended: true, suspensionReason: reason }),
+      });
+    } catch (e) {
+      console.error('Failed to persist hotel suspension:', e);
+    }
+
+    // Also update subscription status to suspended
+    setSubscriptions((prev) =>
+      prev.map((s) => (s.hotelId === hotelId ? { ...s, status: 'suspended' } : s))
+    );
+
+    recordAuditLog(
+      'SUSPEND_HOTEL',
+      `${target.name} (${target.id})`,
+      'hotel',
+      { reason },
+      'isSuspended: false',
+      `isSuspended: true (Reason: ${reason})`
+    );
+  };
+
+  // 4. REACTIVATE HOTEL
+  const handleReactivateHotel = async (hotelId: string) => {
+    const target = hotels.find((h) => h.id === hotelId);
+    if (!target) return;
+
+    const updated = hotels.map((h) =>
+      h.id === hotelId ? ({ ...h, isSuspended: false } as Hotel) : h
+    );
+    updateHotelsList(updated);
+
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/console/organizations/${encodeURIComponent(hotelId)}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ isSuspended: false, suspensionReason: '' }),
+      });
+    } catch (e) {
+      console.error('Failed to persist hotel reactivation:', e);
+    }
+
+    setSubscriptions((prev) =>
+      prev.map((s) => (s.hotelId === hotelId ? { ...s, status: 'active' } : s))
+    );
+
+    recordAuditLog(
+      'REACTIVATE_HOTEL',
+      `${target.name} (${target.id})`,
+      'hotel',
+      {},
+      'isSuspended: true',
+      'isSuspended: false'
+    );
+  };
+
+  // 4b. RENAME ORGANIZATION (Syncs across hotels, platformUsers, subscriptions & backend)
+  const handleRenameHotel = async (hotelId: string, newName: string) => {
+    const cleanName = newName.trim();
+    if (!cleanName) return;
+    const target = hotels.find((h) => h.id === hotelId);
+    const previousName = target?.name || hotelId;
+
+    const updatedHotels = hotels.map((h) =>
+      h.id === hotelId ? { ...h, name: cleanName } : h
+    );
+    updateHotelsList(updatedHotels);
+
+    setPlatformUsers((prev) => {
+      const next = prev.map((u) =>
+        u.organizationId === hotelId ||
+        (target?.email && u.email.toLowerCase() === target.email.toLowerCase()) ||
+        (target?.ownerEmail && u.email.toLowerCase() === target.ownerEmail.toLowerCase())
+          ? { ...u, organizationId: hotelId, organizationName: cleanName }
+          : u
+      );
+      try {
+        localStorage.setItem('igho_platform_users', JSON.stringify(next));
+        window.dispatchEvent(new Event('igho_users_updated'));
+      } catch {}
+      return next;
+    });
+
+    setSubscriptions((prev) =>
+      prev.map((s) => (s.hotelId === hotelId ? { ...s, hotelName: cleanName } : s))
+    );
+
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/console/organizations/${encodeURIComponent(hotelId)}/name`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ name: cleanName }),
+      });
+    } catch (e) {
+      console.error('Failed to persist organization rename:', e);
+    }
+
+    recordAuditLog(
+      'UPDATE_PLATFORM_SETTING',
+      `${cleanName} (${hotelId})`,
+      'hotel',
+      { organizationId: hotelId },
+      previousName,
+      cleanName
+    );
+  };
+
+  // 5. DELETE HOTEL (Authoritative permanent removal across frontend & backend)
+  const handleDeleteHotel = async (hotelId: string) => {
+    const target = hotels.find((h) => h.id === hotelId);
+    if (!target) return;
+
+    const updated = hotels.filter((h) => h.id !== hotelId);
+    setHotels(updated);
+    updateHotelsList(updated);
+    setSubscriptions((prev) => prev.filter((s) => s.hotelId !== hotelId));
+
+    try {
+      localStorage.setItem('igho_db_hotels', JSON.stringify(updated));
+      window.dispatchEvent(new Event('igho_hotels_updated'));
+      const headers = await getAuthHeaders();
+      await fetch(`/api/hotels/${encodeURIComponent(hotelId)}`, {
+        method: 'DELETE',
+        headers,
+      });
+    } catch (e) {
+      console.error('Failed to delete hotel from backend:', e);
+    }
+
+    recordAuditLog(
+      'DELETE_HOTEL',
+      `${target.name} (${target.id})`,
+      'hotel',
+      { rooms: target.roomCount },
+      'status: active',
+      'status: deleted'
+    );
+  };
+
+  // 6. USER ROLE CHANGE
+  const handleChangeUserRole = (userId: string, newRole: any, orgId?: string) => {
+    const target = platformUsers.find((u) => u.id === userId);
+    if (!target) return;
+
+    const org = hotels.find((h) => h.id === orgId);
+
+    setPlatformUsers((prev) =>
+      prev.map((u) =>
+        u.id === userId
+          ? {
+              ...u,
+              role: newRole,
+              organizationId: orgId,
+              organizationName: org ? org.name : undefined,
+            }
+          : u
+      )
+    );
+
+    recordAuditLog(
+      'CHANGE_ROLE',
+      `${target.name} (${target.email})`,
+      'user',
+      { organization: org?.name || 'Unassigned' },
+      `role: ${target.role}`,
+      `role: ${newRole}`
+    );
+  };
+
+  // 7. USER STATUS TOGGLE / IN-CONSOLE BANNING
+  const handleToggleUserStatus = async (
+    userId: string,
+    explicitStatus?: 'active' | 'suspended' | 'deactivated',
+    reason?: string
+  ) => {
+    const target = allSystemUsers.find((u) => u.id === userId) || platformUsers.find((u) => u.id === userId);
+    if (!target) return;
+
+    const newStatus: 'active' | 'suspended' | 'deactivated' =
+      explicitStatus || (target.status === 'active' ? 'suspended' : 'active');
+
+    setPlatformUsers((prev) => {
+      const exists = prev.some((u) => u.id === userId);
+      const next = exists
+        ? prev.map((u) => (u.id === userId ? { ...u, status: newStatus } : u))
+        : [...prev, { ...target, status: newStatus }];
+      try {
+        localStorage.setItem('igho_platform_users', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    // Call backend API for persistent database status update
+    try {
+      const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
+      await fetch(`/api/console/users/${encodeURIComponent(userId)}/status`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          status: newStatus,
+          email: target.email,
+          name: target.name,
+          role: target.role,
+          organizationId: target.organizationId,
+          reason: reason || 'Administrative action via IGO Console',
+        }),
+      });
+    } catch (err) {
+      console.error(err);
+    }
+
+    // Record banned user in persistent blacklist in localStorage and broadcast event
+    try {
+      const banned = JSON.parse(localStorage.getItem('igho_banned_users') || '[]');
+      if (newStatus === 'suspended' || newStatus === 'deactivated') {
+        if (!banned.includes(target.email.toLowerCase())) {
+          banned.push(target.email.toLowerCase());
+        }
+      } else {
+        const index = banned.indexOf(target.email.toLowerCase());
+        if (index > -1) banned.splice(index, 1);
+      }
+      localStorage.setItem('igho_banned_users', JSON.stringify(banned));
+      window.dispatchEvent(
+        new CustomEvent('igho_user_banned', { detail: { email: target.email, status: newStatus } })
+      );
+    } catch {}
+
+    recordAuditLog(
+      newStatus === 'active' ? 'REACTIVATE_USER' : 'BAN_USER',
+      `${target.name} (${target.email})`,
+      'user',
+      { reason: reason || 'Action executed from IGO Console' },
+      `status: ${target.status}`,
+      `status: ${newStatus}`
+    );
+  };
+
+  const handleEditUser = (
+    userId: string,
+    updatedData: { name: string; phone?: string; email?: string }
+  ) => {
+    setPlatformUsers((prev) => {
+      const updated = prev.map((u) => (u.id === userId ? { ...u, ...updatedData } : u));
+      try {
+        localStorage.setItem('igho_platform_users', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    recordAuditLog(
+      'UPDATE_USER_PROFILE',
+      `${updatedData.name} (${updatedData.email || userId})`,
+      'user',
+      { updatedData },
+      'previous profile',
+      'updated profile'
+    );
+  };
+
+  // 8. CHANGE SUBSCRIPTION PRICE
+  const handleChangePlanPrice = (
+    planId: string,
+    newMonthlyPrice: number,
+    newAnnualPrice: number,
+    reason: string
+  ) => {
+    const plan = plans.find((p) => p.id === planId);
+    if (!plan) return;
+
+    const prevMonthly = plan.monthlyPrice;
+    setPlans((prev) =>
+      prev.map((p) =>
+        p.id === planId ? { ...p, monthlyPrice: newMonthlyPrice, annualPrice: newAnnualPrice } : p
+      )
+    );
+
+    recordAuditLog(
+      'CHANGE_SUBSCRIPTION_PRICE',
+      `${plan.name} (${plan.id})`,
+      'subscription',
+      { reason, newAnnualPrice },
+      `monthlyPrice: ₦${prevMonthly.toLocaleString()}`,
+      `monthlyPrice: ₦${newMonthlyPrice.toLocaleString()}`
+    );
+  };
+
+  // 9. UPDATE SUBSCRIPTION STATUS (Confirming payment immediately makes the hotel live on Discover page)
+  const handleUpdateSubscriptionStatus = (subId: string, status: any, paymentStatus: any) => {
+    const targetSub = subscriptions.find((s) => s.id === subId);
+    setSubscriptions((prev) =>
+      prev.map((s) => (s.id === subId ? { ...s, status, paymentStatus } : s))
+    );
+    if (targetSub && status === 'active' && paymentStatus === 'paid') {
+      const updated = hotels.map((h) =>
+        h.id === targetSub.hotelId
+          ? {
+              ...h,
+              isLive: true,
+              status: 'active' as const,
+              paymentStatus: 'paid' as const,
+              subscriptionStatus: 'active' as const,
+            }
+          : h
+      );
+      updateHotelsList(updated);
+    }
+  };
+
+  // 10. ISSUE REFUND
+  const handleIssueRefund = (transactionId: string, reason: string) => {
+    const txn = transactions.find((t) => t.id === transactionId);
+    if (!txn) return;
+
+    setTransactions((prev) =>
+      prev.map((t) => (t.id === transactionId ? { ...t, paymentStatus: 'refunded' } : t))
+    );
+
+    recordAuditLog(
+      'REFUND_PAYMENT',
+      `${txn.reference} (${txn.hotelName})`,
+      'subscription',
+      { amount: txn.amount, reason },
+      'paymentStatus: successful',
+      'paymentStatus: refunded'
+    );
+  };
+
+  // 11. SAVE PLATFORM SETTINGS
+  const handleSaveSettings = (newSettings: PlatformSettings) => {
+    setSettings(newSettings);
+    recordAuditLog(
+      'UPDATE_PLATFORM_SETTING',
+      'Platform Global Configuration',
+      'setting',
+      { updatedBy: currentUserEmail || 'superadmin@igho.software' },
+      'previousSettings',
+      'updatedSettings'
+    );
+  };
+
+  // 12. UPDATE COMPLAINT STATUS
+  const handleUpdateFeedbackStatus = (feedbackId: string, status: any, resolutionNotes?: string) => {
+    const fb = feedbacks.find((f) => f.id === feedbackId);
+    if (!fb) return;
+
+    setFeedbacks((prev) =>
+      prev.map((f) =>
+        f.id === feedbackId
+          ? {
+              ...f,
+              status,
+              resolutionNotes,
+              resolvedAt:
+                status === 'resolved' || status === 'closed'
+                  ? new Date().toISOString().split('T')[0]
+                  : undefined,
+            }
+          : f
+      )
+    );
+
+    recordAuditLog(
+      'RESOLVE_COMPLAINT',
+      `Feedback Case ${feedbackId} (${fb.hotelName})`,
+      'complaint',
+      { status, notes: resolutionNotes },
+      `status: ${fb.status}`,
+      `status: ${status}`
+    );
+  };
+
+  // Consolidate authentic system accounts: Super Admins, Hotel Owners, Staff, and Registered Profiles
+  const allSystemUsers: PlatformUser[] = React.useMemo(() => {
+    let bannedEmails: string[] = [];
+    try {
+      bannedEmails = JSON.parse(localStorage.getItem('igho_banned_users') || '[]');
+    } catch {}
+
+    const list: PlatformUser[] = platformUsers.map((u) =>
+      bannedEmails.includes(u.email.toLowerCase()) ? { ...u, status: 'suspended' } : u
+    );
+
+    // 1. Add authentic hotel owners (strictly real emails, never synthetic placeholders)
+    hotels.forEach((h) => {
+      const ownerEmail = (h.ownerEmail || h.contactEmail || h.email || '').trim().toLowerCase();
+      if (
+        ownerEmail &&
+        ownerEmail.includes('@') &&
+        !ownerEmail.includes('placeholder') &&
+        !list.some((u) => u.email.toLowerCase() === ownerEmail)
+      ) {
+        const isBanned = bannedEmails.includes(ownerEmail) || !!h.isSuspended;
+        list.push({
+          id: `owner-${h.id}`,
+          name: h.ownerName || h.name,
+          email: ownerEmail,
+          role: 'hotel_owner',
+          organizationId: h.id,
+          organizationName: h.name,
+          status: isBanned ? 'suspended' : 'active',
+          createdAt: h.joinedDate || '2026-09-01',
+          lastActivity: 'Active on PMS',
+        });
+      }
+    });
+
+    // 2. Add authentic staff members
+    staff.forEach((s) => {
+      const staffEmail = (s.email || '').trim().toLowerCase();
+      if (
+        staffEmail &&
+        staffEmail.includes('@') &&
+        !staffEmail.includes('placeholder') &&
+        !list.some((u) => u.email.toLowerCase() === staffEmail)
+      ) {
+        const hotel = hotels.find((h) => h.id === s.hotelId);
+        const isBanned = bannedEmails.includes(staffEmail) || s.status !== 'active';
+        list.push({
+          id: s.id,
+          name: s.name,
+          email: staffEmail,
+          role: s.role as any,
+          organizationId: s.hotelId,
+          organizationName: hotel?.name || 'Hotel Staff Member',
+          status: isBanned ? 'suspended' : 'active',
+          createdAt: s.addedDate || '2026-09-01',
+          lastActivity: 'Staff PMS Access',
+        });
+      }
+    });
+
+    // 3. Add genuinely registered customer profiles from authenticated backend state (never localStorage)
+    (customerProfiles || []).forEach((p) => {
+      const profileEmail = (p.email || '').trim().toLowerCase();
+      if (
+        profileEmail &&
+        profileEmail.includes('@') &&
+        !list.some((u) => u.email.toLowerCase() === profileEmail)
+      ) {
+        const isBanned = bannedEmails.includes(profileEmail);
+        list.push({
+          id: p.id || `profile-${Date.now()}`,
+          name: `${p.firstName || 'Guest'} ${p.lastName || ''}`.trim() || 'Verified Guest',
+          email: profileEmail,
+          role: 'customer',
+          organizationName: 'Guest Portal / IGHO Stay',
+          status: isBanned ? 'suspended' : 'active',
+          createdAt: p.createdAt ? p.createdAt.split('T')[0] : '2026-10-01',
+          lastActivity: 'Registered Account',
+        });
+      }
+    });
+
+    return list;
+  }, [platformUsers, hotels, staff, customerProfiles]);
+
+  // Counters for badges in sidebar
+  const pendingRegistrationsCount = hotels.filter(
+    (h) =>
+      h.approvalStatus === 'pending' ||
+      (!h.approvalStatus && !h.isLive && h.status !== 'active' && h.approvalStatus !== 'rejected')
+  ).length;
+  const openComplaintsCount = feedbacks.filter(
+    (f) => f.type === 'complaint' && f.status !== 'resolved' && f.status !== 'closed'
+  ).length;
+
+  const [pendingWaitlistsCount, setPendingWaitlistsCount] = useState<number>(0);
+
+  useEffect(() => {
+    const updateWaitlistCount = () => {
+      try {
+        const stored = localStorage.getItem('igho_waitlists');
+        const list = stored ? JSON.parse(stored) : [];
+        setPendingWaitlistsCount(list.filter((w: any) => w.status === 'pending').length);
+      } catch {
+        setPendingWaitlistsCount(0);
+      }
+    };
+    updateWaitlistCount();
+    window.addEventListener('igho_waitlists_updated', updateWaitlistCount);
+    return () => window.removeEventListener('igho_waitlists_updated', updateWaitlistCount);
+  }, []);
+
+  // VERIFYING PLATFORM AUTHORITY
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen bg-neutral-950 flex items-center justify-center p-6">
+        <IghoLoadingEmblem size="xl" className="w-16 h-16 sm:w-20 sm:h-20" />
+      </div>
+    );
+  }
+
+  // STRICT ACCESS CONTROL SCREEN
+  if (!isAuthorized) {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-white flex flex-col items-center justify-center p-6 font-sans">
+        <div className="max-w-md w-full bg-neutral-900 border border-neutral-800 rounded-2xl p-8 space-y-6 shadow-2xl text-center">
+          <div className="w-16 h-16 rounded-2xl bg-red-950/80 border border-red-800 text-red-400 flex items-center justify-center mx-auto">
+            <Lock className="w-8 h-8" />
+          </div>
+
+          <div className="space-y-2">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-950 text-red-400 border border-red-900 text-xs font-mono font-bold">
+              <span>UNAUTHORIZED ACCESS</span>
+            </div>
+            <h2 className="text-xl font-black tracking-tight text-white">
+              Super Admin Authorization Required
+            </h2>
+            <p className="text-xs text-neutral-400 leading-relaxed">
+              The <strong>IGO Console</strong> is the internal ecosystem management system. Access is strictly restricted to accounts verified with a <code>super_admin</code> role in the database.
+            </p>
+          </div>
+
+          <div className="p-3 bg-neutral-950 rounded-2xl border border-neutral-800 text-left text-xs space-y-1">
+            <span className="text-[10px] text-neutral-400 font-bold uppercase block">
+              Current Authenticated Session:
+            </span>
+            <div className="font-mono text-neutral-300 truncate">{currentUserEmail || 'No active session'}</div>
+            <span className="text-[10px] text-amber-400 font-medium block">
+              Status: Unauthorized for IGO Platform Console
+            </span>
+          </div>
+
+          <div className="space-y-2 pt-2">
+            <button
+              onClick={() => {
+                authService.signOut().finally(() => {
+                  onNavigate('guest_login');
+                });
+              }}
+              className="w-full py-3 rounded-xl bg-white text-black font-extrabold text-xs hover:bg-neutral-200 transition-colors shadow-sm cursor-pointer"
+            >
+              Sign In with Authorized Super Admin Account
+            </button>
+
+            <button
+              onClick={() => onNavigate('landing')}
+              className="w-full py-2 text-neutral-400 hover:text-white text-xs transition-colors cursor-pointer"
+            >
+              ← Back to IGO Home
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // AUTHORIZED CONSOLE INTERFACE (Section 4, 5, 6 - 31)
+  return (
+    <div className="h-screen overflow-hidden bg-neutral-50 text-neutral-900 flex font-sans relative">
+      {/* Mobile Drawer Sidebar */}
+      <AnimatePresence>
+        {mobileMenuOpen && (
+          <>
+            {/* Backdrop overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setMobileMenuOpen(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 md:hidden"
+            />
+            
+            {/* Sidebar Drawer Container */}
+            <motion.div
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 250 }}
+              className="fixed top-0 bottom-0 left-0 z-50 md:hidden"
+            >
+              <ConsoleSidebar
+                currentTab={currentTab}
+                onSelectTab={(tab) => {
+                  setCurrentTab(tab);
+                  setMobileMenuOpen(false); // Auto-close drawer on click
+                }}
+                pendingRegistrationsCount={pendingRegistrationsCount}
+                openComplaintsCount={openComplaintsCount}
+                pendingWaitlistsCount={pendingWaitlistsCount}
+                currentUserEmail={currentUserEmail}
+                onNavigate={onNavigate}
+                onSignOut={onSignOut}
+                isCollapsed={false} // Keep expanded for maximum readability inside drawer
+                onToggleCollapse={() => setMobileMenuOpen(false)} // Clicking collapse closes drawer on mobile
+                isMobile={true}
+                profileName={profileName}
+                profileEmail={profileEmail}
+                profilePicture={profilePicture}
+                onEditProfileClick={() => setEditProfileOpen(true)}
+              />
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Persistent Sidebar (Always visible on left on Desktop, completely side-by-side) */}
+      <ConsoleSidebar
+        currentTab={currentTab}
+        onSelectTab={(tab) => setCurrentTab(tab)}
+        pendingRegistrationsCount={pendingRegistrationsCount}
+        openComplaintsCount={openComplaintsCount}
+        pendingWaitlistsCount={pendingWaitlistsCount}
+        currentUserEmail={currentUserEmail}
+        onNavigate={onNavigate}
+        onSignOut={onSignOut}
+        isCollapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        profileName={profileName}
+        profileEmail={profileEmail}
+        profilePicture={profilePicture}
+        onEditProfileClick={() => setEditProfileOpen(true)}
+      />
+
+      {/* Main Content Area (Independent scrollable viewport alongside locked sidebar) */}
+      <div className="flex-1 h-screen overflow-hidden flex flex-col min-w-0 bg-neutral-50">
+        {/* Top Floating Navbar Capsule */}
+        <div className="pt-4 px-4 sm:px-8">
+          <header className="bg-white border border-neutral-200/80 shadow-xs rounded-full px-5 py-2 flex items-center justify-between gap-4 text-neutral-900">
+            <div className="flex items-center gap-3">
+              {/* Mobile Menu Button */}
+              <button
+                onClick={() => setMobileMenuOpen(true)}
+                className="md:hidden p-2 text-neutral-600 hover:text-black hover:bg-neutral-50 rounded-full transition-all cursor-pointer flex items-center justify-center shrink-0"
+                title="Open Menu"
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+
+              {/* Minimalist Indicator when Sidebar is Collapsed / on mobile */}
+              {(sidebarCollapsed || mobileMenuOpen) && (
+                <div className="flex items-center gap-2">
+                  <span className="font-black text-sm text-black">IGO</span>
+                  <span className="text-neutral-300">|</span>
+                  <span className="text-xs text-[#10b981] font-bold">Console</span>
+                </div>
+              )}
+            </div>
+
+            {/* Center Search Input */}
+            <div className="flex-1 max-w-xl relative hidden md:block">
+              <Search className="w-4 h-4 text-neutral-400 absolute left-4 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search organizations, users, or metrics..."
+                className="w-full bg-neutral-50 border border-neutral-200 rounded-full pl-10 pr-4 py-2 text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-black focus:bg-white transition-all"
+              />
+            </div>
+
+            {/* Right User & Notifications Cluster */}
+            <div className="flex items-center gap-3">
+              {/* Go to Home Page Button */}
+              <button
+                onClick={() => onNavigate('landing')}
+                className="flex items-center gap-1.5 text-[10px] sm:text-xs font-bold px-3 sm:px-4 py-1.5 rounded-full border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 transition-all shadow-3xs cursor-pointer active:scale-95"
+                title="Go to Landing / Home"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-neutral-500" />
+                <span className="hidden sm:inline">Platform Home</span>
+              </button>
+
+              {/* Notification Bell with Pill Badge */}
+              <button className="relative p-2 text-neutral-400 hover:text-black hover:bg-neutral-50 rounded-full transition-all">
+                <Bell className="w-4 h-4" />
+                <span className="absolute top-1 right-1 w-4 h-4 bg-rose-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center font-mono">
+                  {pendingRegistrationsCount}
+                </span>
+              </button>
+
+              {/* User Profile Info with interactive Dropdown Menu */}
+              <div className="relative">
+                <button
+                  onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
+                  className="flex items-center gap-2.5 pl-3 border-l border-neutral-150 hover:opacity-85 transition-opacity focus:outline-none cursor-pointer"
+                  title="Profile Menu"
+                >
+                  {profilePicture ? (
+                    <img src={profilePicture} alt="Profile" className="w-8 h-8 rounded-full object-cover shadow-sm shrink-0" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full overflow-hidden shadow-sm shrink-0">
+                      <IghoOfficialEmblem className="w-full h-full" inverted={false} />
+                    </div>
+                  )}
+                  <div className="hidden sm:block text-left leading-tight">
+                    <div className="text-xs font-bold text-neutral-900">{profileName}</div>
+                    <div className="text-[9px] text-[#10b981] font-extrabold uppercase tracking-wider">Super Admin</div>
+                  </div>
+                </button>
+
+                {profileDropdownOpen && (
+                  <>
+                    {/* Backdrop to close dropdown */}
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setProfileDropdownOpen(false)}
+                    />
+                    <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-white border border-neutral-200/80 shadow-xl py-2 z-50 text-xs text-neutral-800">
+                      <div className="px-4 py-2.5 border-b border-neutral-100 flex items-center gap-2.5">
+                        {profilePicture ? (
+                          <img src={profilePicture} alt="Profile" className="w-8 h-8 rounded-full object-cover shadow-sm shrink-0" />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full overflow-hidden shadow-sm shrink-0">
+                            <IghoOfficialEmblem className="w-full h-full" inverted={false} />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="font-bold text-neutral-900 truncate">{profileName}</p>
+                          <p className="text-[10px] text-neutral-500 font-mono truncate">{profileEmail}</p>
+                        </div>
+                      </div>
+                      <div className="py-1">
+                        <button
+                          onClick={() => {
+                            setCurrentTab('settings');
+                            setProfileDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-4 py-2 hover:bg-neutral-50 transition-colors flex items-center gap-2.5 text-neutral-700 hover:text-black font-semibold"
+                        >
+                          <Settings className="w-3.5 h-3.5 text-neutral-400" />
+                          <span>Console Settings</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditProfileOpen(true);
+                            setProfileDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-4 py-2 hover:bg-neutral-50 transition-colors flex items-center gap-2.5 text-neutral-700 hover:text-black font-semibold"
+                        >
+                          <User className="w-3.5 h-3.5 text-neutral-400" />
+                          <span>Edit Profile</span>
+                        </button>
+                        <div className="border-t border-neutral-100 my-1" />
+                        <button
+                          onClick={() => {
+                            setProfileDropdownOpen(false);
+                            if (onSignOut) {
+                              onSignOut();
+                            } else {
+                              onNavigate('landing');
+                            }
+                          }}
+                          className="w-full text-left px-4 py-2 hover:bg-rose-50 text-rose-600 hover:text-rose-700 transition-colors flex items-center gap-2.5 font-bold cursor-pointer"
+                        >
+                          <LogOut className="w-3.5 h-3.5 text-rose-500" />
+                          <span>Sign out</span>
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </header>
+        </div>
+
+        {/* Dynamic Section View with Floating Card Foundations */}
+        <main className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-8 max-w-[1600px] w-full mx-auto space-y-6 bg-neutral-50 text-neutral-900">
+          {currentTab === 'dashboard' && (
+            <ConsoleDashboardView
+              hotels={hotels}
+              reservations={reservations}
+              subscriptions={subscriptions}
+              transactions={transactions}
+              auditLogs={auditLogs}
+              users={platformUsers}
+              products={products}
+              onSelectTab={(tab) => setCurrentTab(tab)}
+              onInspectHotel={(_hotel) => {
+                setCurrentTab('hotels');
+              }}
+            />
+          )}
+
+          {currentTab === 'hotels' && (
+            <ConsoleHotelsView
+              hotels={hotels}
+              rooms={rooms}
+              reservations={reservations}
+              staff={staff}
+              subscriptions={subscriptions}
+              auditLogs={auditLogs}
+              onSuspendHotel={handleSuspendHotel}
+              onReactivateHotel={handleReactivateHotel}
+              onDeleteHotel={handleDeleteHotel}
+              onRenameHotel={handleRenameHotel}
+              onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+            />
+          )}
+
+          {currentTab === 'schools' && (
+            <ConsoleSchoolsView onNavigateBreadcrumb={() => setCurrentTab('dashboard')} />
+          )}
+
+          {currentTab === 'hospitals' && (
+            <ConsoleHospitalsView onNavigateBreadcrumb={() => setCurrentTab('dashboard')} />
+          )}
+
+          {currentTab === 'registrations' && (
+            <ConsoleRegistrationsView
+              hotels={hotels}
+              onApproveHotel={handleApproveHotel}
+              onRejectHotel={handleRejectHotel}
+              onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+              demoRequests={demoRequests}
+              onUpdateDemoRequests={handleUpdateDemoRequests}
+            />
+          )}
+
+          {currentTab === 'waitlists' && (
+            <ConsoleWaitlistsView onNavigateBreadcrumb={() => setCurrentTab('dashboard')} />
+          )}
+
+          {currentTab === 'users' && (
+            <ConsoleUsersView
+              users={allSystemUsers}
+              hotels={hotels}
+              onChangeUserRole={handleChangeUserRole}
+              onToggleUserStatus={handleToggleUserStatus}
+              onEditUser={handleEditUser}
+              onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+            />
+          )}
+
+          {currentTab === 'subscriptions' && (
+            <ConsoleSubscriptionsView
+              subscriptions={subscriptions}
+              plans={plans}
+              hotels={hotels}
+              rooms={rooms}
+              onUpdateHotels={updateHotelsList}
+              settings={settings}
+              onUpdateSettings={(newSettings) => {
+                setSettings(newSettings);
+                if (onUpdateSettings) onUpdateSettings(newSettings);
+              }}
+              onChangePlanPrice={(planId, newMonthlyPrice, newAnnualPrice, reason) => {
+                handleChangePlanPrice(planId, newMonthlyPrice, newAnnualPrice, reason);
+                if (onUpdatePlans) {
+                  const updated = plans.map(p => p.id === planId ? { ...p, monthlyPrice: newMonthlyPrice, annualPrice: newAnnualPrice } : p);
+                  onUpdatePlans(updated);
+                }
+              }}
+              onUpdatePlans={(newPlans) => {
+                setPlans(newPlans);
+                if (onUpdatePlans) onUpdatePlans(newPlans);
+              }}
+              onUpdateSubscriptionStatus={handleUpdateSubscriptionStatus}
+              onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+            />
+          )}
+
+          {currentTab === 'finance' && (
+            <ConsoleFinanceView
+              transactions={transactions}
+              onIssueRefund={handleIssueRefund}
+              onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+            />
+          )}
+
+          {currentTab === 'analytics' && (
+            <ConsoleAnalyticsView
+              hotels={hotels}
+              reservations={reservations}
+              subscriptions={subscriptions}
+              transactions={transactions}
+              users={platformUsers}
+              products={products}
+              adminEmail={profileEmail}
+              onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+            />
+          )}
+
+          {currentTab === 'reviews' && (
+            <ConsoleReviewsView
+              feedbacks={feedbacks}
+              hotels={hotels}
+              onUpdateFeedbackStatus={handleUpdateFeedbackStatus}
+              onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+            />
+          )}
+
+          {currentTab === 'products' && (
+            <ConsoleProductsView
+              products={products}
+              onNavigate={onNavigate}
+              onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+            />
+          )}
+
+          {currentTab === 'feature_requests' && (
+            <ConsoleFeatureRequestsView
+              hotels={hotels}
+              onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+            />
+          )}
+
+          {currentTab === 'settings' && (
+            <ConsoleSettingsView
+              settings={settings}
+              onSaveSettings={handleSaveSettings}
+              onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+            />
+          )}
+
+          {currentTab === 'audit' && (
+            <ConsoleAuditLogsView
+              auditLogs={auditLogs}
+              onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+            />
+          )}
+
+          {currentTab === 'storage' && (
+            <ConsoleStorageView
+              hotels={hotels}
+              rooms={rooms}
+              reservations={reservations}
+              staff={staff}
+              onNavigateBreadcrumb={() => setCurrentTab('dashboard')}
+            />
+          )}
+        </main>
+      </div>
+
+      <EditProfileModal
+        isOpen={editProfileOpen}
+        onClose={() => setEditProfileOpen(false)}
+        currentName={profileName}
+        currentEmail={profileEmail}
+        currentPicture={profilePicture}
+        onSave={async (data) => {
+          const authHeaders = await getAuthHeaders();
+          const res = await fetch('/api/users/profile', {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-igho-user-email': data.email,
+              ...authHeaders,
+            },
+            body: JSON.stringify({
+              email: data.email,
+              fullName: data.name,
+              avatarUrl: data.picture,
+            }),
+          });
+          const result = await res.json();
+          if (!res.ok || !result?.success) {
+            throw new Error(result?.message || 'Failed to save console admin profile.');
+          }
+          setProfileName(data.name);
+          setProfileEmail(data.email);
+          if (data.password) {
+            setProfilePassword(data.password);
+          }
+          setProfilePicture(data.picture);
+        }}
+        title="Edit Console Admin Profile"
+      />
+    </div>
+  );
+};

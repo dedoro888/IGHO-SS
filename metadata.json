@@ -1,7 +1,8 @@
 {
-  "name": "IGHO Software Systems",
-  "description": "Unified enterprise software suite for hospitality, schools, and healthcare with centralized identity, high-contrast operations, and guest portals.",
+  "name": "IGHO Software Systems Main",
+  "description": "A platform for business like Schools, Hotels and Hospitals to manage there info and customer",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
-
