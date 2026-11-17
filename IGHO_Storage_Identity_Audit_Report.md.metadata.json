@@ -1,0 +1,5 @@
+{
+  "summary":  "Full IGHO Software Systems (Stay, Classroom, MedBay) audit report covering Supabase Storage buckets, file upload/delete flows, cross-tenant security gaps, quota conflicts, universal UUID vs org/government identity architecture, hotel/school/hospital record gaps, document registry design, NDPA 2023 privacy findings, and prioritized remediation roadmap.",
+  "updatedAt":  "2026-11-16T09:25:20.194844715Z",
+  "userFacing":  true
+}
